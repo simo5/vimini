@@ -1,5 +1,5 @@
 import vim
-import os, subprocess
+import os, subprocess, tempfile
 import textwrap
 from google import genai
 
@@ -103,16 +103,17 @@ def chat(prompt):
 def code(prompt):
     """
     Sends the current buffer content along with a prompt to the Gemini API
-    to generate code, and displays the response in a new buffer.
-    Modified to include all open buffers as context.
+    to generate code. Displays the response in a new buffer and also creates
+    a third buffer showing the diff between the original and AI version.
     """
     try:
         client = _get_client()
         if not client:
             return
 
-        # Get the filetype of the buffer from which the 'code' function was called.
-        # This will be used to set the filetype of the new generated code buffer.
+        # Store info from the original buffer before we do anything else.
+        original_buffer = vim.current.buffer
+        original_buffer_content = "\n".join(original_buffer[:])
         original_filetype = vim.eval('&filetype')
 
         context_parts = []
@@ -171,6 +172,13 @@ def code(prompt):
             contents=full_prompt,
         )
         vim.command("echo ''") # Clear the thinking message
+        ai_generated_code = response.text
+
+        # Strip markdown code fences if present. The model sometimes wraps the
+        # code in ``` despite the prompt asking it not to.
+        lines = ai_generated_code.strip().split('\n')
+        if len(lines) > 1 and lines[0].strip().startswith('```') and lines[-1].strip() == '```':
+            ai_generated_code = '\n'.join(lines[1:-1])
 
         # Open a new split window for the generated code.
         vim.command('vnew')
@@ -180,7 +188,57 @@ def code(prompt):
             vim.command(f'setlocal filetype={original_filetype}')
 
         # Display the response in the new buffer.
-        vim.current.buffer[:] = response.text.split('\n')
+        vim.current.buffer[:] = ai_generated_code.split('\n')
+
+        # Force a redraw to ensure the new buffer is fully rendered before we
+        # proceed, which can prevent "Press ENTER" prompts.
+        vim.command("redraw!")
+
+        # --- Generate and display the diff ---
+
+        # Create two temporary files to hold the original and AI-generated content.
+        # We use delete=False so we can get their names and pass them to the diff command.
+        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.orig', encoding='utf-8') as f_orig, \
+             tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.ai', encoding='utf-8') as f_ai:
+            f_orig.write(original_buffer_content)
+            f_ai.write(ai_generated_code)
+            orig_filepath = f_orig.name
+            ai_filepath = f_ai.name
+
+        try:
+            # Run the diff command. -u generates a unified diff, which is standard.
+            cmd = ['diff', '-u', orig_filepath, ai_filepath]
+            # diff returns 0 for no changes, 1 for changes, >1 for errors.
+            # We capture all output and don't check for failure on return code 1.
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+            # Check for errors from the diff command itself (return code > 1)
+            if result.returncode > 1:
+                error_message = result.stderr.strip().replace("'", "''")
+                vim.command(f"echoerr '[Vimini] Could not generate diff: {error_message}'")
+                return # Stop, but leave the AI buffer open for the user.
+
+            diff_output = result.stdout
+        finally:
+            # Ensure temporary files are cleaned up.
+            os.remove(orig_filepath)
+            os.remove(ai_filepath)
+
+        # If there's no difference, inform the user and don't open a new window.
+        if not diff_output.strip():
+            vim.command("echom '[Vimini] AI content is identical to the original.'")
+            return
+
+        # Open a third split window for the diff.
+        vim.command('vnew')
+        vim.command('file Vimini Diff')
+        vim.command('setlocal buftype=nofile filetype=diff noswapfile')
+
+        # Display the diff output.
+        vim.current.buffer[:] = diff_output.split('\n')
+        # Move cursor to the top of the buffer for better user experience.
+        vim.command('normal! 1G')
+
 
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
