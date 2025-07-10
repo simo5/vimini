@@ -3,34 +3,51 @@ import os, subprocess
 import textwrap
 from google import genai
 
-# Module-level variables to store the API key and model name for later use.
+# Module-level variables to store the API key, model name, and client instance.
 _API_KEY = None
 _MODEL = None
+_GENAI_CLIENT = None # Global, lazily-initialized client.
 
 def initialize(api_key, model):
     """
     Initializes the plugin with the user's API keyi and model name.
     This function is called from the plugin's Vimscript entry point.
     """
-    global _API_KEY, _MODEL
+    global _API_KEY, _MODEL, _GENAI_CLIENT
     _API_KEY = api_key
     _MODEL = model
+    _GENAI_CLIENT = None # Reset client if key/model changes.
     if not _API_KEY:
         message = "[Vimini] API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini_token."
         vim.command(f"echoerr '{message}'")
+
+def _get_client():
+    """
+    Lazily initializes and returns the global genai.Client instance.
+    """
+    global _GENAI_CLIENT
+    if _GENAI_CLIENT is None:
+        if not _API_KEY:
+            vim.command("echoerr '[Vimini] API key not set. Please run :ViminiInit'")
+            return None
+        try:
+            vim.command("echo '[Vimini] Initializing API client...'")
+            vim.command("redraw")
+            _GENAI_CLIENT = genai.Client(api_key=_API_KEY)
+            vim.command("echo ''") # Clear the message
+        except Exception as e:
+            vim.command(f"echoerr '[Vimini] Error creating API client: {e}'")
+            return None
+    return _GENAI_CLIENT
 
 def list_models():
     """
     Lists the available Gemini models.
     """
-    if not _API_KEY:
-        message = "[Vimini] API key not set."
-        vim.command(f"echoerr '{message}'")
-        return
-
     try:
-        # Configure the genai library with the API key.
-        client = genai.Client(api_key=_API_KEY)
+        client = _get_client()
+        if not client:
+            return
 
         # Get the list of models.
         vim.command("echo '[Vimini] Fetching models...'")
@@ -55,14 +72,10 @@ def chat(prompt):
     """
     Sends a prompt to the Gemini API and displays the response in a new buffer.
     """
-    if not _API_KEY:
-        message = "[Vimini] API key not set."
-        vim.command(f"echoerr '{message}'")
-        return
-
     try:
-        # Configure the genai library with the API key.
-        client = genai.Client(api_key=_API_KEY)
+        client = _get_client()
+        if not client:
+            return
 
         # Immediately open a new split window for the chat.
         vim.command('vnew')
@@ -93,12 +106,11 @@ def code(prompt):
     to generate code, and displays the response in a new buffer.
     Modified to include all open buffers as context.
     """
-    if not _API_KEY:
-        message = "[Vimini] API key not set."
-        vim.command(f"echoerr '{message}'")
-        return
-
     try:
+        client = _get_client()
+        if not client:
+            return
+
         # Get the filetype of the buffer from which the 'code' function was called.
         # This will be used to set the filetype of the new generated code buffer.
         original_filetype = vim.eval('&filetype')
@@ -151,9 +163,6 @@ def code(prompt):
             "nor markdown code fences"
         )
 
-        # Configure the genai library with the API key.
-        client = genai.Client(api_key=_API_KEY)
-
         # Send the prompt and get the response.
         vim.command("echo '[Vimini] Thinking...'")
         vim.command("redraw") # Force redraw to show message without 'Press ENTER'
@@ -181,12 +190,11 @@ def review(prompt):
     Sends the current buffer content to the Gemini API for a code review,
     and displays the review in a new buffer.
     """
-    if not _API_KEY:
-        message = "[Vimini] API key not set."
-        vim.command(f"echoerr '{message}'")
-        return
-
     try:
+        client = _get_client()
+        if not client:
+            return
+
         # Get the content of the current buffer.
         current_buffer_content = "\n".join(vim.current.buffer[:])
         original_filetype = vim.eval('&filetype') or 'text' # Default to text if no filetype
@@ -201,9 +209,6 @@ def review(prompt):
             "--- END FILE CONTENT ---"
             f"{prompt}\n"
         )
-
-        # Configure the genai library with the API key.
-        client = genai.Client(api_key=_API_KEY)
 
         # Send the prompt and get the response.
         vim.command("echo '[Vimini] Generating review...'")
@@ -282,11 +287,6 @@ def commit():
     API based on all current changes. It stages everything, shows the generated
     message in a popup for review, and then commits with a 'Co-authored-by' trailer.
     """
-    if not _API_KEY:
-        message = "[Vimini] API key not set."
-        vim.command(f"echoerr '{message}'")
-        return
-
     try:
         current_file_path = vim.current.buffer.name
         if not current_file_path:
@@ -348,7 +348,14 @@ def commit():
 
         vim.command("echo '[Vimini] Generating commit message... (this may take a moment)'")
         vim.command("redraw")
-        client = genai.Client(api_key=_API_KEY)
+
+        client = _get_client()
+        if not client:
+            vim.command("echom '[Vimini] Commit cancelled (client init failed). Reverting `git add`.'")
+            reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
+            subprocess.run(reset_cmd, check=False)
+            return
+
         response = client.models.generate_content(
             model=_MODEL,
             contents=prompt,
