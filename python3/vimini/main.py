@@ -113,6 +113,7 @@ def code(prompt):
 
         # Store info from the original buffer before we do anything else.
         original_buffer = vim.current.buffer
+        original_bufnr = original_buffer.number
         original_buffer_content = "\n".join(original_buffer[:])
         original_filetype = vim.eval('&filetype')
 
@@ -186,6 +187,10 @@ def code(prompt):
         vim.command('setlocal buftype=nofile noswapfile')
         if original_filetype: # Apply the filetype of the original buffer to the new one
             vim.command(f'setlocal filetype={original_filetype}')
+
+        # Save a reference to the original buffer's number in the new AI buffer.
+        # The apply_code() function uses this variable to find the correct target buffer.
+        vim.command(f"let b:vimini_source_bufnr = {original_bufnr}")
 
         # Display the response in the new buffer.
         vim.current.buffer[:] = ai_generated_code.split('\n')
@@ -523,3 +528,114 @@ def commit():
         vim.command("echoerr '[Vimini] Error: `git` command not found. Is it in your PATH?'")
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
+
+def apply_code():
+    """
+    Finds the 'Vimini Code' buffer, copies its contents over the original
+    buffer, and closes the temporary Vimini Code and Vimini Diff buffers.
+    """
+    # Locate the source 'Vimini Code' buffer, which contains the AI-generated code.
+    ai_buffer = None
+    diff_buffer = None
+    for buf in vim.buffers:
+        if buf.name and buf.name.endswith('Vimini Code'):
+            # This is the buffer with the AI's code.
+            ai_buffer = buf
+        elif buf.name and buf.name.endswith('Vimini Diff'):
+            diff_buffer = buf
+
+    if not ai_buffer:
+        vim.command("echoerr '[Vimini] `Vimini Code` buffer not found. Was :ViminiCode run?'")
+        return
+
+    # To find the original buffer, retrieve the buffer number that `code()` saved
+    # in the 'Vimini Code' buffer's local variables.
+    original_bufnr = int(vim.eval(f"getbufvar({ai_buffer.number}, 'vimini_source_bufnr', -1)"))
+    if original_bufnr == -1:
+        vim.command("echoerr '[Vimini] Could not find the original buffer. The link may have been lost.'")
+        return
+
+    # Find the original buffer object from its number and ensure it's still valid.
+    original_buffer = next((b for b in vim.buffers if b.number == original_bufnr), None)
+    if not original_buffer or not original_buffer.valid:
+        vim.command(f"echoerr '[Vimini] The original buffer ({original_bufnr}) no longer exists.'")
+        return
+
+    # Get content and name before buffers are modified or deleted.
+    ai_content = ai_buffer[:]
+    original_buffer_name = original_buffer.name or '[No Name]'
+
+    # Perform the overwrite. This automatically marks the buffer as modified.
+    original_buffer[:] = ai_content
+
+    # Switch window focus to the modified buffer.
+    target_win_nr = vim.eval(f"bufwinnr({original_buffer.number})")
+    if int(target_win_nr) > 0:
+        vim.command(f"{target_win_nr}wincmd w")
+    else:
+        # If no window is showing it, open it in the current window.
+        vim.command(f"buffer {original_buffer.number}")
+
+    # Clean up temporary buffers. Use '!' to discard any unsaved changes.
+    vim.command(f"bdelete! {ai_buffer.number}")
+    if diff_buffer and diff_buffer.number in [b.number for b in vim.buffers]:
+        vim.command(f"bdelete! {diff_buffer.number}")
+
+    vim.command(f"echom '[Vimini] Applied changes to `{original_buffer_name}`.'")
+
+def append_code():
+    """
+    Finds the 'Vimini Code' buffer, appends its contents to the original
+    buffer, and closes the temporary Vimini Code and Vimini Diff buffers.
+    """
+    # Locate the source 'Vimini Code' buffer, which contains the AI-generated code.
+    ai_buffer = None
+    diff_buffer = None
+    for buf in vim.buffers:
+        if buf.name and buf.name.endswith('Vimini Code'):
+            # This is the buffer with the AI's code.
+            ai_buffer = buf
+        elif buf.name and buf.name.endswith('Vimini Diff'):
+            diff_buffer = buf
+
+    if not ai_buffer:
+        vim.command("echoerr '[Vimini] `Vimini Code` buffer not found. Was :ViminiCode run?'")
+        return
+
+    # To find the original buffer, retrieve the buffer number that `code()` saved
+    # in the 'Vimini Code' buffer's local variables.
+    original_bufnr = int(vim.eval(f"getbufvar({ai_buffer.number}, 'vimini_source_bufnr', -1)"))
+    if original_bufnr == -1:
+        vim.command("echoerr '[Vimini] Could not find the original buffer. The link may have been lost.'")
+        return
+
+    # Find the original buffer object from its number and ensure it's still valid.
+    original_buffer = next((b for b in vim.buffers if b.number == original_bufnr), None)
+    if not original_buffer or not original_buffer.valid:
+        vim.command(f"echoerr '[Vimini] The original buffer ({original_bufnr}) no longer exists.'")
+        return
+
+    # Get content and name before buffers are modified or deleted.
+    ai_content = ai_buffer[:]
+    original_buffer_name = original_buffer.name or '[No Name]'
+
+    # Perform the append. This automatically marks the buffer as modified.
+    # Add a newline at the end if the buffer is not empty and doesn't end with one.
+    if len(original_buffer) > 0 and original_buffer[-1]:
+        original_buffer.append('')
+    original_buffer.append(ai_content)
+
+    # Switch window focus to the modified buffer.
+    target_win_nr = vim.eval(f"bufwinnr({original_buffer.number})")
+    if int(target_win_nr) > 0:
+        vim.command(f"{target_win_nr}wincmd w")
+    else:
+        # If no window is showing it, open it in the current window.
+        vim.command(f"buffer {original_buffer.number}")
+
+    # Clean up temporary buffers. Use '!' to discard any unsaved changes.
+    vim.command(f"bdelete! {ai_buffer.number}")
+    if diff_buffer and diff_buffer.number in [b.number for b in vim.buffers]:
+        vim.command(f"bdelete! {diff_buffer.number}")
+
+    vim.command(f"echom '[Vimini] Appended code to `{original_buffer_name}`.'")

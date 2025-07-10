@@ -96,6 +96,25 @@ endfunction
 
 command! -nargs=* ViminiCode call ViminiCode(string(<q-args>))
 
+" Expose a function to apply the generated code
+function! ViminiApply(option)
+  let l:option_str = a:option
+  py3 << EOF
+try:
+    from vimini import main
+    option = vim.eval('l:option_str')
+    if option == 'append':
+        main.append_code()
+    else:
+        main.apply_code()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! -nargs=? ViminiApply call ViminiApply(string(<q-args>))
+
 function! ViminiReview(prompt)
   py3 << EOF
 try:
