@@ -32,6 +32,7 @@ def list_models():
 
         # Get the list of models.
         vim.command("echo '[Vimini] Fetching models...'")
+        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
         models = client.models.list()
         vim.command("echo ''") # Clear the message
 
@@ -61,18 +62,24 @@ def chat(prompt):
         # Configure the genai library with the API key.
         client = genai.Client(api_key=_API_KEY)
 
+        # Immediately open a new split window for the chat.
+        vim.command('vnew')
+        vim.command('file Vimini Chat')
+        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+
+        # Display the prompt in the new buffer.
+        vim.current.buffer[:] = [f"Q: {prompt}", "---", "A:"]
+        vim.command('normal! G') # Move cursor to the end to prepare for the answer
+
         # Send the prompt and get the response.
         vim.command("echo '[Vimini] Thinking...'")
+        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
         response = client.models.generate_content(
             model=_MODEL,
             contents=prompt,
         )
         vim.command("echo ''") # Clear the thinking message
-
-        # Display the response in a new split window.
-        vim.command('vnew')
-        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-        vim.current.buffer[:] = response.text.split('\n')
+        vim.current.buffer.append(response.text.split('\n'))
 
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
