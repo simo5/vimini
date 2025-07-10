@@ -1,4 +1,5 @@
 import vim
+import os, subprocess
 from google import genai
 
 # Module-level variables to store the API key and model name for later use.
@@ -219,5 +220,56 @@ def review(prompt):
         # Display the response in the new buffer.
         vim.current.buffer[:] = response.text.split('\n')
 
+    except Exception as e:
+        vim.command(f"echoerr '[Vimini] Error: {e}'")
+
+def show_diff():
+    """
+    Shows the current git modifications in a new buffer.
+    """
+    try:
+        current_file_path = vim.current.buffer.name
+        if not current_file_path:
+            vim.command("echoerr '[Vimini] Cannot run git diff on an unnamed buffer.'")
+            return
+
+        # Use the directory of the current file as the git repository root.
+        repo_path = os.path.dirname(current_file_path)
+
+        # Command to get the colorized diff.
+        # -C ensures git runs in the correct directory.
+        # --color=always forces color output even when piping.
+        cmd = ['git', '-C', repo_path, 'diff', '--color=never']
+
+        # Execute the command.
+        vim.command("echo '[Vimini] Running git diff...'")
+        vim.command("redraw")
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        vim.command("echo ''") # Clear message
+
+        # Handle git errors (e.g., not a git repository).
+        if result.returncode != 0 and not result.stdout.strip():
+            # Escape single quotes for Vim's echoerr
+            error_message = result.stderr.strip().replace("'", "''")
+            vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
+            return
+
+        # Handle case with no modifications.
+        if not result.stdout.strip():
+            vim.command("echom '[Vimini] No modifications found.'")
+            return
+
+        # Display the diff in a new split window.
+        vim.command('vnew')
+        vim.command('file Git Diff')
+        # Setting filetype to 'diff' helps with syntax highlighting
+        vim.command('setlocal buftype=nofile filetype=diff noswapfile')
+
+        # The output from git contains ANSI escape codes for color.
+        # We place this raw output into the buffer.
+        vim.current.buffer[:] = result.stdout.split('\n')
+
+    except FileNotFoundError:
+        vim.command("echoerr '[Vimini] Error: `git` command not found. Is it in your PATH?'")
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")

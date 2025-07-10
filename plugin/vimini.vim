@@ -109,3 +109,17 @@ EOF
 endfunction
 
 command! -nargs=* ViminiReview call ViminiReview(string(<q-args>))
+
+" Expose a function to show git diff
+function! ViminiDiff()
+  py3 << EOF
+try:
+    from vimini import main
+    main.show_diff()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! ViminiDiff call ViminiDiff()
