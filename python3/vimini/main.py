@@ -385,10 +385,12 @@ def commit():
             subprocess.run(reset_cmd, check=False)
             return
 
-        # Show the generated message in a popup for review.
+        # Show the generated message in a popup for review and confirmation.
         popup_content = [f"Subject: {subject}", ""]
         if body:
             popup_content.extend(body.split('\n'))
+        popup_content.extend(['', '---', 'Commit with this message? [y/n]'])
+
 
         # The str() representation of a Python dict is compatible with Vimscript's
         # dict syntax, which is required for vim.eval(). For popup_create, the
@@ -400,31 +402,37 @@ def commit():
             'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
             'close': 'none', 'zindex': 200,
         }
-        # Use vim.eval to call Vim's popup_create function. This is more
-        # compatible across different Vim/Neovim versions than vim.fn.
-        # A Python List of strings is also compatible with a Vimscript List.
+        # Use vim.eval to call Vim's popup_create function.
         popup_id = vim.eval(f"popup_create({popup_content}, {popup_options})")
+        # Show the popup
+        vim.command("redraw!")
 
-        vim.command("echom '[Vimini] Press any key to commit, or Ctrl-C to cancel.'")
-        vim.command("redraw")
-
-        commit_cancelled = False
+        # Capture a single character for confirmation.
+        commit_confirmed = False
+        ans = None
         try:
-            # We don't need the return value, just wait for a key press.
-            # Hitting Ctrl-C will interrupt this call and raise a vim.error.
-            vim.eval('getchar()')
-        except vim.error:  # Catch Vim:Interrupt from Ctrl-C.
-            commit_cancelled = True
-
-        # Close the popup regardless of user input. The ID from vim.eval is a string.
-        vim.eval(f"popup_close({popup_id})")
-        vim.command("echo ''") # Clear confirmation message.
+            # We convert it to a char to check for 'y' or 'Y'.
+            answer_code = vim.eval('getchar()')
+            if isinstance(answer_code, int) and answer_code > 0:
+                answer_char = chr(answer_code)
+                ans = answer_char
+                if answer_char.lower() == 'y':
+                    commit_confirmed = True
+        except vim.error: # Catches Vim:Interrupt from Ctrl-C.
+            pass # commit_confirmed remains False
+        finally:
+            # Ensure the popup is always closed, no matter what key was pressed.
+            vim.eval(f"popup_close({popup_id})")
+            # Redraw to clear any screen artifacts from the popup.
+            vim.command("redraw!")
 
         # If user cancelled, revert the staging and exit.
-        if commit_cancelled:
+        if not commit_confirmed:
             vim.command("echom '[Vimini] Commit cancelled. Reverting `git add`.'")
             reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
             subprocess.run(reset_cmd, check=False)
+
+            print(f"answer code: {ans}")
             return
 
         # Construct the commit command with subject, body, sign-off, and trailer.
