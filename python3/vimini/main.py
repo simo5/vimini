@@ -1,16 +1,18 @@
 import vim
 from google import genai
 
-# Module-level variable to store the API key for later use.
+# Module-level variables to store the API key and model name for later use.
 _API_KEY = None
+_MODEL = None
 
-def initialize(api_key):
+def initialize(api_key, model):
     """
-    Initializes the plugin with the user's API key.
+    Initializes the plugin with the user's API keyi and model name.
     This function is called from the plugin's Vimscript entry point.
     """
-    global _API_KEY
+    global _API_KEY, _MODEL
     _API_KEY = api_key
+    _MODEL = model
     if not _API_KEY:
         message = "[Vimini] API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini_token."
         vim.command(f"echoerr '{message}'")
@@ -42,6 +44,35 @@ def list_models():
         vim.command('vnew')
         vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
         vim.current.buffer[:] = model_list
+
+    except Exception as e:
+        vim.command(f"echoerr '[Vimini] Error: {e}'")
+
+def chat(prompt):
+    """
+    Sends a prompt to the Gemini API and displays the response in a new buffer.
+    """
+    if not _API_KEY:
+        message = "[Vimini] API key not set."
+        vim.command(f"echoerr '{message}'")
+        return
+
+    try:
+        # Configure the genai library with the API key.
+        client = genai.Client(api_key=_API_KEY)
+
+        # Send the prompt and get the response.
+        vim.command("echo '[Vimini] Thinking...'")
+        response = client.models.generate_content(
+            model=_MODEL,
+            contents=prompt,
+        )
+        vim.command("echo ''") # Clear the thinking message
+
+        # Display the response in a new split window.
+        vim.command('vnew')
+        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+        vim.current.buffer[:] = response.text.split('\n')
 
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")

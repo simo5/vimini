@@ -25,6 +25,9 @@ if empty(s:api_key)
   endif
 endif
 
+" Configuration: Model name
+let g:vimini_model = get(g:, 'vimini_model', 'gemini-2.5-flash')
+
 let s:plugin_root_dir = fnamemodify(resolve(expand('<sfile>:p')), ':h')
 
 py3 << EOF
@@ -41,7 +44,8 @@ try:
 
     from vimini import main
     api_key = vim.eval('s:api_key')
-    main.initialize(api_key=api_key)
+    model = vim.eval('g:vimini_model')
+    main.initialize(api_key=api_key, model=model)
 except Exception as e:
     # Escape single quotes in the error message to prevent Vimscript errors
     error_message = str(e).replace("'", "''")
@@ -61,3 +65,18 @@ EOF
 endfunction
 
 command! ViminiListModels call ViminiListModels()
+
+" Expose a function to Chat with Gemini
+function! ViminiChat(prompt)
+  py3 << EOF
+try:
+    from vimini import main
+    prompt = vim.eval('a:prompt')
+    main.chat(prompt)
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! -nargs=* ViminiChat call ViminiChat(string(<q-args>))
