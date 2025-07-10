@@ -135,3 +135,52 @@ def code(prompt):
 
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
+
+def review(prompt):
+    """
+    Sends the current buffer content to the Gemini API for a code review,
+    and displays the review in a new buffer.
+    """
+    if not _API_KEY:
+        message = "[Vimini] API key not set."
+        vim.command(f"echoerr '{message}'")
+        return
+
+    try:
+        # Get the content of the current buffer.
+        current_buffer_content = "\n".join(vim.current.buffer[:])
+        original_filetype = vim.eval('&filetype') or 'text' # Default to text if no filetype
+
+        # Construct the full prompt for the API.
+        full_prompt = (
+            f"Please review the following {original_filetype} code for potential issues, "
+            "improvements, best practices, and any possible bugs. "
+            "Provide a concise summary and actionable suggestions.\n\n"
+            "--- FILE CONTENT ---\n"
+            f"{current_buffer_content}\n"
+            "--- END FILE CONTENT ---"
+            f"{prompt}\n"
+        )
+
+        # Configure the genai library with the API key.
+        client = genai.Client(api_key=_API_KEY)
+
+        # Send the prompt and get the response.
+        vim.command("echo '[Vimini] Generating review...'")
+        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
+        response = client.models.generate_content(
+            model=_MODEL,
+            contents=full_prompt,
+        )
+        vim.command("echo ''") # Clear the message
+
+        # Open a new split window for the generated review.
+        vim.command('vnew')
+        vim.command('file Vimini Review')
+        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+
+        # Display the response in the new buffer.
+        vim.current.buffer[:] = response.text.split('\n')
+
+    except Exception as e:
+        vim.command(f"echoerr '[Vimini] Error: {e}'")

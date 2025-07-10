@@ -93,3 +93,19 @@ except Exception as e:
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
+
+command! -nargs=* ViminiCode call ViminiCode(string(<q-args>))
+
+function! ViminiReview(prompt)
+  py3 << EOF
+try:
+    from vimini import main
+    prompt = vim.eval('a:prompt')
+    main.review(prompt)
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! -nargs=* ViminiReview call ViminiReview(string(<q-args>))
