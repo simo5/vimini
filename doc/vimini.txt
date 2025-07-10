@@ -1,0 +1,38 @@
+*vimini.txt*    For My Awesome Vim Plugin    Last change: 2023 Oct 27
+
+==============================================================================
+CONTENTS                                                      *vimini*
+
+  1. Introduction.........................................|vimini-introduction|
+  2. Usage................................................|vimini-usage|
+  3. Commands.............................................|vimini-commands|
+  4. Configuration........................................|vimini-configuration|
+
+==============================================================================
+INTRODUCTION                                          *vimini-introduction*
+
+This is an awesome Vim plugin written in Python3.
+It serves as a skeleton for building more complex plugins.
+
+==============================================================================
+USAGE                                                         *vimini-usage*
+
+Install the plugin using your favorite plugin manager.
+
+==============================================================================
+COMMANDS                                                    *vimini-commands*
+
+*:MyPluginHello*
+    Prints a friendly greeting.
+
+==============================================================================
+CONFIGURATION                                           *vimini-configuration*
+
+g:vimini_user_name
+    Set this variable in your |vimrc| to customize the greeting message.
+    Example: >
+        let g:vimini_user_name = 'Alice'
+    <
+    Default: 'Vim User'
+
+==============================================================================
