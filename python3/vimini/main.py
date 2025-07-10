@@ -1,5 +1,6 @@
 import vim
 import os, subprocess
+import textwrap
 from google import genai
 
 # Module-level variables to store the API key and model name for later use.
@@ -353,16 +354,30 @@ def commit():
         )
         vim.command("echo ''")
 
-        # Parse the response into subject and body.
+        # Parse the response into subject and a raw body.
         response_text = response.text.strip()
         if '---' in response_text:
             parts = response_text.split('---', 1)
             subject = parts[0].strip()
-            body = parts[1].strip() if len(parts) > 1 else ""
+            raw_body = parts[1].strip() if len(parts) > 1 else ""
         else:  # Fallback if model doesn't follow instructions.
             lines = response_text.split('\n')
             subject = lines[0].strip()
-            body = '\n'.join(lines[1:]).strip()
+            raw_body = '\n'.join(lines[1:]).strip()
+
+        # Wrap the body so that no line is longer than 78 characters.
+        body = ""
+        if raw_body:
+            wrapped_lines = []
+            for line in raw_body.split('\n'):
+                # Preserve blank lines for paragraph separation. textwrap.wrap()
+                # would otherwise discard them.
+                if not line.strip():
+                    wrapped_lines.append('')
+                else:
+                    wrapped_lines.extend(textwrap.wrap(line, width=78))
+            body = '\n'.join(wrapped_lines)
+
 
         if not subject:
             vim.command("echoerr '[Vimini] Failed to generate a commit message. Reverting `git add`.'")
