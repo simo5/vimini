@@ -276,9 +276,9 @@ def show_diff():
 
 def commit():
     """
-    Generates a commit message using the Gemini API based on all current
-    changes (staged and unstaged), stages them, adds a sign-off and
-    a 'Co-authored-by' trailer, and executes git commit.
+    Generates a detailed commit message (subject and body) using the Gemini
+    API based on all current changes. It stages everything, shows the generated
+    message in a popup for review, and then commits with a 'Co-authored-by' trailer.
     """
     if not _API_KEY:
         message = "[Vimini] API key not set."
@@ -291,12 +291,8 @@ def commit():
             vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
             return
 
-        # Determine the root of the git repository from the current file's path.
-        # This ensures we operate on the entire repository, not just a subdirectory.
-        start_dir = os.path.dirname(current_file_path)
-        if not start_dir: # Handle unnamed buffers that might have a path set later
-            start_dir = '.'
-
+        # Determine the root of the git repository.
+        start_dir = os.path.dirname(current_file_path) or '.'
         rev_parse_cmd = ['git', '-C', start_dir, 'rev-parse', '--show-toplevel']
         repo_path_result = subprocess.run(rev_parse_cmd, capture_output=True, text=True, check=False)
 
@@ -307,7 +303,7 @@ def commit():
 
         repo_path = repo_path_result.stdout.strip()
 
-        # Stage all changes first to ensure we get a complete diff.
+        # Stage all changes to get a complete diff for the commit message.
         vim.command("echo '[Vimini] Staging all changes... (git add .)'")
         vim.command("redraw")
         add_cmd = ['git', '-C', repo_path, 'add', '.']
@@ -317,7 +313,7 @@ def commit():
             error_message = (add_result.stderr or add_result.stdout).strip().replace("'", "''")
             vim.command(f"echoerr '[Vimini] Git add failed: {error_message}'")
             return
-        vim.command("echo ''") # Clear staging message
+        vim.command("echo ''")
 
         # Get the diff of what was just staged.
         staged_diff_cmd = ['git', '-C', repo_path, 'diff', '--staged']
@@ -330,25 +326,25 @@ def commit():
 
         diff_to_process = staged_diff_result.stdout.strip()
 
-        # If the diff is empty, there's nothing to commit.
         if not diff_to_process:
             vim.command("echom '[Vimini] No changes to commit.'")
             return
 
-        # Create prompt for AI
+        # Create prompt for AI to generate subject and body.
         prompt = (
-            "Based on the following git diff, generate a concise "
-            "commit message that summarizes the changes.\n\n"
-            "The message must be a single line, 50 characters or less.\n"
-            "Do not add any prefixes like 'feat:' or 'fix:'.\n"
-            "Only output the raw message text, without any quotes or explanations.\n\n"
+            "Based on the following git diff, generate a commit message with a subject and a body.\n\n"
+            "RULES:\n"
+            "1. The subject must be a single line, 50 characters or less, and summarize the change.\n"
+            "2. Do not add any prefixes like 'feat:' or 'fix:' to the subject.\n"
+            "3. The body should be a brief description of the changes, explaining the 'what' and 'why'.\n"
+            "4. Separate the subject and body with '---' on its own line.\n"
+            "5. Only output the raw text, with no extra explanations or markdown.\n\n"
             "--- GIT DIFF ---\n"
             f"{diff_to_process}\n"
             "--- END GIT DIFF ---"
         )
 
-        # Call Gemini API
-        vim.command("echo '[Vimini] Generating commit message...'")
+        vim.command("echo '[Vimini] Generating commit message... (this may take a moment)'")
         vim.command("redraw")
         client = genai.Client(api_key=_API_KEY)
         response = client.models.generate_content(
@@ -357,23 +353,73 @@ def commit():
         )
         vim.command("echo ''")
 
-        # Clean up response and prepare for commit
-        commit_subject = response.text.strip().strip('"`\n')
+        # Parse the response into subject and body.
+        response_text = response.text.strip()
+        if '---' in response_text:
+            parts = response_text.split('---', 1)
+            subject = parts[0].strip()
+            body = parts[1].strip() if len(parts) > 1 else ""
+        else:  # Fallback if model doesn't follow instructions.
+            lines = response_text.split('\n')
+            subject = lines[0].strip()
+            body = '\n'.join(lines[1:]).strip()
 
-        if not commit_subject:
-            vim.command("echoerr '[Vimini] Failed to generate a commit message.'")
+        if not subject:
+            vim.command("echoerr '[Vimini] Failed to generate a commit message. Reverting `git add`.'")
+            reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
+            subprocess.run(reset_cmd, check=False)
             return
 
-        # Construct the commit command with sign-off and Gemini trailer
-        gemini_trailer = "Co-authored-by: Gemini <vimini@google.com>"
-        commit_cmd = [
-            'git', '-C', repo_path, 'commit', '-s',
-            '-m', commit_subject,
-            '-m', '',  # Blank line for separation
-            '-m', gemini_trailer
-        ]
+        # Show the generated message in a popup for review.
+        popup_content = [f"Subject: {subject}", ""]
+        if body:
+            popup_content.extend(body.split('\n'))
 
-        display_message = commit_subject.replace("'", "''")
+        # The str() representation of a Python dict is compatible with Vimscript's
+        # dict syntax, which is required for vim.eval(). For popup_create, the
+        # value 0 for 'line' and 'col' centers the popup.
+        popup_options = {
+            'title': ' Commit Message ', 'line': 0, 'col': 0,
+            'minwidth': 50, 'maxwidth': 80,
+            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
+            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
+            'close': 'none', 'zindex': 200,
+        }
+        # Use vim.eval to call Vim's popup_create function. This is more
+        # compatible across different Vim/Neovim versions than vim.fn.
+        # A Python List of strings is also compatible with a Vimscript List.
+        popup_id = vim.eval(f"popup_create({popup_content}, {popup_options})")
+
+        vim.command("echom '[Vimini] Press any key to commit, or Ctrl-C to cancel.'")
+        vim.command("redraw")
+
+        commit_cancelled = False
+        try:
+            # We don't need the return value, just wait for a key press.
+            # Hitting Ctrl-C will interrupt this call and raise a vim.error.
+            vim.eval('getchar()')
+        except vim.error:  # Catch Vim:Interrupt from Ctrl-C.
+            commit_cancelled = True
+
+        # Close the popup regardless of user input. The ID from vim.eval is a string.
+        vim.eval(f"popup_close({popup_id})")
+        vim.command("echo ''") # Clear confirmation message.
+
+        # If user cancelled, revert the staging and exit.
+        if commit_cancelled:
+            vim.command("echom '[Vimini] Commit cancelled. Reverting `git add`.'")
+            reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
+            subprocess.run(reset_cmd, check=False)
+            return
+
+        # Construct the commit command with subject, body, sign-off, and trailer.
+        gemini_trailer = "Co-authored-by: Gemini <vimini@google.com>"
+        commit_cmd = ['git', '-C', repo_path, 'commit', '-s', '-m', subject]
+        if body:
+            commit_cmd.extend(['-m', body])
+        commit_cmd.extend(['-m', '', '-m', gemini_trailer]) # Blank line before trailer.
+
+        display_message = subject.replace("'", "''")
         vim.command(f"echom '[Vimini] Committing with subject: {display_message}'")
         vim.command("redraw")
 
