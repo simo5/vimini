@@ -1,18 +1,15 @@
 import vim
 
-def hello():
-    """
-    A simple function that prints a message in Vim.
-    This is the main logic of our plugin.
-    """
-    # The g:vimini_user_name variable is guaranteed to exist by the
-    # plugin/vimini.vim script, which sets a default value.
-    user_name = vim.eval('g:vimini_user_name')
+# Module-level variable to store the API key for later use.
+_API_KEY = None
 
-    # Use vim.command to execute an Ex command.
-    # f-strings are great for this.
-    vim.command(f'echo "Hello, {user_name}! This is from Python."')
-
-    # You can also interact with the buffer, window, etc.
-    # For example, to add a line to the current buffer:
-    # vim.current.buffer.append("This line was added by a Python script.")
+def initialize(api_key):
+    """
+    Initializes the plugin with the user's API key.
+    This function is called from the plugin's Vimscript entry point.
+    """
+    global _API_KEY
+    _API_KEY = api_key
+    if not _API_KEY:
+        message = "[Vimini] API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini_token."
+        vim.command(f"echoerr '{message}'")

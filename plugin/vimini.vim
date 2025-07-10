@@ -8,7 +8,22 @@ endif
 let g:loaded_vimini = 1
 
 " Default configuration
-let g:vimini_user_name = get(g:, 'vimini_user_name', 'Vim User')
+" Configuration: API Key
+" Priority:
+" 1. g:vimini_api_key
+" 2. ~/.vimini/api_key file
+let s:api_key = get(g:, 'vimini_api_key', '')
+if empty(s:api_key)
+  let s:api_key_path = expand('~/.config/gemini.token')
+  if filereadable(s:api_key_path)
+    try
+      let s:api_key = trim(readfile(s:api_key_path)[0])
+    catch
+      " Handle empty file case
+      let s:api_key = ''
+    endtry
+  endif
+endif
 
 let s:plugin_root_dir = fnamemodify(resolve(expand('<sfile>:p')), ':h')
 
@@ -25,7 +40,10 @@ try:
     sys.path.insert(0, python_root_dir)
 
     from vimini import main
-    main.hello()
+    api_key = vim.eval('s:api_key')
+    main.initialize(api_key=api_key)
 except Exception as e:
-    vim.command(f"echoerr '[MyPlugin] Error: {e}'")
+    # Escape single quotes in the error message to prevent Vimscript errors
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
