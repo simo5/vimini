@@ -72,6 +72,7 @@ def chat(prompt):
         # Display the prompt in the new buffer.
         vim.current.buffer[:] = [f"Q: {prompt}", "---", "A:"]
         vim.command('normal! G') # Move cursor to the end to prepare for the answer
+        vim.command("redraw")
 
         # Send the prompt and get the response.
         vim.command("echo '[Vimini] Thinking...'")
