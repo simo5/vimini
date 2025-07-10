@@ -291,7 +291,21 @@ def commit():
             vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
             return
 
-        repo_path = os.path.dirname(current_file_path)
+        # Determine the root of the git repository from the current file's path.
+        # This ensures we operate on the entire repository, not just a subdirectory.
+        start_dir = os.path.dirname(current_file_path)
+        if not start_dir: # Handle unnamed buffers that might have a path set later
+            start_dir = '.'
+
+        rev_parse_cmd = ['git', '-C', start_dir, 'rev-parse', '--show-toplevel']
+        repo_path_result = subprocess.run(rev_parse_cmd, capture_output=True, text=True, check=False)
+
+        if repo_path_result.returncode != 0:
+            error_message = (repo_path_result.stderr or "Not a git repository.").strip().replace("'", "''")
+            vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
+            return
+
+        repo_path = repo_path_result.stdout.strip()
 
         # Stage all changes first to ensure we get a complete diff.
         vim.command("echo '[Vimini] Staging all changes... (git add .)'")
