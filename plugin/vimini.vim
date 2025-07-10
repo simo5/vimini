@@ -36,7 +36,7 @@ try:
     import sys
     import os
     plugin_root_dir = vim.eval('s:plugin_root_dir')
-    python_root_dir = normpath(join(plugin_root_dir, '..', 'python'))
+    python_root_dir = normpath(join(plugin_root_dir, '..', 'python3'))
     sys.path.insert(0, python_root_dir)
 
     from vimini import main
@@ -47,3 +47,17 @@ except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
+
+" Expose a function to list available models
+function! ViminiListModels()
+  py3 << EOF
+try:
+    from vimini import main
+    main.list_models()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! ViminiListModels call ViminiListModels()
