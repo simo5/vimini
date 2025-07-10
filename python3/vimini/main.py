@@ -413,11 +413,9 @@ def commit():
         try:
             # We convert it to a char to check for 'y' or 'Y'.
             answer_code = vim.eval('getchar()')
-            if isinstance(answer_code, int) and answer_code > 0:
-                answer_char = chr(answer_code)
-                ans = answer_char
-                if answer_char.lower() == 'y':
-                    commit_confirmed = True
+            answer_char = chr(int(answer_code))
+            if answer_char.lower() == 'y':
+                commit_confirmed = True
         except vim.error: # Catches Vim:Interrupt from Ctrl-C.
             pass # commit_confirmed remains False
         finally:
