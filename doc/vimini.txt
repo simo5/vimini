@@ -11,8 +11,7 @@ CONTENTS                                                      *vimini*
 ==============================================================================
 INTRODUCTION                                          *vimini-introduction*
 
-This is an awesome Vim plugin written in Python3.
-It serves as a skeleton for building more complex plugins.
+This is an Vim plugin to use Gemini via APIs written in Python3.
 
 ==============================================================================
 USAGE                                                         *vimini-usage*
