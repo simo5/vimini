@@ -123,3 +123,17 @@ EOF
 endfunction
 
 command! ViminiDiff call ViminiDiff()
+
+" Expose a function to generate and execute a git commit
+function! ViminiCommit()
+  py3 << EOF
+try:
+    from vimini import main
+    main.commit()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! ViminiCommit call ViminiCommit()

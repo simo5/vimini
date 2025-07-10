@@ -273,3 +273,106 @@ def show_diff():
         vim.command("echoerr '[Vimini] Error: `git` command not found. Is it in your PATH?'")
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
+
+def commit():
+    """
+    Generates a commit message using the Gemini API based on all current
+    changes (staged and unstaged), stages them, adds a sign-off and
+    a 'Co-authored-by' trailer, and executes git commit.
+    """
+    if not _API_KEY:
+        message = "[Vimini] API key not set."
+        vim.command(f"echoerr '{message}'")
+        return
+
+    try:
+        current_file_path = vim.current.buffer.name
+        if not current_file_path:
+            vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
+            return
+
+        repo_path = os.path.dirname(current_file_path)
+
+        # Stage all changes first to ensure we get a complete diff.
+        vim.command("echo '[Vimini] Staging all changes... (git add .)'")
+        vim.command("redraw")
+        add_cmd = ['git', '-C', repo_path, 'add', '.']
+        add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False)
+
+        if add_result.returncode != 0:
+            error_message = (add_result.stderr or add_result.stdout).strip().replace("'", "''")
+            vim.command(f"echoerr '[Vimini] Git add failed: {error_message}'")
+            return
+        vim.command("echo ''") # Clear staging message
+
+        # Get the diff of what was just staged.
+        staged_diff_cmd = ['git', '-C', repo_path, 'diff', '--staged']
+        staged_diff_result = subprocess.run(staged_diff_cmd, capture_output=True, text=True, check=False)
+
+        if staged_diff_result.returncode != 0:
+            error_message = staged_diff_result.stderr.strip().replace("'", "''")
+            vim.command(f"echoerr '[Vimini] Git error getting staged diff: {error_message}'")
+            return
+
+        diff_to_process = staged_diff_result.stdout.strip()
+
+        # If the diff is empty, there's nothing to commit.
+        if not diff_to_process:
+            vim.command("echom '[Vimini] No changes to commit.'")
+            return
+
+        # Create prompt for AI
+        prompt = (
+            "Based on the following git diff, generate a concise "
+            "commit message that summarizes the changes.\n\n"
+            "The message must be a single line, 50 characters or less.\n"
+            "Do not add any prefixes like 'feat:' or 'fix:'.\n"
+            "Only output the raw message text, without any quotes or explanations.\n\n"
+            "--- GIT DIFF ---\n"
+            f"{diff_to_process}\n"
+            "--- END GIT DIFF ---"
+        )
+
+        # Call Gemini API
+        vim.command("echo '[Vimini] Generating commit message...'")
+        vim.command("redraw")
+        client = genai.Client(api_key=_API_KEY)
+        response = client.models.generate_content(
+            model=_MODEL,
+            contents=prompt,
+        )
+        vim.command("echo ''")
+
+        # Clean up response and prepare for commit
+        commit_subject = response.text.strip().strip('"`\n')
+
+        if not commit_subject:
+            vim.command("echoerr '[Vimini] Failed to generate a commit message.'")
+            return
+
+        # Construct the commit command with sign-off and Gemini trailer
+        gemini_trailer = "Co-authored-by: Gemini <vimini@google.com>"
+        commit_cmd = [
+            'git', '-C', repo_path, 'commit', '-s',
+            '-m', commit_subject,
+            '-m', '',  # Blank line for separation
+            '-m', gemini_trailer
+        ]
+
+        display_message = commit_subject.replace("'", "''")
+        vim.command(f"echom '[Vimini] Committing with subject: {display_message}'")
+        vim.command("redraw")
+
+        commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, check=False)
+
+        if commit_result.returncode == 0:
+            success_message = commit_result.stdout.strip().replace("'", "''").split('\n')[0]
+            vim.command(f"echom '[Vimini] Commit successful: {success_message}'")
+        else:
+            error_message = (commit_result.stderr or commit_result.stdout).strip().replace("'", "''")
+            vim.command(f"echoerr '[Vimini] Git commit failed: {error_message}'")
+
+    except FileNotFoundError:
+        vim.command("echoerr '[Vimini] Error: `git` command not found. Is it in your PATH?'")
+    except Exception as e:
+        vim.command(f"echoerr '[Vimini] Error: {e}'")
