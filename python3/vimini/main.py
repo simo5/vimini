@@ -83,3 +83,55 @@ def chat(prompt):
 
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
+
+def code(prompt):
+    """
+    Sends the current buffer content along with a prompt to the Gemini API
+    to generate code, and displays the response in a new buffer.
+    """
+    if not _API_KEY:
+        message = "[Vimini] API key not set."
+        vim.command(f"echoerr '{message}'")
+        return
+
+    try:
+        # Get the content and filetype of the current buffer.
+        current_buffer_content = "\n".join(vim.current.buffer[:])
+        original_filetype = vim.eval('&filetype')
+
+        # Construct the full prompt for the API.
+        full_prompt = (
+            f"{prompt}\n\n"
+            "Based on the user's request, please generate the code. "
+            "Use the following file content as context.\n\n"
+            "--- FILE CONTENT ---\n"
+            f"{current_buffer_content}\n"
+            "--- END FILE CONTENT ---\n\n"
+            "IMPORTANT: Only output the raw code. Do not include any explanations, "
+            "nor markdown code fences"
+        )
+
+        # Configure the genai library with the API key.
+        client = genai.Client(api_key=_API_KEY)
+
+        # Send the prompt and get the response.
+        vim.command("echo '[Vimini] Thinking...'")
+        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
+        response = client.models.generate_content(
+            model=_MODEL,
+            contents=full_prompt,
+        )
+        vim.command("echo ''") # Clear the thinking message
+
+        # Open a new split window for the generated code.
+        vim.command('vnew')
+        vim.command('file Vimini Code')
+        vim.command('setlocal buftype=nofile noswapfile')
+        if original_filetype:
+            vim.command(f'setlocal filetype={original_filetype}')
+
+        # Display the response in the new buffer.
+        vim.current.buffer[:] = response.text.split('\n')
+
+    except Exception as e:
+        vim.command(f"echoerr '[Vimini] Error: {e}'")

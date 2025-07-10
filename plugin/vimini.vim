@@ -80,3 +80,16 @@ EOF
 endfunction
 
 command! -nargs=* ViminiChat call ViminiChat(string(<q-args>))
+
+" Expose a function to generate code with Gemini
+function! ViminiCode(prompt)
+  py3 << EOF
+try:
+    from vimini import main
+    prompt = vim.eval('a:prompt')
+    main.code(prompt)
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
