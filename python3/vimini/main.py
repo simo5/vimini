@@ -228,8 +228,9 @@ def code(prompt):
                         ai_buffer[:] = ai_buffer[1:] # reset buffer with all content but the first line
                         has_stripped_opening_fence = True
 
-                    # Move cursor to the end and scroll view to keep the last line visible.
-                    vim.command('normal! Gz-')
+                # Move cursor to the end and scroll view to keep the last line visible.
+                vim.command('normal! Gz-')
+                vim.command("echo '[Vimini] Thinking...'")
                 vim.command('redraw')
 
         vim.command("echo ''") # Clear the thinking message
@@ -242,6 +243,7 @@ def code(prompt):
         ai_generated_code = "\n".join(list(ai_buffer))
 
         # Force a redraw to show the final state after any last-line stripping
+        vim.command("echo '[Vimini] Thinking...'")
         vim.command("redraw!")
 
         # --- Generate and display the diff ---
