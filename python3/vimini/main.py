@@ -165,23 +165,7 @@ def code(prompt):
             "nor markdown code fences"
         )
 
-        # Send the prompt and get the response.
-        vim.command("echo '[Vimini] Thinking...'")
-        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
-        response = client.models.generate_content(
-            model=_MODEL,
-            contents=full_prompt,
-        )
-        vim.command("echo ''") # Clear the thinking message
-        ai_generated_code = response.text
-
-        # Strip markdown code fences if present. The model sometimes wraps the
-        # code in ``` despite the prompt asking it not to.
-        lines = ai_generated_code.strip().split('\n')
-        if len(lines) > 1 and lines[0].strip().startswith('```') and lines[-1].strip() == '```':
-            ai_generated_code = '\n'.join(lines[1:-1])
-
-        # Open a new split window for the generated code.
+        # Create the ViminiCode buffer before calling the model.
         vim.command('vnew')
         vim.command('file Vimini Code')
         vim.command('setlocal buftype=nofile noswapfile')
@@ -192,11 +176,57 @@ def code(prompt):
         # The apply_code() function uses this variable to find the correct target buffer.
         vim.command(f"let b:vimini_source_bufnr = {original_bufnr}")
 
-        # Display the response in the new buffer.
-        vim.current.buffer[:] = ai_generated_code.split('\n')
+        # The new buffer is now vim.current.buffer. Initialize it and show it.
+        vim.current.buffer[:] = ['']
+        vim.command("redraw!")
 
-        # Force a redraw to ensure the new buffer is fully rendered before we
-        # proceed, which can prevent "Press ENTER" prompts.
+        # Use generate_content_stream() to call the model
+        vim.command("echo '[Vimini] Thinking...'")
+        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
+        response_stream = client.models.generate_content_stream(
+            model=_MODEL,
+            contents=full_prompt,
+        )
+        ai_buffer = vim.current.buffer # Reference the new buffer
+        ai_buffer[:] = [''] # Start with an empty buffer with one line for appending
+        has_stripped_opening_fence = False
+
+        # Loop over chunks received and update the ViminiCode buffer as data comes in
+        for chunk in response_stream:
+            if not chunk.text:
+                continue
+
+            # Split incoming text by newlines to handle chunks that span multiple lines
+            new_lines = chunk.text.split('\n')
+
+            # Append the first part of the new text to the current last line in the buffer
+            ai_buffer[-1] += new_lines[0]
+
+            # If the chunk contained one or more newlines, add the rest as new lines
+            if len(new_lines) > 1:
+                ai_buffer.append(new_lines[1:])
+
+            # Check for and strip the opening code fence as soon as it appears.
+            # This is done only once.
+            if not has_stripped_opening_fence and ai_buffer and ai_buffer[0].lstrip().startswith('```'):
+                ai_buffer[:] = ai_buffer[1:] # reset buffer with all content but the first line
+                has_stripped_opening_fence = True
+
+            # Move cursor to the end and scroll view to keep the last line visible.
+            # The 'G' moves to the last line and 'z-' redraws with that line at
+            # the bottom of the window. This action also handles screen updates.
+            vim.command('normal! Gz-')
+
+        vim.command("echo ''") # Clear the thinking message
+
+        # After the loop, remove the closing fence if it's the last line
+        if ai_buffer and ai_buffer[-1].strip() == '```':
+            ai_buffer = ai_buffer[:-1]
+
+        # Reconstruct the final, cleaned code string for the diff logic that follows
+        ai_generated_code = "\n".join(list(ai_buffer))
+
+        # Force a redraw to show the final state after any last-line stripping
         vim.command("redraw!")
 
         # --- Generate and display the diff ---
