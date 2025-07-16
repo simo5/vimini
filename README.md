@@ -17,6 +17,8 @@ and get code reviews without leaving your coding environment.
     AI.
 *   **List Models**: Easily view all available Gemini models.
 *   **API Key Management**: Configure your Gemini API key securely.
+*   **Live "Thinking" View**: Optionally watch the AI's thought process in
+    real-time during code generation.
 
 ## Requirements
 
@@ -74,12 +76,23 @@ function.
     ```
 
 2.  **Default Model (`g:vimini_model`)**:
-    Specify the default Gemini model you want to use for chat, code
-    generation, and reviews. You can list available models using
-    `:ViminiListModels`.
+    Specify the default Gemini model you want to use. The default is
+    `gemini-2.5-flash`. You can list available models using `:ViminiListModels`.
     ```vim
-    let g:vimini_model = 'gemini-pro' " Or 'gemini-pro-vision', etc.
+    let g:vimini_model = 'gemini-2.5-flash' " Or 'gemini-2.5-pro', etc.
     ```
+
+3.  **Thinking Display (`g:vimini_thinking`)**:
+    Control whether the AI's "thinking" process is displayed in a
+    separate buffer during code generation.
+    ```vim
+    " Show the 'Vimini Thoughts' buffer. (Default)
+    let g:vimini_thinking = 'on'
+
+    " Hide the 'Vimini Thoughts' buffer.
+    let g:vimini_thinking = 'off'
+    ```
+    This can also be controlled with the `:ViminiThinking` command.
 
 ## Usage
 
@@ -103,12 +116,31 @@ response in a new vertical split buffer.
 :ViminiChat What is the capital of France?
 ```
 
+### `:ViminiThinking [on|off]`
+
+Toggles or sets the display of the AI's real-time thought process
+during code generation. When enabled, a `Vimini Thoughts` buffer will
+appear alongside the `Vimini Code` buffer.
+
+```vim
+" Toggle the current setting (on -> off, off -> on)
+:ViminiThinking
+
+" Explicitly turn the thinking display on
+:ViminiThinking on
+
+" Explicitly turn the thinking display off
+:ViminiThinking off
+```
+
 ### `:ViminiCode {prompt}`
 
 Takes the content of all open buffers as context, along with your
-`prompt`, and asks the Gemini model to generate code. The generated code
-is displayed in a new split buffer (`Vimini Code`), along with a third
-buffer showing a diff against the original file (`Vimini Diff`).
+`prompt`, and asks the Gemini model to generate code. The result is
+streamed into several new buffers:
+*   `Vimini Code`: The generated code.
+*   `Vimini Diff`: A diff view comparing the original code with the AI's suggestion.
+*   `Vimini Thoughts` (Optional): If `g:vimini_thinking` is `on` (the default), this buffer shows the AI's internal monologue as it works.
 
 This command is ideal for asking the AI to refactor, debug, or extend
 your current code.
@@ -123,7 +155,7 @@ apply the changes:
 #### `:ViminiApply`
 Replaces the entire content of your original buffer with the
 AI-generated code from the `Vimini Code` buffer. It then closes the
-temporary `Vimini Code` and `Vimini Diff` buffers.
+temporary `Vimini Code`, `Vimini Diff`, and `Vimini Thoughts` buffers.
 
 #### `:ViminiApply append`
 Appends the AI-generated code to the end of your original buffer. This
