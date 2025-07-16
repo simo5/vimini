@@ -18,7 +18,7 @@ def initialize(api_key, model):
     _MODEL = model
     _GENAI_CLIENT = None # Reset client if key/model changes.
     if not _API_KEY:
-        message = "[Vimini] API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini_token."
+        message = "[Vimini] API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token."
         vim.command(f"echoerr '{message}'")
 
 def _get_client():
