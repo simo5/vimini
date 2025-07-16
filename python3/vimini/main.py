@@ -2,6 +2,7 @@ import vim
 import os, subprocess, tempfile
 import textwrap
 from google import genai
+from google.genai import types
 
 # Module-level variables to store the API key, model name, and client instance.
 _API_KEY = None
@@ -103,8 +104,7 @@ def chat(prompt):
 def code(prompt):
     """
     Sends the current buffer content along with a prompt to the Gemini API
-    to generate code. Displays the response in a new buffer and also creates
-    a third buffer showing the diff between the original and AI version.
+    to generate code. Displays thoughts, the response, and a diff in new buffers.
     """
     try:
         client = _get_client()
@@ -129,14 +129,9 @@ def code(prompt):
             buf_filetype = vim.eval(f"getbufvar({buf_number}, '&filetype')") or "text"
             buf_buftype = vim.eval(f"getbufvar({buf_number}, '&buftype')")
 
-            # Filter out irrelevant buffers:
-            # 1. Skip if the buffer content is empty and it's an unnamed buffer (e.g., scratchpad).
-            # 2. Skip common non-file/temporary buffer types ('nofile', 'terminal', 'help', 'nowrite')
-            #    UNLESS it's the current active buffer. The current buffer should always be considered
-            #    primary context, regardless of its buftype, as the user initiated the action from it.
+            # Filter out irrelevant buffers
             if not buf_content.strip() and not buf_name:
                 continue
-
             if buf_buftype in ['nofile', 'terminal', 'help', 'nowrite'] and buf != vim.current.buffer:
                 continue
 
@@ -165,63 +160,74 @@ def code(prompt):
             "nor markdown code fences"
         )
 
-        # Create the ViminiCode buffer before calling the model.
+        # Create the Vimini Thoughts buffer before calling the model.
+        vim.command('vnew')
+        vim.command('file Vimini Thoughts')
+        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+        thoughts_buffer = vim.current.buffer
+        thoughts_buffer[:] = ['']
+
+        # Create the ViminiCode buffer. This becomes the active window.
         vim.command('vnew')
         vim.command('file Vimini Code')
         vim.command('setlocal buftype=nofile noswapfile')
         if original_filetype: # Apply the filetype of the original buffer to the new one
             vim.command(f'setlocal filetype={original_filetype}')
-
-        # Save a reference to the original buffer's number in the new AI buffer.
-        # The apply_code() function uses this variable to find the correct target buffer.
         vim.command(f"let b:vimini_source_bufnr = {original_bufnr}")
+        ai_buffer = vim.current.buffer # Reference the new code buffer
+        ai_buffer[:] = ['']
 
-        # The new buffer is now vim.current.buffer. Initialize it and show it.
-        vim.current.buffer[:] = ['']
-        vim.command("redraw!")
-
-        # Use generate_content_stream() to call the model
+        # Display a Thinking.. message so users know they have to wait
         vim.command("echo '[Vimini] Thinking...'")
-        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
+        vim.command("redraw")
+
+        # Use generate_content_stream() with thinking enabled
         response_stream = client.models.generate_content_stream(
             model=_MODEL,
             contents=full_prompt,
+            config=types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    include_thoughts=True
+                )
+            )
         )
-        ai_buffer = vim.current.buffer # Reference the new buffer
-        ai_buffer[:] = [''] # Start with an empty buffer with one line for appending
         has_stripped_opening_fence = False
 
-        # Loop over chunks received and update the ViminiCode buffer as data comes in
         for chunk in response_stream:
-            if not chunk.text:
+            if not chunk.candidates:
                 continue
+            for part in chunk.candidates[0].content.parts:
+                if not part.text:
+                    continue
 
-            # Split incoming text by newlines to handle chunks that span multiple lines
-            new_lines = chunk.text.split('\n')
+                is_thought = hasattr(part, 'thought') and part.thought
+                target_buffer = thoughts_buffer if is_thought else ai_buffer
 
-            # Append the first part of the new text to the current last line in the buffer
-            ai_buffer[-1] += new_lines[0]
+                # Split incoming text by newlines to handle chunks that span multiple lines
+                new_lines = part.text.split('\n')
 
-            # If the chunk contained one or more newlines, add the rest as new lines
-            if len(new_lines) > 1:
-                ai_buffer.append(new_lines[1:])
+                # Append the first part of the new text to the current last line in the buffer
+                target_buffer[-1] += new_lines[0]
 
-            # Check for and strip the opening code fence as soon as it appears.
-            # This is done only once.
-            if not has_stripped_opening_fence and ai_buffer and ai_buffer[0].lstrip().startswith('```'):
-                ai_buffer[:] = ai_buffer[1:] # reset buffer with all content but the first line
-                has_stripped_opening_fence = True
+                # If the chunk contained one or more newlines, add the rest as new lines
+                if len(new_lines) > 1:
+                    target_buffer.append(new_lines[1:])
 
-            # Move cursor to the end and scroll view to keep the last line visible.
-            # The 'G' moves to the last line and 'z-' redraws with that line at
-            # the bottom of the window. This action also handles screen updates.
-            vim.command('normal! Gz-')
+                if not is_thought:
+                    # Check for and strip the opening code fence as soon as it appears.
+                    if not has_stripped_opening_fence and ai_buffer and ai_buffer[0].lstrip().startswith('```'):
+                        ai_buffer[:] = ai_buffer[1:] # reset buffer with all content but the first line
+                        has_stripped_opening_fence = True
+
+                    # Move cursor to the end and scroll view to keep the last line visible.
+                    vim.command('normal! Gz-')
+                vim.command('redraw')
 
         vim.command("echo ''") # Clear the thinking message
 
-        # After the loop, remove the closing fence if it's the last line
+        # After the loop, remove the closing fence if it's the last line in the code buffer
         if ai_buffer and ai_buffer[-1].strip() == '```':
-            ai_buffer = ai_buffer[:-1]
+            ai_buffer[:] = ai_buffer[:-1]
 
         # Reconstruct the final, cleaned code string for the diff logic that follows
         ai_generated_code = "\n".join(list(ai_buffer))
@@ -230,9 +236,6 @@ def code(prompt):
         vim.command("redraw!")
 
         # --- Generate and display the diff ---
-
-        # Create two temporary files to hold the original and AI-generated content.
-        # We use delete=False so we can get their names and pass them to the diff command.
         with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.orig', encoding='utf-8') as f_orig, \
              tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.ai', encoding='utf-8') as f_ai:
             f_orig.write(original_buffer_content)
@@ -241,39 +244,27 @@ def code(prompt):
             ai_filepath = f_ai.name
 
         try:
-            # Run the diff command. -u generates a unified diff, which is standard.
             cmd = ['diff', '-u', orig_filepath, ai_filepath]
-            # diff returns 0 for no changes, 1 for changes, >1 for errors.
-            # We capture all output and don't check for failure on return code 1.
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-
-            # Check for errors from the diff command itself (return code > 1)
             if result.returncode > 1:
                 error_message = result.stderr.strip().replace("'", "''")
                 vim.command(f"echoerr '[Vimini] Could not generate diff: {error_message}'")
-                return # Stop, but leave the AI buffer open for the user.
-
+                return
             diff_output = result.stdout
         finally:
-            # Ensure temporary files are cleaned up.
             os.remove(orig_filepath)
             os.remove(ai_filepath)
 
-        # If there's no difference, inform the user and don't open a new window.
         if not diff_output.strip():
             vim.command("echom '[Vimini] AI content is identical to the original.'")
             return
 
-        # Open a third split window for the diff.
+        # Open a new split window for the diff.
         vim.command('vnew')
         vim.command('file Vimini Diff')
         vim.command('setlocal buftype=nofile filetype=diff noswapfile')
-
-        # Display the diff output.
         vim.current.buffer[:] = diff_output.split('\n')
-        # Move cursor to the top of the buffer for better user experience.
         vim.command('normal! 1G')
-
 
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
@@ -567,12 +558,14 @@ def apply_code():
     # Locate the source 'Vimini Code' buffer, which contains the AI-generated code.
     ai_buffer = None
     diff_buffer = None
+    thoughts_buffer = None
     for buf in vim.buffers:
         if buf.name and buf.name.endswith('Vimini Code'):
-            # This is the buffer with the AI's code.
             ai_buffer = buf
         elif buf.name and buf.name.endswith('Vimini Diff'):
             diff_buffer = buf
+        elif buf.name and buf.name.endswith('Vimini Thoughts'):
+            thoughts_buffer = buf
 
     if not ai_buffer:
         vim.command("echoerr '[Vimini] `Vimini Code` buffer not found. Was :ViminiCode run?'")
@@ -610,6 +603,8 @@ def apply_code():
     vim.command(f"bdelete! {ai_buffer.number}")
     if diff_buffer and diff_buffer.number in [b.number for b in vim.buffers]:
         vim.command(f"bdelete! {diff_buffer.number}")
+    if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
+        vim.command(f"bdelete! {thoughts_buffer.number}")
 
     vim.command(f"echom '[Vimini] Applied changes to `{original_buffer_name}`.'")
 
@@ -621,12 +616,14 @@ def append_code():
     # Locate the source 'Vimini Code' buffer, which contains the AI-generated code.
     ai_buffer = None
     diff_buffer = None
+    thoughts_buffer = None
     for buf in vim.buffers:
         if buf.name and buf.name.endswith('Vimini Code'):
-            # This is the buffer with the AI's code.
             ai_buffer = buf
         elif buf.name and buf.name.endswith('Vimini Diff'):
             diff_buffer = buf
+        elif buf.name and buf.name.endswith('Vimini Thoughts'):
+            thoughts_buffer = buf
 
     if not ai_buffer:
         vim.command("echoerr '[Vimini] `Vimini Code` buffer not found. Was :ViminiCode run?'")
@@ -667,5 +664,8 @@ def append_code():
     vim.command(f"bdelete! {ai_buffer.number}")
     if diff_buffer and diff_buffer.number in [b.number for b in vim.buffers]:
         vim.command(f"bdelete! {diff_buffer.number}")
+    if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
+        vim.command(f"bdelete! {thoughts_buffer.number}")
+
 
     vim.command(f"echom '[Vimini] Appended code to `{original_buffer_name}`.'")
