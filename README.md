@@ -37,7 +37,9 @@ You can install Vimini using your preferred Vim plugin manager.
 
 1.  Add the following line to your `.vimrc` or `init.vim`:
     ```vim
+    call plug#begin()
     Plug 'your-github-username/vimini.vim' " Replace with the actual repo path
+    call plug#end()
     ```
 2.  Run `:PlugInstall` in Vim.
 
@@ -63,11 +65,11 @@ function.
     let g:vimini_api_key = 'YOUR_API_KEY_HERE'
     ```
     **Alternatively**, Vimini will also look for the API key in a file
-    named `~/.config/gemini_token`. This is the recommended and more
+    named `~/.config/gemini.token`. This is the recommended and more
     secure approach. Just place your API key (and nothing else) into
     that file:
     ```
-    # ~/.config/gemini_token
+    # ~/.config/gemini.token
     YOUR_API_KEY_HERE
     ```
 
