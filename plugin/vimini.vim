@@ -81,13 +81,42 @@ endfunction
 
 command! -nargs=* ViminiChat call ViminiChat(string(<q-args>))
 
+let g:vimini_thinking = get(g:, 'vimini_thinking', 'on')
+
+" Expose a function to toggle thinking on and off
+function! ViminiThinking(...)
+  let l:option = get(a:, 1, '')
+
+  " Handle explicit setting
+  if !empty(l:option)
+    if l:option ==# 'on' || l:option ==# 'off'
+      let g:vimini_thinking = l:option
+    else
+      echoerr "[Vimini] Invalid argument for ViminiThinking. Use 'on' or 'off'."
+      return
+    endif
+  " Handle toggling
+  else
+    if g:vimini_thinking ==# 'on'
+      let g:vimini_thinking = 'off'
+    else
+      let g:vimini_thinking = 'on'
+    endif
+  endif
+
+  echo "[Vimini] Thinking is now " . g:vimini_thinking
+endfunction
+
+command! -nargs=? ViminiThinking call ViminiThinking(<f-args>)
+
 " Expose a function to generate code with Gemini
 function! ViminiCode(prompt)
   py3 << EOF
 try:
     from vimini import main
     prompt = vim.eval('a:prompt')
-    main.code(prompt)
+    verbose = vim.eval('g:vimini_thinking') == 'on'
+    main.code(prompt, verbose)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")

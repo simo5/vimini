@@ -101,10 +101,11 @@ def chat(prompt):
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
 
-def code(prompt):
+def code(prompt, verbose=False):
     """
     Sends the current buffer content along with a prompt to the Gemini API
-    to generate code. Displays thoughts, the response, and a diff in new buffers.
+    to generate code. Displays thoughts (if verbose), the response, and a diff
+    in new buffers.
     """
     try:
         client = _get_client()
@@ -160,12 +161,14 @@ def code(prompt):
             "nor markdown code fences"
         )
 
-        # Create the Vimini Thoughts buffer before calling the model.
-        vim.command('vnew')
-        vim.command('file Vimini Thoughts')
-        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-        thoughts_buffer = vim.current.buffer
-        thoughts_buffer[:] = ['']
+        thoughts_buffer = None
+        if verbose:
+            # Create the Vimini Thoughts buffer before calling the model.
+            vim.command('vnew')
+            vim.command('file Vimini Thoughts')
+            vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+            thoughts_buffer = vim.current.buffer
+            thoughts_buffer[:] = ['']
 
         # Create the ViminiCode buffer. This becomes the active window.
         vim.command('vnew')
@@ -178,23 +181,30 @@ def code(prompt):
         ai_buffer[:] = ['']
 
         # Get window numbers for faster switching during streaming.
-        thoughts_win_nr = vim.eval(f"bufwinnr({thoughts_buffer.number})")
+        thoughts_win_nr = None
+        if verbose:
+            thoughts_win_nr = vim.eval(f"bufwinnr({thoughts_buffer.number})")
         ai_win_nr = vim.eval(f"bufwinnr({ai_buffer.number})")
 
         # Display a Thinking.. message so users know they have to wait
         vim.command("echo '[Vimini] Thinking...'")
         vim.command("redraw")
 
-        # Use generate_content_stream() with thinking enabled
-        response_stream = client.models.generate_content_stream(
-            model=_MODEL,
-            contents=full_prompt,
-            config=types.GenerateContentConfig(
+        # Set up the API call arguments
+        stream_kwargs = {
+            'model': _MODEL,
+            'contents': full_prompt
+        }
+        # Enable thinking only if verbose is requested
+        if verbose:
+            stream_kwargs['config'] = types.GenerateContentConfig(
                 thinking_config=types.ThinkingConfig(
                     include_thoughts=True
                 )
             )
-        )
+
+        # Use generate_content_stream()
+        response_stream = client.models.generate_content_stream(**stream_kwargs)
         has_stripped_opening_fence = False
 
         for chunk in response_stream:
