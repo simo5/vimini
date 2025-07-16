@@ -177,6 +177,10 @@ def code(prompt):
         ai_buffer = vim.current.buffer # Reference the new code buffer
         ai_buffer[:] = ['']
 
+        # Get window numbers for faster switching during streaming.
+        thoughts_win_nr = vim.eval(f"bufwinnr({thoughts_buffer.number})")
+        ai_win_nr = vim.eval(f"bufwinnr({ai_buffer.number})")
+
         # Display a Thinking.. message so users know they have to wait
         vim.command("echo '[Vimini] Thinking...'")
         vim.command("redraw")
@@ -202,6 +206,11 @@ def code(prompt):
 
                 is_thought = hasattr(part, 'thought') and part.thought
                 target_buffer = thoughts_buffer if is_thought else ai_buffer
+
+                # Switch to the window displaying the buffer being updated.
+                target_win_nr = thoughts_win_nr if is_thought else ai_win_nr
+                if int(target_win_nr) > 0:
+                    vim.command(f"{target_win_nr}wincmd w")
 
                 # Split incoming text by newlines to handle chunks that span multiple lines
                 new_lines = part.text.split('\n')
