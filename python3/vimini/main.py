@@ -1,6 +1,5 @@
-
 import vim
-import os, subprocess, tempfile
+import os, subprocess, tempfile, shlex
 import textwrap
 from google import genai
 from google.genai import types
@@ -314,8 +313,16 @@ def review(prompt, git_objects=None, verbose=False):
                 return
 
             repo_path = os.path.dirname(current_file_path)
-            # The git_objects argument is a string of space-separated objects
-            cmd = ['git', '-C', repo_path, 'show'] + git_objects.split()
+
+            # Security Hardening: Prevent command injection via git flags.
+            # The user should only provide git objects (hashes, branches, etc.), not options.
+            objects_to_show = shlex.split(git_objects)
+            for obj in objects_to_show:
+                if obj.startswith('-'):
+                    vim.command("echoerr '[Vimini] Security error: Git options (like flags starting with ''-'') are not allowed.'")
+                    return
+
+            cmd = ['git', '-C', repo_path, 'show'] + objects_to_show
 
             vim.command(f"echo '[Vimini] Running git show {git_objects}... '")
             vim.command("redraw")
