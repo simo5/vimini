@@ -41,6 +41,34 @@ def _get_client():
             return None
     return _GENAI_CLIENT
 
+def _get_git_repo_root():
+    """
+    Finds the root directory of the git repository for the current buffer.
+    Returns the repository root path on success, or None on failure.
+    """
+    current_file_path = vim.current.buffer.name
+    if not current_file_path:
+        vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
+        return None
+
+    # Determine the root of the git repository from the current file's directory.
+    start_dir = os.path.dirname(current_file_path) or '.'
+    rev_parse_cmd = ['git', '-C', start_dir, 'rev-parse', '--show-toplevel']
+
+    repo_path_result = subprocess.run(
+        rev_parse_cmd,
+        capture_output=True,
+        text=True,
+        check=False
+    )
+
+    if repo_path_result.returncode != 0:
+        error_message = (repo_path_result.stderr or "Not a git repository.").strip().replace("'", "''")
+        vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
+        return None
+
+    return repo_path_result.stdout.strip()
+
 def list_models():
     """
     Lists the available Gemini models.
@@ -307,12 +335,9 @@ def review(prompt, git_objects=None, verbose=False):
 
         if git_objects:
             # Handle review of git objects
-            current_file_path = vim.current.buffer.name
-            if not current_file_path:
-                vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
-                return
-
-            repo_path = os.path.dirname(current_file_path)
+            repo_path = _get_git_repo_root()
+            if not repo_path:
+                return # Error message is handled by _get_git_repo_root()
 
             # Security Hardening: Prevent command injection via git flags.
             # The user should only provide git objects (hashes, branches, etc.), not options.
@@ -458,17 +483,12 @@ def show_diff():
     Shows the current git modifications in a new buffer.
     """
     try:
-        current_file_path = vim.current.buffer.name
-        if not current_file_path:
-            vim.command("echoerr '[Vimini] Cannot run git diff on an unnamed buffer.'")
-            return
+        repo_path = _get_git_repo_root()
+        if not repo_path:
+            return # Error message handled by helper
 
-        # Use the directory of the current file as the git repository root.
-        repo_path = os.path.dirname(current_file_path)
-
-        # Command to get the colorized diff.
+        # Command to get the diff.
         # -C ensures git runs in the correct directory.
-        # --color=always forces color output even when piping.
         cmd = ['git', '-C', repo_path, 'diff', '--color=never']
 
         # Execute the command.
@@ -511,22 +531,9 @@ def commit():
     message in a popup for review, and then commits with a 'Co-authored-by' trailer.
     """
     try:
-        current_file_path = vim.current.buffer.name
-        if not current_file_path:
-            vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
-            return
-
-        # Determine the root of the git repository.
-        start_dir = os.path.dirname(current_file_path) or '.'
-        rev_parse_cmd = ['git', '-C', start_dir, 'rev-parse', '--show-toplevel']
-        repo_path_result = subprocess.run(rev_parse_cmd, capture_output=True, text=True, check=False)
-
-        if repo_path_result.returncode != 0:
-            error_message = (repo_path_result.stderr or "Not a git repository.").strip().replace("'", "''")
-            vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
-            return
-
-        repo_path = repo_path_result.stdout.strip()
+        repo_path = _get_git_repo_root()
+        if not repo_path:
+            return # Error handled by helper
 
         # Stage all changes to get a complete diff for the commit message.
         vim.command("echo '[Vimini] Staging all changes... (git add .)'")
