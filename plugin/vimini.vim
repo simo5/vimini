@@ -144,20 +144,43 @@ endfunction
 
 command! -nargs=? ViminiApply call ViminiApply(<f-args>)
 
-function! ViminiReview(prompt)
+function! ViminiReview(q_args)
+  " Reviews git diffs. The first argument can be a git object if prefixed
+  " with "C:". The rest of the arguments are treated as a prompt.
+  " If no "C:" argument is found, all arguments form the prompt.
+  let l:git_objects_arg = v:null
+  let l:prompt_arg = ''
+  let l:args = split(a:q_args) " Parse the string from <q-args> into arguments
+
+  if !empty(l:args)
+    let l:first_arg = l:args[0]
+    " Check if the first argument is a git object reference
+    if strpart(l:first_arg, 0, 2) ==# 'C:'
+      let l:git_objects_arg = strpart(l:first_arg, 2)
+      " The rest of the arguments form the prompt
+      if len(l:args) > 1
+        let l:prompt_arg = join(l:args[1:], ' ')
+      endif
+    else
+      " All arguments form the prompt
+      let l:prompt_arg = join(l:args, ' ')
+    endif
+  endif
+
   py3 << EOF
 try:
     from vimini import main
-    prompt = vim.eval('a:prompt')
+    prompt = vim.eval('l:prompt_arg')
+    git_objects = vim.eval('l:git_objects_arg')
     verbose = vim.eval('g:vimini_thinking') == 'on'
-    main.review(prompt, verbose)
+    main.review(prompt, git_objects=git_objects, verbose=verbose)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
 
-command! -nargs=* ViminiReview call ViminiReview(string(<q-args>))
+command! -nargs=* ViminiReview call ViminiReview(<q-args>)
 
 " Expose a function to show git diff
 function! ViminiDiff()

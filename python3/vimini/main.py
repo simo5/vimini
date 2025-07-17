@@ -291,28 +291,72 @@ def code(prompt, verbose=False):
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
 
-def review(prompt, verbose=False):
+def review(prompt, git_objects=None, verbose=False):
     """
-    Sends the current buffer content to the Gemini API for a code review,
-    and displays the review in a new buffer, streaming thoughts if verbose.
+    Sends content to the Gemini API for a code review.
+    If git_objects are provided, it reviews the output of `git show <objects>`.
+    Otherwise, it reviews the content of the current buffer.
+    The review is displayed in a new buffer, streaming thoughts if verbose.
     """
     try:
         client = _get_client()
         if not client:
             return
 
-        # Get the content of the current buffer.
-        current_buffer_content = "\n".join(vim.current.buffer[:])
-        original_filetype = vim.eval('&filetype') or 'text' # Default to text if no filetype
+        review_content = ""
+        content_source_description = ""
+
+        if git_objects:
+            # Handle review of git objects
+            current_file_path = vim.current.buffer.name
+            if not current_file_path:
+                vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
+                return
+
+            repo_path = os.path.dirname(current_file_path)
+            # The git_objects argument is a string of space-separated objects
+            cmd = ['git', '-C', repo_path, 'show'] + git_objects.split()
+
+            vim.command(f"echo '[Vimini] Running git show {git_objects}... '")
+            vim.command("redraw")
+            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+
+            if result.returncode != 0:
+                error_message = (result.stderr or "git show failed.").strip().replace("'", "''")
+                vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
+                return
+            vim.command("echo ''") # Clear message
+
+            review_content = result.stdout
+
+            # As requested, open a new buffer with the git show output, which becomes the context
+            vim.command('vnew')
+            # Truncate for display if the object string is too long
+            display_objects = (git_objects[:40] + '..') if len(git_objects) > 40 else git_objects
+            vim.command(f'file Vimini Git Review Target: {display_objects}')
+            vim.command('setlocal buftype=nofile filetype=diff noswapfile')
+            vim.current.buffer[:] = review_content.split('\n')
+            vim.command('normal! 1G') # Go to top of new buffer
+
+            content_source_description = f"the output of `git show {git_objects}`"
+        else:
+            # Handle review of the current buffer (original behavior)
+            review_content = "\n".join(vim.current.buffer[:])
+            original_filetype = vim.eval('&filetype') or 'text'
+            content_source_description = f"the following {original_filetype} code"
+
+        if not review_content.strip():
+            vim.command("echom '[Vimini] Nothing to review.'")
+            return
 
         # Construct the full prompt for the API.
         full_prompt = (
-            f"Please review the following {original_filetype} code for potential issues, "
+            f"Please review {content_source_description} for potential issues, "
             "improvements, best practices, and any possible bugs. "
             "Provide a concise summary and actionable suggestions.\n\n"
-            "--- FILE CONTENT ---\n"
-            f"{current_buffer_content}\n"
-            "--- END FILE CONTENT ---"
+            "--- CONTENT TO REVIEW ---\n"
+            f"{review_content}\n"
+            "--- END CONTENT TO REVIEW ---"
             f"\n{prompt}\n"
         )
 
@@ -397,6 +441,8 @@ def review(prompt, verbose=False):
 
         vim.command("echo ''") # Clear the thinking message
 
+    except FileNotFoundError:
+        vim.command("echoerr '[Vimini] Error: `git` command not found. Is it in your PATH?'")
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
 
