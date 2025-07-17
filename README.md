@@ -9,10 +9,10 @@ and get code reviews without leaving your coding environment.
 
 *   **Chat with Gemini**: Send prompts and receive responses in a new
     buffer.
-*   **Code Generation**: Use the current buffer content as context to
+*   **Context-Aware Code Generation**: Use all open buffers as context to
     generate code.
-*   **Code Review**: Get AI-powered reviews and suggestions for the code
-    in your current buffer.
+*   **Code Review**: Get AI-powered reviews for the code in your current
+    buffer or from your git history.
 *   **Git Integration**: Generate commit messages and view diffs using
     AI.
 *   **List Models**: Easily view all available Gemini models.
@@ -160,18 +160,31 @@ temporary `Vimini Code`, `Vimini Diff`, and `Vimini Thoughts` buffers.
 #### `:ViminiApply append`
 Appends the AI-generated code to the end of your original buffer. This
 is useful when you've asked the AI to add a new function or class. It
-also closes the temporary buffers.
+also closes the temporary `Vimini Code`, `Vimini Diff`, and `Vimini Thoughts` buffers.
 
-### `:ViminiReview {prompt}`
+### `:ViminiReview [C:<git_objects>] [{prompt}]`
 
-Sends the content of the current buffer to the Gemini model for a code
-review. The AI's review and suggestions will be displayed in a new
-vertical split buffer. You can optionally add a `prompt` to guide the
-review.
+Sends content to the Gemini model for a code review. This command has two modes:
+
+1.  **Current Buffer Review**: If no `git_objects` are provided, it sends the content of the current buffer for review.
+2.  **Git Object Review**: If the command starts with `C:<git_objects>`, it reviews the output of `git show <git_objects>`. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or `HEAD~1`.
+
+In both cases, you can add an optional `{prompt}` to guide the AI's review. The review and suggestions will be displayed in a new vertical split buffer.
+
+**Examples:**
 
 ```vim
+" Review the current buffer for performance issues
 :ViminiReview Check for performance issues.
-:ViminiReview " (No specific prompt, just a general review)
+
+" Perform a general review of the current buffer
+:ViminiReview
+
+" Review the changes in the latest commit
+:ViminiReview C:HEAD
+
+" Review changes from two commits ago and ask for security vulnerabilities
+:ViminiReview C:HEAD~2 "Check for security vulnerabilities"
 ```
 
 ### Git Integration
