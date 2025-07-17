@@ -1,3 +1,4 @@
+
 import vim
 import os, subprocess, tempfile
 import textwrap
@@ -290,10 +291,10 @@ def code(prompt, verbose=False):
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
 
-def review(prompt):
+def review(prompt, verbose=False):
     """
     Sends the current buffer content to the Gemini API for a code review,
-    and displays the review in a new buffer.
+    and displays the review in a new buffer, streaming thoughts if verbose.
     """
     try:
         client = _get_client()
@@ -312,25 +313,89 @@ def review(prompt):
             "--- FILE CONTENT ---\n"
             f"{current_buffer_content}\n"
             "--- END FILE CONTENT ---"
-            f"{prompt}\n"
+            f"\n{prompt}\n"
         )
 
-        # Send the prompt and get the response.
-        vim.command("echo '[Vimini] Generating review...'")
-        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
-        response = client.models.generate_content(
-            model=_MODEL,
-            contents=full_prompt,
-        )
-        vim.command("echo ''") # Clear the message
+        thoughts_buffer = None
+        if verbose:
+            # Create the Vimini Thoughts buffer before calling the model.
+            vim.command('vnew')
+            vim.command('file Vimini Thoughts')
+            vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+            thoughts_buffer = vim.current.buffer
+            thoughts_buffer[:] = ['']
 
-        # Open a new split window for the generated review.
+        # Create the Vimini Review buffer. This becomes the active window.
         vim.command('vnew')
         vim.command('file Vimini Review')
         vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+        review_buffer = vim.current.buffer # Reference the new review buffer
+        review_buffer[:] = ['']
 
-        # Display the response in the new buffer.
-        vim.current.buffer[:] = response.text.split('\n')
+        # Get window numbers for faster switching during streaming.
+        thoughts_win_nr = None
+        if verbose:
+            thoughts_win_nr = vim.eval(f"bufwinnr({thoughts_buffer.number})")
+        review_win_nr = vim.eval(f"bufwinnr({review_buffer.number})")
+
+        # Display a Thinking.. message so users know they have to wait
+        vim.command("echo '[Vimini] Thinking...'")
+        vim.command("redraw")
+
+        # Set up the API call arguments
+        stream_kwargs = {
+            'model': _MODEL,
+            'contents': full_prompt
+        }
+        # Enable thinking only if verbose is requested
+        if verbose:
+            stream_kwargs['config'] = types.GenerateContentConfig(
+                thinking_config=types.ThinkingConfig(
+                    include_thoughts=True
+                )
+            )
+
+        # Use generate_content_stream()
+        response_stream = client.models.generate_content_stream(**stream_kwargs)
+
+        for chunk in response_stream:
+            if not chunk.candidates:
+                continue
+            for part in chunk.candidates[0].content.parts:
+                if not part.text:
+                    continue
+
+                is_thought = hasattr(part, 'thought') and part.thought
+                # If we're not in verbose mode, we don't care about thought parts.
+                if is_thought and not verbose:
+                    continue
+
+                target_buffer = thoughts_buffer if is_thought else review_buffer
+                # This should not be None due to the check above, but for safety.
+                if not target_buffer:
+                    continue
+
+                # Switch to the window displaying the buffer being updated.
+                target_win_nr = thoughts_win_nr if is_thought else review_win_nr
+                if int(target_win_nr) > 0:
+                    vim.command(f"{target_win_nr}wincmd w")
+
+                # Split incoming text by newlines to handle chunks that span multiple lines
+                new_lines = part.text.split('\n')
+
+                # Append the first part of the new text to the current last line in the buffer
+                target_buffer[-1] += new_lines[0]
+
+                # If the chunk contained one or more newlines, add the rest as new lines
+                if len(new_lines) > 1:
+                    target_buffer.append(new_lines[1:])
+
+                # Move cursor to the end and scroll view to keep the last line visible.
+                vim.command('normal! Gz-')
+                vim.command("echo '[Vimini] Thinking...'")
+                vim.command('redraw')
+
+        vim.command("echo ''") # Clear the thinking message
 
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")

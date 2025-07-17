@@ -149,7 +149,8 @@ function! ViminiReview(prompt)
 try:
     from vimini import main
     prompt = vim.eval('a:prompt')
-    main.review(prompt)
+    verbose = vim.eval('g:vimini_thinking') == 'on'
+    main.review(prompt, verbose)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
