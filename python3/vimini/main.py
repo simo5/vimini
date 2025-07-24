@@ -672,7 +672,7 @@ def commit():
             return
 
         # Construct the commit command with subject, body, sign-off, and trailer.
-        gemini_trailer = "Co-authored-by: Gemini <vimini@google.com>"
+        gemini_trailer = "Co-authored-by: Gemini <gemini@google.com>"
         commit_cmd = ['git', '-C', repo_path, 'commit', '-s', '-m', subject]
         if body:
             commit_cmd.extend(['-m', body])
