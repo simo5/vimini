@@ -244,6 +244,10 @@ def code(prompt, verbose=False):
         for chunk in response_stream:
             if not chunk.candidates:
                 continue
+            if not chunk.candidates[0].content:
+                continue
+            if not chunk.candidates[0].content.parts:
+                continue
             for part in chunk.candidates[0].content.parts:
                 if not part.text:
                     continue
