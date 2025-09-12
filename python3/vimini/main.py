@@ -657,14 +657,15 @@ def commit():
 
         # Capture a single character for confirmation.
         commit_confirmed = False
-        ans = None
         try:
             # We convert it to a char to check for 'y' or 'Y'.
             answer_code = vim.eval('getchar()')
+            # Ensure answer_code is a string that can be converted to an integer.
+            # If not (e.g., for special keys), it is not an affirmative answer.
             answer_char = chr(int(answer_code))
             if answer_char.lower() == 'y':
                 commit_confirmed = True
-        except vim.error: # Catches Vim:Interrupt from Ctrl-C.
+        except (vim.error, ValueError, TypeError): # Catches Ctrl-C and non-integer return values.
             pass # commit_confirmed remains False
         finally:
             # Ensure the popup is always closed, no matter what key was pressed.
@@ -677,8 +678,6 @@ def commit():
             vim.command("echom '[Vimini] Commit cancelled. Reverting `git add`.'")
             reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
             subprocess.run(reset_cmd, check=False)
-
-            print(f"answer code: {ans}")
             return
 
         # Construct the commit command with subject, body, sign-off, and trailer.
