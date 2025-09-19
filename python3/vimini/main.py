@@ -534,11 +534,12 @@ def show_diff():
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
 
-def commit():
+def commit(author=None):
     """
     Generates a detailed commit message (subject and body) using the Gemini
     API based on all current changes. It stages everything, shows the generated
-    message in a popup for review, and then commits with a 'Co-authored-by' trailer.
+    message in a popup for review, and then commits, optionally with a
+    'Co-authored-by' trailer.
     """
     try:
         repo_path = _get_git_repo_root()
@@ -680,12 +681,12 @@ def commit():
             subprocess.run(reset_cmd, check=False)
             return
 
-        # Construct the commit command with subject, body, sign-off, and trailer.
-        gemini_trailer = "Co-authored-by: Gemini <gemini@google.com>"
+        # Construct the commit command with subject, body, and sign-off.
         commit_cmd = ['git', '-C', repo_path, 'commit', '-s', '-m', subject]
         if body:
             commit_cmd.extend(['-m', body])
-        commit_cmd.extend(['-m', '', '-m', gemini_trailer]) # Blank line before trailer.
+        if author:
+            commit_cmd.extend(['-m', '', '-m', author]) # Blank line before trailer.
 
         display_message = subject.replace("'", "''")
         vim.command(f"echom '[Vimini] Committing with subject: {display_message}'")

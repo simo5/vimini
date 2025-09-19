@@ -196,19 +196,28 @@ endfunction
 
 command! ViminiDiff call ViminiDiff()
 
+" Configuration: Commit author trailer
+let g:vimini_commit_author = get(g:, 'vimini_commit_author', 'Co-authored-by: Gemini <gemini@google.com>')
+
 " Expose a function to generate and execute a git commit
-function! ViminiCommit()
+function! ViminiCommit(...)
+  let l:author = g:vimini_commit_author
+  if a:0 > 0 && a:1 ==# '-n'
+    let l:author = v:null
+  endif
+
   py3 << EOF
 try:
     from vimini import main
-    main.commit()
+    author = vim.eval('l:author')
+    main.commit(author=author)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
 
-command! ViminiCommit call ViminiCommit()
+command! -nargs=? ViminiCommit call ViminiCommit(<f-args>)
 
 
 " Expose a function for autocompletion.
