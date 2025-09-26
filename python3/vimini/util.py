@@ -28,30 +28,41 @@ def get_client():
             return None
     return _GENAI_CLIENT
 
-def get_git_repo_root():
+def get_git_repo_root(silent=False):
     """
     Finds the root directory of the git repository for the current buffer.
     Returns the repository root path on success, or None on failure.
+
+    Args:
+        silent (bool): If True, suppress error messages on failure.
     """
     current_file_path = vim.current.buffer.name
     if not current_file_path:
-        vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
+        if not silent:
+            vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
         return None
 
     # Determine the root of the git repository from the current file's directory.
     start_dir = os.path.dirname(current_file_path) or '.'
     rev_parse_cmd = ['git', '-C', start_dir, 'rev-parse', '--show-toplevel']
 
-    repo_path_result = subprocess.run(
-        rev_parse_cmd,
-        capture_output=True,
-        text=True,
-        check=False
-    )
+    try:
+        repo_path_result = subprocess.run(
+            rev_parse_cmd,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+    except FileNotFoundError:
+        if not silent:
+            vim.command("echoerr '[Vimini] Git error: `git` command not found. Is it in your PATH?'")
+        return None
+
 
     if repo_path_result.returncode != 0:
-        error_message = (repo_path_result.stderr or "Not a git repository.").strip().replace("'", "''")
-        vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
+        if not silent:
+            error_message = (repo_path_result.stderr or "Not a git repository.").strip().replace("'", "''")
+            vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
         return None
 
     return repo_path_result.stdout.strip()
@@ -65,31 +76,15 @@ def get_git_repo_name():
     if _REPO_NAME_CACHE is not None:
         return _REPO_NAME_CACHE
 
-    # Default to "temp" in case of any failure.
-    repo_name = "temp"
-    current_file_path = vim.current.buffer.name
+    # Call get_git_repo_root silently to avoid error message recursion,
+    # as this function is used within display_message itself.
+    repo_path = get_git_repo_root(silent=True)
 
-    if current_file_path:
-        try:
-            start_dir = os.path.dirname(current_file_path) or '.'
-            rev_parse_cmd = ['git', '-C', start_dir, 'rev-parse', '--show-toplevel']
-            repo_path_result = subprocess.run(
-                rev_parse_cmd,
-                capture_output=True,
-                text=True,
-                check=False,
-                stderr=subprocess.DEVNULL # Suppress error output for this check
-            )
+    if repo_path:
+        _REPO_NAME_CACHE = os.path.basename(repo_path)
+    else:
+        _REPO_NAME_CACHE = "temp"
 
-            if repo_path_result.returncode == 0:
-                toplevel_path = repo_path_result.stdout.strip()
-                repo_name = os.path.basename(toplevel_path)
-
-        except (FileNotFoundError, Exception):
-            # git not found or another error occurred; repo_name remains "temp"
-            pass
-
-    _REPO_NAME_CACHE = repo_name
     return _REPO_NAME_CACHE
 
 def display_message(message, error=False, history=False):
