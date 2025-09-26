@@ -1,5 +1,5 @@
 import vim
-import os, subprocess, tempfile, shlex, threading, uuid, queue
+import os, subprocess, tempfile, shlex, threading, uuid, queue, time, io
 import textwrap
 from google import genai
 from google.genai import types
@@ -137,10 +137,12 @@ def chat(prompt):
 
 def code(prompt, verbose=False):
     """
-    Sends the current buffer content along with a prompt to the Gemini API
+    Uploads all open files, sends them to the Gemini API with a prompt
     to generate code. Displays thoughts (if verbose), the response, and a diff
     in new buffers.
     """
+    uploaded_files = []
+    files_to_process = [] # Holds all files for potential cleanup
     try:
         client = _get_client()
         if not client:
@@ -152,48 +154,86 @@ def code(prompt, verbose=False):
         original_buffer_content = "\n".join(original_buffer[:])
         original_filetype = vim.eval('&filetype')
 
-        context_parts = []
-        # Iterate through all open buffers in Vim
+        # Upload all relevant, named buffers as context files for the API.
+        vim.command("echo '[Vimini] Uploading context files...'")
+        vim.command("redraw")
+
         for buf in vim.buffers:
-            # Get properties for the current buffer in the loop
-            buf_name = buf.name if buf.name else '' # Use empty string for unnamed buffers
-            buf_content = "\n".join(buf[:]) # Get all lines from the buffer
-            buf_number = buf.number # Get the Vim buffer number
+            buf_name = buf.name
+            if not buf_name:
+                continue
 
-            # Retrieve buffer-specific options using vim.eval for accuracy
-            buf_filetype = vim.eval(f"getbufvar({buf_number}, '&filetype')") or "text"
+            base_name = os.path.basename(buf_name)
+            if base_name.startswith('Vimini '):
+                continue
+
+            buf_number = buf.number
             buf_buftype = vim.eval(f"getbufvar({buf_number}, '&buftype')")
-
-            # Filter out irrelevant buffers
-            if not buf_content.strip() and not buf_name:
-                continue
-            if buf_buftype in ['nofile', 'terminal', 'help', 'nowrite'] and buf != vim.current.buffer:
+            if buf_buftype in ['terminal', 'help', 'prompt']:
                 continue
 
-            # Determine if this buffer is the currently active one
-            is_current_buffer = (buf == vim.current.buffer)
+            buf_content = "\n".join(buf[:])
+            if not buf_content.strip():
+                continue
 
-            # Format the header for clarity in the prompt context
-            display_name = buf_name if buf_name else f"[Buffer {buf_number}]"
-            header = f"--- {'CURRENT FILE' if is_current_buffer else 'FILE'} '{display_name}' ({buf_filetype}) ---"
+            # Instead of creating a temporary file, create an in-memory BytesIO object.
+            buf_content_bytes = buf_content.encode('utf-8')
+            buf_io = io.BytesIO(buf_content_bytes)
 
-            context_parts.append(header)
-            context_parts.append(buf_content)
-            context_parts.append("--- END FILE ---")
-            context_parts.append("") # Add a blank line for separation between files
+            # Use the new Files API. `display_name` is kept for API to name the file correctly.
+            uploaded_file = client.files.upload(
+                file=buf_io,
+                config=types.UploadFileConfig(
+                    display_name=base_name,
+                    mime_type='text/plain',
+                ),
+            )
+            files_to_process.append(uploaded_file)
 
-        # Combine all collected buffer contents into a single string for the prompt
-        context_str = "\n".join(context_parts).strip()
+        # Wait for all files to be processed in a separate loop with a timeout.
+        if files_to_process:
+            pending_files = list(files_to_process)
+            start_time = time.time()
+            timeout = 2.0
 
-        # Construct the full prompt for the API.
-        full_prompt = (
-            f"{prompt}\n\n"
-            "Based on the user's request, please generate the code. "
-            "Use the following open buffers as context. The current active buffer is explicitly marked as 'CURRENT FILE'.\n\n"
-            f"{context_str}\n\n"
-            "IMPORTANT: Only output the raw code. Do not include any explanations, "
-            "nor markdown code fences"
-        )
+            while pending_files:
+                if time.time() - start_time > timeout:
+                    vim.command(f"echoerr '[Vimini] File processing timed out after {timeout}s. Aborting.'")
+                    return
+
+                remaining_time = timeout - (time.time() - start_time)
+                vim.command(f"echo '[Vimini] Waiting for {len(pending_files)} files... ({remaining_time:.1f}s left)'")
+                vim.command("redraw")
+                time.sleep(0.1)
+
+                still_pending = []
+                for f in pending_files:
+                    updated_file = client.files.get(name=f.name)
+                    if updated_file.state.name == 'PROCESSING':
+                        still_pending.append(updated_file)
+                    elif updated_file.state.name == 'ACTIVE':
+                        uploaded_files.append(updated_file) # Ready
+                    else: # FAILED or other terminal state
+                        vim.command(f"echoerr '[Vimini] File processing failed for {updated_file.display_name}. Aborting.'")
+                        return
+
+                pending_files = still_pending
+
+        vim.command("echo ''") # Clear message
+
+        # Construct the full prompt for the API, referencing the uploaded files.
+        main_file_name = os.path.basename(original_buffer.name or f"Buffer {original_bufnr}")
+        full_prompt = [
+            (
+                f"{prompt}\n\n"
+                "Based on the user's request, please generate the code. "
+                f"Your primary task is to modify the file named '{main_file_name}'. "
+                "The other files have been provided for context.\n\n"
+                "IMPORTANT: Only output the raw code for the modified file. Do not include any explanations, "
+                "nor markdown code fences."
+            ),
+            *uploaded_files
+        ]
 
         thoughts_buffer = None
         if verbose:
