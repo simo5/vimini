@@ -135,14 +135,88 @@ def chat(prompt):
     except Exception as e:
         vim.command(f"echoerr '[Vimini] Error: {e}'")
 
+def _upload_context_files(client):
+    """
+    Uploads all relevant, named Vim buffers as context files for the API.
+    Returns a list of active file handlers, or None on failure.
+    """
+    uploaded_files = []
+    files_to_process = [] # Holds files during the PROCESSING state.
+
+    # Upload all relevant, named buffers as context files for the API.
+    vim.command("echo '[Vimini] Uploading context files...'")
+    vim.command("redraw")
+
+    for buf in vim.buffers:
+        buf_name = buf.name
+        if not buf_name:
+            continue
+
+        base_name = os.path.basename(buf_name)
+        if base_name.startswith('Vimini '):
+            continue
+
+        buf_number = buf.number
+        buf_buftype = vim.eval(f"getbufvar({buf_number}, '&buftype')")
+        if buf_buftype in ['terminal', 'help', 'prompt']:
+            continue
+
+        buf_content = "\n".join(buf[:])
+        if not buf_content.strip():
+            continue
+
+        # Instead of creating a temporary file, create an in-memory BytesIO object.
+        buf_content_bytes = buf_content.encode('utf-8')
+        buf_io = io.BytesIO(buf_content_bytes)
+
+        # Use the new Files API. `display_name` is kept for API to name the file correctly.
+        uploaded_file = client.files.upload(
+            file=buf_io,
+            config=types.UploadFileConfig(
+                display_name=base_name,
+                mime_type='text/plain',
+            ),
+        )
+        files_to_process.append(uploaded_file)
+
+    # Wait for all files to be processed in a separate loop with a timeout.
+    if files_to_process:
+        pending_files = list(files_to_process)
+        start_time = time.time()
+        timeout = 2.0
+
+        while pending_files:
+            if time.time() - start_time > timeout:
+                vim.command(f"echoerr '[Vimini] File processing timed out after {timeout}s. Aborting.'")
+                return None # Failure
+
+            remaining_time = timeout - (time.time() - start_time)
+            vim.command(f"echo '[Vimini] Waiting for {len(pending_files)} files... ({remaining_time:.1f}s left)'")
+            vim.command("redraw")
+            time.sleep(0.1)
+
+            still_pending = []
+            for f in pending_files:
+                updated_file = client.files.get(name=f.name)
+                if updated_file.state.name == 'PROCESSING':
+                    still_pending.append(updated_file)
+                elif updated_file.state.name == 'ACTIVE':
+                    uploaded_files.append(updated_file) # Ready
+                else: # FAILED or other terminal state
+                    vim.command(f"echoerr '[Vimini] File processing failed for {updated_file.display_name}. Aborting.'")
+                    return None # Failure
+
+            pending_files = still_pending
+
+    vim.command("echo ''") # Clear message
+    return uploaded_files
+
 def code(prompt, verbose=False):
     """
     Uploads all open files, sends them to the Gemini API with a prompt
     to generate code. Displays thoughts (if verbose), the response, and a diff
     in new buffers.
     """
-    uploaded_files = []
-    files_to_process = [] # Holds all files for potential cleanup
     try:
         client = _get_client()
         if not client:
@@ -154,72 +228,12 @@ def code(prompt, verbose=False):
         original_buffer_content = "\n".join(original_buffer[:])
         original_filetype = vim.eval('&filetype')
 
-        # Upload all relevant, named buffers as context files for the API.
-        vim.command("echo '[Vimini] Uploading context files...'")
-        vim.command("redraw")
+        # Upload context files using the helper function.
+        uploaded_files = _upload_context_files(client)
 
-        for buf in vim.buffers:
-            buf_name = buf.name
-            if not buf_name:
-                continue
-
-            base_name = os.path.basename(buf_name)
-            if base_name.startswith('Vimini '):
-                continue
-
-            buf_number = buf.number
-            buf_buftype = vim.eval(f"getbufvar({buf_number}, '&buftype')")
-            if buf_buftype in ['terminal', 'help', 'prompt']:
-                continue
-
-            buf_content = "\n".join(buf[:])
-            if not buf_content.strip():
-                continue
-
-            # Instead of creating a temporary file, create an in-memory BytesIO object.
-            buf_content_bytes = buf_content.encode('utf-8')
-            buf_io = io.BytesIO(buf_content_bytes)
-
-            # Use the new Files API. `display_name` is kept for API to name the file correctly.
-            uploaded_file = client.files.upload(
-                file=buf_io,
-                config=types.UploadFileConfig(
-                    display_name=base_name,
-                    mime_type='text/plain',
-                ),
-            )
-            files_to_process.append(uploaded_file)
-
-        # Wait for all files to be processed in a separate loop with a timeout.
-        if files_to_process:
-            pending_files = list(files_to_process)
-            start_time = time.time()
-            timeout = 2.0
-
-            while pending_files:
-                if time.time() - start_time > timeout:
-                    vim.command(f"echoerr '[Vimini] File processing timed out after {timeout}s. Aborting.'")
-                    return
-
-                remaining_time = timeout - (time.time() - start_time)
-                vim.command(f"echo '[Vimini] Waiting for {len(pending_files)} files... ({remaining_time:.1f}s left)'")
-                vim.command("redraw")
-                time.sleep(0.1)
-
-                still_pending = []
-                for f in pending_files:
-                    updated_file = client.files.get(name=f.name)
-                    if updated_file.state.name == 'PROCESSING':
-                        still_pending.append(updated_file)
-                    elif updated_file.state.name == 'ACTIVE':
-                        uploaded_files.append(updated_file) # Ready
-                    else: # FAILED or other terminal state
-                        vim.command(f"echoerr '[Vimini] File processing failed for {updated_file.display_name}. Aborting.'")
-                        return
-
-                pending_files = still_pending
-
-        vim.command("echo ''") # Clear message
+        # A `None` return value indicates an upload failure.
+        if uploaded_files is None:
+            return # The helper function has already displayed an error.
 
         # Construct the full prompt for the API, referencing the uploaded files.
         main_file_name = os.path.basename(original_buffer.name or f"Buffer {original_bufnr}")
