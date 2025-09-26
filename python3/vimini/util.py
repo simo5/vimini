@@ -124,83 +124,168 @@ def display_message(message, error=False, history=False):
         # Fallback in case the vim command fails. This is unlikely but good practice.
         print(f"Vimini Fallback: {full_message} (vim.command failed: {e})")
 
+def is_buffer_modified(buffer=None):
+    """
+    Checks if a given buffer (or the current one) has unsaved modifications.
+
+    Args:
+        buffer (vim.Buffer, optional): The buffer to check. Defaults to vim.current.buffer.
+
+    Returns:
+        bool: True if the buffer is modified, False otherwise.
+    """
+    if buffer is None:
+        buffer = vim.current.buffer
+
+    # The 'modified' option is a boolean (1 or 0) in Vim's buffer-local options.
+    return bool(buffer.options['modified'])
+
+def find_context_files():
+    """
+    Generate a list of files that are referenced by open buffers.
+    Each element of the list is a tuple containing the file name and the vim buffer number.
+    This list does not contain buffers that are not file-backed.
+    """
+    files_to_upload = []
+    for b in vim.buffers:
+        # A buffer is considered file-backed if its name is not empty
+        # and the file actually exists on disk.
+        if b.name and os.path.exists(b.name):
+            files_to_upload.append((b.name, b.number))
+    return files_to_upload
+
 def upload_context_files(client):
     """
-    Uploads all relevant, named Vim buffers as context files for the API.
-    Returns a list of active file handlers, or None on failure.
+    Lists previously uploaded files, then uploads the content of all relevant
+    Vim buffers to use as context for the AI. It re-uploads files if they have
+    been modified on disk since the last upload.
+    Returns a list of active file API resources, or None on failure.
     """
+    # --- 1. Determine which files to upload vs. reuse ---
+    files_to_process = []
+    files_requiring_upload = []
+    display_message("Checking context files...")
+
+    context_files = find_context_files()
+    if not context_files:
+        display_message("No file-backed buffers found to use as context.", history=True)
+        return None
+
+    # Load existing files into a map for quick lookup.
+    existing_files = {}
+    try:
+        for f in client.files.list():
+            existing_files[f.display_name] = f
+    except Exception:
+        # Ignore errors; if listing fails, we'll just upload everything.
+        pass
+
+    for file_path, buf_number in context_files:
+        found_file = existing_files.get(file_path)
+
+        if not found_file:
+            # Not found, needs uploading.
+            files_requiring_upload.append((file_path, buf_number))
+            continue
+
+        # File was found, check if it's stale.
+        buffer = vim.buffers[buf_number]
+        is_stale = False
+
+        # If buffer is modified, it's stale; skip timestamp check.
+        if is_buffer_modified(buffer):
+            is_stale = True
+        else:
+            # If buffer not modified, check timestamp on disk.
+            try:
+                disk_mtime = os.path.getmtime(file_path)
+                uploaded_time = found_file.create_time.timestamp()
+                if uploaded_time < disk_mtime:
+                    is_stale = True
+            except (OSError, AttributeError):
+                # If we can't get times, re-upload to be safe.
+                is_stale = True
+
+        if is_stale:
+            files_requiring_upload.append((file_path, buf_number))
+            # It's good practice to delete the old one.
+            try:
+                client.files.delete(name=found_file.name)
+            except Exception:
+                pass # Deletion is best-effort.
+        else:
+            # Uploaded file is recent enough, use it.
+            files_to_process.append(found_file)
+
+
+    # --- 2. Upload necessary files ---
+    if files_requiring_upload:
+        display_message(f"Uploading {len(files_requiring_upload)} context file(s)...")
+
     uploaded_files = []
-    files_to_process = [] # Holds files during the PROCESSING state.
-
-    # Upload all relevant, named buffers as context files for the API.
-    vim.command("echo '[Vimini] Uploading context files...'")
-    vim.command("redraw")
-
-    for buf in vim.buffers:
-        buf_name = buf.name
-        if not buf_name:
-            continue
-
-        base_name = os.path.basename(buf_name)
-        if base_name.startswith('Vimini '):
-            continue
-
-        buf_number = buf.number
-        buf_buftype = vim.eval(f"getbufvar({buf_number}, '&buftype')")
-        if buf_buftype in ['terminal', 'help', 'prompt']:
-            continue
-
+    for file_path, buf_number in files_requiring_upload:
+        buf = vim.buffers[buf_number]
         buf_content = "\n".join(buf[:])
         if not buf_content.strip():
             continue
 
-        # Instead of creating a temporary file, create an in-memory BytesIO object.
         buf_content_bytes = buf_content.encode('utf-8')
         buf_io = io.BytesIO(buf_content_bytes)
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type: mime_type = 'text/plain'
 
-        # Detect mimetype from filename, default to text/plain if not found.
-        mime_type, _ = mimetypes.guess_type(buf_name)
-        if not mime_type:
-            mime_type = 'text/plain'
+        try:
+            uploaded_file = client.files.upload(
+                file=buf_io,
+                config=types.UploadFileConfig(
+                    display_name=file_path,
+                    mime_type=mime_type
+                ),
+            )
+            uploaded_files.append(uploaded_file)
+        except Exception as e:
+            display_message(f"Error uploading {file_path}: {e}", error=True)
+            return None # Fail fast on upload error
 
-        # Use the new Files API. `display_name` is kept for API to name the file correctly.
-        uploaded_file = client.files.upload(
-            file=buf_io,
-            config=types.UploadFileConfig(
-                display_name=base_name,
-                mime_type=mime_type,
-            ),
-        )
-        files_to_process.append(uploaded_file)
+    # --- 3. Wait for all files (reused and new) to become ACTIVE ---
+    pending_files = []
+    for f in uploaded_files:
+        # Re-check the state of reused files as well.
+        if f.state.name == 'ACTIVE':
+            files_to_process.append(f)
+        elif f.state.name == 'PROCESSING':
+            pending_files.append(f)
+        else: # FAILED, etc.
+             display_message(f"Reused file {f.display_name} is in an unusable state: {f.state.name}", error=True)
+             return None
 
-    # Wait for all files to be processed in a separate loop with a timeout.
-    if files_to_process:
-        pending_files = list(files_to_process)
-        start_time = time.time()
-        timeout = 2.0
-
-        while pending_files:
-            if time.time() - start_time > timeout:
-                vim.command(f"echoerr '[Vimini] File processing timed out after {timeout}s. Aborting.'")
-                return None # Failure
-
-            remaining_time = timeout - (time.time() - start_time)
-            vim.command(f"echo '[Vimini] Waiting for {len(pending_files)} files... ({remaining_time:.1f}s left)'")
-            vim.command("redraw")
-            time.sleep(0.1)
-
-            still_pending = []
-            for f in pending_files:
+    start_time = time.time()
+    timeout = 2.0
+    while pending_files:
+        if time.time() - start_time > timeout:
+            display_message(f"File processing timed out after {int(timeout)}s.", error=True)
+            return None
+        remaining_time = timeout - (time.time() - start_time)
+        display_message(f"Waiting for {len(pending_files)} files... ({remaining_time:.1f}s left)")
+        time.sleep(0.1)
+        still_pending = []
+        for f in pending_files:
+            try:
                 updated_file = client.files.get(name=f.name)
                 if updated_file.state.name == 'PROCESSING':
                     still_pending.append(updated_file)
                 elif updated_file.state.name == 'ACTIVE':
-                    uploaded_files.append(updated_file) # Ready
+                    files_to_process.append(updated_file)
                 else: # FAILED or other terminal state
-                    vim.command(f"echoerr '[Vimini] File processing failed for {updated_file.display_name}. Aborting.'")
-                    return None # Failure
+                    display_message(f"File processing failed for {updated_file.display_name}: {updated_file.state.name}", error=True)
+                    return None
+            except Exception as e:
+                display_message(f"Error checking file status for {f.display_name}: {e}", error=True)
+                return None
+        pending_files = still_pending
 
-            pending_files = still_pending
+    if not files_to_process:
+        display_message("No content found in open buffers to create context.", history=True)
+        return None
 
-    vim.command("echo ''") # Clear message
-    return uploaded_files
+    return files_to_process
