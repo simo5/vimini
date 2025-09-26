@@ -7,6 +7,7 @@ from google.genai import types
 _API_KEY = None
 _MODEL = None
 _GENAI_CLIENT = None # Global, lazily-initialized client.
+_REPO_NAME_CACHE = None # Cache for the git repository directory name.
 
 def get_client():
     """
@@ -54,6 +55,74 @@ def get_git_repo_root():
         return None
 
     return repo_path_result.stdout.strip()
+
+def get_git_repo_name():
+    """
+    Fetches and caches the name of the directory of the current git repository.
+    Returns "temp" if not in a git repository.
+    """
+    global _REPO_NAME_CACHE
+    if _REPO_NAME_CACHE is not None:
+        return _REPO_NAME_CACHE
+
+    # Default to "temp" in case of any failure.
+    repo_name = "temp"
+    current_file_path = vim.current.buffer.name
+
+    if current_file_path:
+        try:
+            start_dir = os.path.dirname(current_file_path) or '.'
+            rev_parse_cmd = ['git', '-C', start_dir, 'rev-parse', '--show-toplevel']
+            repo_path_result = subprocess.run(
+                rev_parse_cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                stderr=subprocess.DEVNULL # Suppress error output for this check
+            )
+
+            if repo_path_result.returncode == 0:
+                toplevel_path = repo_path_result.stdout.strip()
+                repo_name = os.path.basename(toplevel_path)
+
+        except (FileNotFoundError, Exception):
+            # git not found or another error occurred; repo_name remains "temp"
+            pass
+
+    _REPO_NAME_CACHE = repo_name
+    return _REPO_NAME_CACHE
+
+def display_message(message, error=False, history=False):
+    """
+    Displays a message to the user in the Vim command line.
+
+    Args:
+        message (str): The message to display.
+        error (bool): If True, display as an error message.
+        history (bool): If True (and not an error), save to message history.
+    """
+    # Escape single quotes to prevent breaking the Vim command string.
+    safe_message = str(message).replace("'", "''")
+
+    prefix = f"[Vimini ({get_git_repo_name()})]"
+    full_message = f"{prefix} {safe_message}"
+
+    if error:
+        command = "echoerr"
+    elif history:
+        command = "echom"
+    else:
+        # Use 'echo' for transient messages that don't need to be in history.
+        command = "echo"
+
+    try:
+        vim.command(f"{command} '{full_message}'")
+        # For transient messages, redraw to show them immediately without a 'Press ENTER' prompt.
+        if not error and not history:
+            vim.command("redraw")
+    except vim.error as e:
+        # Fallback in case the vim command fails. This is unlikely but good practice.
+        print(f"Vimini Fallback: {full_message} (vim.command failed: {e})")
 
 def upload_context_files(client):
     """

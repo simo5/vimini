@@ -13,8 +13,7 @@ def initialize(api_key, model):
     util._MODEL = model
     util._GENAI_CLIENT = None # Reset client if key/model changes.
     if not util._API_KEY:
-        message = "[Vimini] API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token."
-        vim.command(f"echoerr '{message}'")
+        util.display_message("API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token.", error=True)
 
 def list_models():
     """
@@ -26,10 +25,9 @@ def list_models():
             return
 
         # Get the list of models.
-        vim.command("echo '[Vimini] Fetching models...'")
-        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
+        util.display_message("Fetching models...")
         models = client.models.list()
-        vim.command("echo ''") # Clear the message
+        util.display_message("") # Clear the message
 
         # Prepare the content for the new buffer.
         model_list = ["Available Models:"]
@@ -42,7 +40,7 @@ def list_models():
         vim.current.buffer[:] = model_list
 
     except Exception as e:
-        vim.command(f"echoerr '[Vimini] Error: {e}'")
+        util.display_message(f"Error: {e}", error=True)
 
 def chat(prompt):
     """
@@ -64,17 +62,16 @@ def chat(prompt):
         vim.command("redraw")
 
         # Send the prompt and get the response.
-        vim.command("echo '[Vimini] Thinking...'")
-        vim.command("redraw") # Force redraw to show message without 'Press ENTER'
+        util.display_message("Thinking...")
         response = client.models.generate_content(
             model=util._MODEL,
             contents=prompt,
         )
-        vim.command("echo ''") # Clear the thinking message
+        util.display_message("") # Clear the thinking message
         vim.current.buffer.append(response.text.split('\n'))
 
     except Exception as e:
-        vim.command(f"echoerr '[Vimini] Error: {e}'")
+        util.display_message(f"Error: {e}", error=True)
 
 def code(prompt, verbose=False):
     """
@@ -140,8 +137,7 @@ def code(prompt, verbose=False):
         ai_win_nr = vim.eval(f"bufwinnr({ai_buffer.number})")
 
         # Display a Thinking.. message so users know they have to wait
-        vim.command("echo '[Vimini] Thinking...'")
-        vim.command("redraw")
+        util.display_message("Thinking...")
 
         # Set up the API call arguments
         stream_kwargs = {
@@ -197,10 +193,9 @@ def code(prompt, verbose=False):
 
                 # Move cursor to the end and scroll view to keep the last line visible.
                 vim.command('normal! Gz-')
-                vim.command("echo '[Vimini] Thinking...'")
-                vim.command('redraw')
+                util.display_message("Thinking...")
 
-        vim.command("echo ''") # Clear the thinking message
+        util.display_message("") # Clear the thinking message
 
         # After the loop, remove the closing fence if it's the last line in the code buffer
         if ai_buffer and ai_buffer[-1].strip() == '```':
@@ -210,7 +205,7 @@ def code(prompt, verbose=False):
         ai_generated_code = "\n".join(list(ai_buffer))
 
         # Force a redraw to show the final state after any last-line stripping
-        vim.command("echo '[Vimini] Thinking...'")
+        util.display_message("Thinking...")
         vim.command("redraw!")
 
         # --- Generate and display the diff ---
@@ -225,8 +220,8 @@ def code(prompt, verbose=False):
             cmd = ['diff', '-u', orig_filepath, ai_filepath]
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if result.returncode > 1:
-                error_message = result.stderr.strip().replace("'", "''")
-                vim.command(f"echoerr '[Vimini] Could not generate diff: {error_message}'")
+                error_message = result.stderr.strip()
+                util.display_message(f"Could not generate diff: {error_message}", error=True)
                 return
             diff_output = result.stdout
         finally:
@@ -234,7 +229,7 @@ def code(prompt, verbose=False):
             os.remove(ai_filepath)
 
         if not diff_output.strip():
-            vim.command("echom '[Vimini] AI content is identical to the original.'")
+            util.display_message("AI content is identical to the original.", history=True)
             return
 
         # Open a new split window for the diff.
@@ -245,7 +240,7 @@ def code(prompt, verbose=False):
         vim.command('normal! 1G')
 
     except Exception as e:
-        vim.command(f"echoerr '[Vimini] Error: {e}'")
+        util.display_message(f"Error: {e}", error=True)
 
 def review(prompt, git_objects=None, verbose=False):
     """
@@ -273,20 +268,19 @@ def review(prompt, git_objects=None, verbose=False):
             objects_to_show = shlex.split(git_objects)
             for obj in objects_to_show:
                 if obj.startswith('-'):
-                    vim.command("echoerr '[Vimini] Security error: Git options (like flags starting with ''-'') are not allowed.'")
+                    util.display_message("Security error: Git options (like flags starting with '-') are not allowed.", error=True)
                     return
 
             cmd = ['git', '-C', repo_path, 'show'] + objects_to_show
 
-            vim.command(f"echo '[Vimini] Running git show {git_objects}... '")
-            vim.command("redraw")
+            util.display_message(f"Running git show {git_objects}... ")
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
             if result.returncode != 0:
-                error_message = (result.stderr or "git show failed.").strip().replace("'", "''")
-                vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
+                error_message = (result.stderr or "git show failed.").strip()
+                util.display_message(f"Git error: {error_message}", error=True)
                 return
-            vim.command("echo ''") # Clear message
+            util.display_message("") # Clear message
 
             review_content = result.stdout
 
@@ -307,7 +301,7 @@ def review(prompt, git_objects=None, verbose=False):
             content_source_description = f"the following {original_filetype} code"
 
         if not review_content.strip():
-            vim.command("echom '[Vimini] Nothing to review.'")
+            util.display_message("Nothing to review.", history=True)
             return
 
         # Construct the full prompt for the API.
@@ -344,8 +338,7 @@ def review(prompt, git_objects=None, verbose=False):
         review_win_nr = vim.eval(f"bufwinnr({review_buffer.number})")
 
         # Display a Thinking.. message so users know they have to wait
-        vim.command("echo '[Vimini] Thinking...'")
-        vim.command("redraw")
+        util.display_message("Thinking...")
 
         # Set up the API call arguments
         stream_kwargs = {
@@ -397,15 +390,14 @@ def review(prompt, git_objects=None, verbose=False):
 
                 # Move cursor to the end and scroll view to keep the last line visible.
                 vim.command('normal! Gz-')
-                vim.command("echo '[Vimini] Thinking...'")
-                vim.command('redraw')
+                util.display_message("Thinking...")
 
-        vim.command("echo ''") # Clear the thinking message
+        util.display_message("") # Clear the thinking message
 
     except FileNotFoundError:
-        vim.command("echoerr '[Vimini] Error: `git` command not found. Is it in your PATH?'")
+        util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
     except Exception as e:
-        vim.command(f"echoerr '[Vimini] Error: {e}'")
+        util.display_message(f"Error: {e}", error=True)
 
 def show_diff():
     """
@@ -421,21 +413,19 @@ def show_diff():
         cmd = ['git', '-C', repo_path, 'diff', '--color=never']
 
         # Execute the command.
-        vim.command("echo '[Vimini] Running git diff...'")
-        vim.command("redraw")
+        util.display_message("Running git diff...")
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        vim.command("echo ''") # Clear message
+        util.display_message("") # Clear message
 
         # Handle git errors (e.g., not a git repository).
         if result.returncode != 0 and not result.stdout.strip():
-            # Escape single quotes for Vim's echoerr
-            error_message = result.stderr.strip().replace("'", "''")
-            vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
+            error_message = result.stderr.strip()
+            util.display_message(f"Git error: {error_message}", error=True)
             return
 
         # Handle case with no modifications.
         if not result.stdout.strip():
-            vim.command("echom '[Vimini] No modifications found.'")
+            util.display_message("No modifications found.", history=True)
             return
 
         # Display the diff in a new split window.
@@ -449,9 +439,9 @@ def show_diff():
         vim.current.buffer[:] = result.stdout.split('\n')
 
     except FileNotFoundError:
-        vim.command("echoerr '[Vimini] Error: `git` command not found. Is it in your PATH?'")
+        util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
     except Exception as e:
-        vim.command(f"echoerr '[Vimini] Error: {e}'")
+        util.display_message(f"Error: {e}", error=True)
 
 def commit(author=None):
     """
@@ -466,30 +456,29 @@ def commit(author=None):
             return # Error handled by helper
 
         # Stage all changes to get a complete diff for the commit message.
-        vim.command("echo '[Vimini] Staging all changes... (git add .)'")
-        vim.command("redraw")
+        util.display_message("Staging all changes... (git add .)")
         add_cmd = ['git', '-C', repo_path, 'add', '.']
         add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False)
 
         if add_result.returncode != 0:
-            error_message = (add_result.stderr or add_result.stdout).strip().replace("'", "''")
-            vim.command(f"echoerr '[Vimini] Git add failed: {error_message}'")
+            error_message = (add_result.stderr or add_result.stdout).strip()
+            util.display_message(f"Git add failed: {error_message}", error=True)
             return
-        vim.command("echo ''")
+        util.display_message("")
 
         # Get the diff of what was just staged.
         staged_diff_cmd = ['git', '-C', repo_path, 'diff', '--staged']
         staged_diff_result = subprocess.run(staged_diff_cmd, capture_output=True, text=True, check=False)
 
         if staged_diff_result.returncode != 0:
-            error_message = staged_diff_result.stderr.strip().replace("'", "''")
-            vim.command(f"echoerr '[Vimini] Git error getting staged diff: {error_message}'")
+            error_message = staged_diff_result.stderr.strip()
+            util.display_message(f"Git error getting staged diff: {error_message}", error=True)
             return
 
         diff_to_process = staged_diff_result.stdout.strip()
 
         if not diff_to_process:
-            vim.command("echom '[Vimini] No changes to commit.'")
+            util.display_message("No changes to commit.", history=True)
             return
 
         # Create prompt for AI to generate subject and body.
@@ -506,12 +495,11 @@ def commit(author=None):
             "--- END GIT DIFF ---"
         )
 
-        vim.command("echo '[Vimini] Generating commit message... (this may take a moment)'")
-        vim.command("redraw")
+        util.display_message("Generating commit message... (this may take a moment)")
 
         client = util.get_client()
         if not client:
-            vim.command("echom '[Vimini] Commit cancelled (client init failed). Reverting `git add`.'")
+            util.display_message("Commit cancelled (client init failed). Reverting `git add`.", history=True)
             reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
             subprocess.run(reset_cmd, check=False)
             return
@@ -520,7 +508,7 @@ def commit(author=None):
             model=util._MODEL,
             contents=prompt,
         )
-        vim.command("echo ''")
+        util.display_message("")
 
         # Parse the response into subject and a raw body.
         response_text = response.text.strip()
@@ -548,7 +536,7 @@ def commit(author=None):
 
 
         if not subject:
-            vim.command("echoerr '[Vimini] Failed to generate a commit message. Reverting `git add`.'")
+            util.display_message("Failed to generate a commit message. Reverting `git add`.", error=True)
             reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
             subprocess.run(reset_cmd, check=False)
             return
@@ -595,7 +583,7 @@ def commit(author=None):
 
         # If user cancelled, revert the staging and exit.
         if not commit_confirmed:
-            vim.command("echom '[Vimini] Commit cancelled. Reverting `git add`.'")
+            util.display_message("Commit cancelled. Reverting `git add`.", history=True)
             reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
             subprocess.run(reset_cmd, check=False)
             return
@@ -607,23 +595,22 @@ def commit(author=None):
         if author:
             commit_cmd.extend(['-m', '', '-m', author]) # Blank line before trailer.
 
-        display_message = subject.replace("'", "''")
-        vim.command(f"echom '[Vimini] Committing with subject: {display_message}'")
+        util.display_message(f"Committing with subject: {subject}", history=True)
         vim.command("redraw")
 
         commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, check=False)
 
         if commit_result.returncode == 0:
-            success_message = commit_result.stdout.strip().replace("'", "''").split('\n')[0]
-            vim.command(f"echom '[Vimini] Commit successful: {success_message}'")
+            success_message = commit_result.stdout.strip().split('\n')[0]
+            util.display_message(f"Commit successful: {success_message}", history=True)
         else:
-            error_message = (commit_result.stderr or commit_result.stdout).strip().replace("'", "''")
-            vim.command(f"echoerr '[Vimini] Git commit failed: {error_message}'")
+            error_message = (commit_result.stderr or commit_result.stdout).strip()
+            util.display_message(f"Git commit failed: {error_message}", error=True)
 
     except FileNotFoundError:
-        vim.command("echoerr '[Vimini] Error: `git` command not found. Is it in your PATH?'")
+        util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
     except Exception as e:
-        vim.command(f"echoerr '[Vimini] Error: {e}'")
+        util.display_message(f"Error: {e}", error=True)
 
 def apply_code():
     """
@@ -643,20 +630,20 @@ def apply_code():
             thoughts_buffer = buf
 
     if not ai_buffer:
-        vim.command("echoerr '[Vimini] `Vimini Code` buffer not found. Was :ViminiCode run?'")
+        util.display_message("`Vimini Code` buffer not found. Was :ViminiCode run?", error=True)
         return
 
     # To find the original buffer, retrieve the buffer number that `code()` saved
     # in the 'Vimini Code' buffer's local variables.
     original_bufnr = int(vim.eval(f"getbufvar({ai_buffer.number}, 'vimini_source_bufnr', -1)"))
     if original_bufnr == -1:
-        vim.command("echoerr '[Vimini] Could not find the original buffer. The link may have been lost.'")
+        util.display_message("Could not find the original buffer. The link may have been lost.", error=True)
         return
 
     # Find the original buffer object from its number and ensure it's still valid.
     original_buffer = next((b for b in vim.buffers if b.number == original_bufnr), None)
     if not original_buffer or not original_buffer.valid:
-        vim.command(f"echoerr '[Vimini] The original buffer ({original_bufnr}) no longer exists.'")
+        util.display_message(f"The original buffer ({original_bufnr}) no longer exists.", error=True)
         return
 
     # Get content and name before buffers are modified or deleted.
@@ -681,7 +668,7 @@ def apply_code():
     if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
         vim.command(f"bdelete! {thoughts_buffer.number}")
 
-    vim.command(f"echom '[Vimini] Applied changes to `{original_buffer_name}`.'")
+    util.display_message(f"Applied changes to `{original_buffer_name}`.", history=True)
 
 def append_code():
     """
@@ -701,20 +688,20 @@ def append_code():
             thoughts_buffer = buf
 
     if not ai_buffer:
-        vim.command("echoerr '[Vimini] `Vimini Code` buffer not found. Was :ViminiCode run?'")
+        util.display_message("`Vimini Code` buffer not found. Was :ViminiCode run?", error=True)
         return
 
     # To find the original buffer, retrieve the buffer number that `code()` saved
     # in the 'Vimini Code' buffer's local variables.
     original_bufnr = int(vim.eval(f"getbufvar({ai_buffer.number}, 'vimini_source_bufnr', -1)"))
     if original_bufnr == -1:
-        vim.command("echoerr '[Vimini] Could not find the original buffer. The link may have been lost.'")
+        util.display_message("Could not find the original buffer. The link may have been lost.", error=True)
         return
 
     # Find the original buffer object from its number and ensure it's still valid.
     original_buffer = next((b for b in vim.buffers if b.number == original_bufnr), None)
     if not original_buffer or not original_buffer.valid:
-        vim.command(f"echoerr '[Vimini] The original buffer ({original_bufnr}) no longer exists.'")
+        util.display_message(f"The original buffer ({original_bufnr}) no longer exists.", error=True)
         return
 
     # Get content and name before buffers are modified or deleted.
@@ -742,4 +729,4 @@ def append_code():
     if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
         vim.command(f"bdelete! {thoughts_buffer.number}")
 
-    vim.command(f"echom '[Vimini] Appended code to `{original_buffer_name}`.'")
+    util.display_message(f"Appended code to `{original_buffer_name}`.", history=True)
