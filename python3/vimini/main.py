@@ -1,5 +1,5 @@
 import vim
-import os, subprocess, tempfile, shlex, threading, uuid, queue, time, io
+import os, subprocess, tempfile, shlex, threading, uuid, queue, time, io, mimetypes
 import textwrap
 from google import genai
 from google.genai import types
@@ -169,12 +169,17 @@ def _upload_context_files(client):
         buf_content_bytes = buf_content.encode('utf-8')
         buf_io = io.BytesIO(buf_content_bytes)
 
+        # Detect mimetype from filename, default to text/plain if not found.
+        mime_type, _ = mimetypes.guess_type(buf_name)
+        if not mime_type:
+            mime_type = 'text/plain'
+
         # Use the new Files API. `display_name` is kept for API to name the file correctly.
         uploaded_file = client.files.upload(
             file=buf_io,
             config=types.UploadFileConfig(
                 display_name=base_name,
-                mime_type='text/plain',
+                mime_type=mime_type,
             ),
         )
         files_to_process.append(uploaded_file)
