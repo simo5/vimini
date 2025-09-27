@@ -4,21 +4,28 @@ from google.genai import types
 from vimini import util
 from vimini.autocomplete import autocomplete, cancel_autocomplete, process_autocomplete_queue
 
-def initialize(api_key, model):
+def initialize(api_key, model, logfile=None):
     """
-    Initializes the plugin with the user's API keyi and model name.
+    Initializes the plugin with the user's API key, model name, and
+    optional logfile path.
     This function is called from the plugin's Vimscript entry point.
     """
     util._API_KEY = api_key
     util._MODEL = model
     util._GENAI_CLIENT = None # Reset client if key/model changes.
+    util.set_logging(logfile)
     if not util._API_KEY:
         util.display_message("API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token.", error=True)
+
+# This new function is needed because vimini.vim calls main.logging()
+def logging(logfile=None):
+    util.set_logging(logfile)
 
 def list_models():
     """
     Lists the available Gemini models.
     """
+    util.log_info("list_models()")
     try:
         client = util.get_client()
         if not client:
@@ -46,6 +53,7 @@ def chat(prompt):
     """
     Sends a prompt to the Gemini API and displays the response in a new buffer.
     """
+    util.log_info(f"chat({prompt})")
     try:
         client = util.get_client()
         if not client:
@@ -79,6 +87,7 @@ def code(prompt, verbose=False):
     to generate code. Displays thoughts (if verbose), the response, and a diff
     in new buffers.
     """
+    util.log_info(f"code({prompt}, verbose={verbose})")
     try:
         client = util.get_client()
         if not client:
@@ -249,6 +258,7 @@ def review(prompt, git_objects=None, verbose=False):
     Otherwise, it reviews the content of the current buffer.
     The review is displayed in a new buffer, streaming thoughts if verbose.
     """
+    util.log_info(f"review({prompt}, git_objects='{git_objects}', verbose={verbose})")
     try:
         client = util.get_client()
         if not client:
@@ -403,6 +413,7 @@ def show_diff():
     """
     Shows the current git modifications in a new buffer.
     """
+    util.log_info("show_diff()")
     try:
         repo_path = util.get_git_repo_root()
         if not repo_path:
@@ -450,6 +461,7 @@ def commit(author=None):
     message in a popup for review, and then commits, optionally with a
     'Co-authored-by' trailer.
     """
+    util.log_info(f"commit(author='{author}')")
     try:
         repo_path = util.get_git_repo_root()
         if not repo_path:
@@ -617,6 +629,7 @@ def apply_code():
     Finds the 'Vimini Code' buffer, copies its contents over the original
     buffer, and closes the temporary Vimini Code and Vimini Diff buffers.
     """
+    util.log_info("apply_code()")
     # Locate the source 'Vimini Code' buffer, which contains the AI-generated code.
     ai_buffer = None
     diff_buffer = None
@@ -675,6 +688,7 @@ def append_code():
     Finds the 'Vimini Code' buffer, appends its contents to the original
     buffer, and closes the temporary Vimini Code and Vimini Diff buffers.
     """
+    util.log_info("append_code()")
     # Locate the source 'Vimini Code' buffer, which contains the AI-generated code.
     ai_buffer = None
     diff_buffer = None

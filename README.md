@@ -52,7 +52,7 @@ You can install Vimini using your preferred Vim plugin manager.
 
 1.  Add the following to your `init.lua` (for Neovim) or `plugins.lua`:
     ```lua
-    use 'your-github-username/vimini.nvim' " Replace with the actual repo path
+    use 'your-github-username/vimini.vim' " Replace with the actual repo path
     ```
 2.  Run `:PackerSync` or `:PackerInstall` in Neovim.
 
@@ -109,7 +109,19 @@ customizations.
     ```
     This can also be controlled with the `:ViminiToggleAutocomplete` command.
 
-5.  **Commit Author (`g:vimini_commit_author`)**:
+5.  **Logging (`g:vimini_logging` and `g:vimini_log_file`)**:
+    Control whether Vimini logs its activity to a file, which can be
+    useful for debugging. Logging is disabled by default.
+    ```vim
+    " Enable logging (Default is 'off')
+    let g:vimini_logging = 'on'
+
+    " Set a custom path for the log file (Default is '~/.var/vimini/vimini.log')
+    let g:vimini_log_file = '/path/to/your/vimini.log'
+    ```
+    Logging can also be controlled at runtime with the `:ViminiToggleLogging` command.
+
+6.  **Commit Author (`g:vimini_commit_author`)**:
     Customize the `Co-authored-by` trailer used in `:ViminiCommit`.
     ```vim
     " Set a custom author trailer (Default is 'Co-authored-by: Gemini <gemini@google.com>')
@@ -153,6 +165,23 @@ appear alongside the main result buffer.
 
 " Explicitly turn the thinking display off
 :ViminiThinking off
+```
+
+### `:ViminiToggleLogging [on|off]`
+
+Toggles or sets the logging feature. When enabled, Vimini will log API
+requests, responses, and other internal actions to the file specified
+by `g:vimini_log_file`. This is primarily useful for debugging.
+
+```vim
+" Toggle the current setting (on -> off, off -> on)
+:ViminiToggleLogging
+
+" Explicitly turn logging on
+:ViminiToggleLogging on
+
+" Explicitly turn logging off
+:ViminiToggleLogging off
 ```
 
 ### `:ViminiCode {prompt}`

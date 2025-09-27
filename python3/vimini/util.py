@@ -1,5 +1,5 @@
 import vim
-import os, subprocess, time, io, mimetypes
+import os, subprocess, time, io, mimetypes, logging
 from google import genai
 from google.genai import types
 
@@ -8,6 +8,7 @@ _API_KEY = None
 _MODEL = None
 _GENAI_CLIENT = None # Global, lazily-initialized client.
 _REPO_NAME_CACHE = None # Cache for the git repository directory name.
+_LOGGER = None
 
 def get_client():
     """
@@ -87,9 +88,15 @@ def get_git_repo_name():
 
     return _REPO_NAME_CACHE
 
+def log_info(message):
+    """Writes a message to the logger if it's enabled."""
+    if _LOGGER:
+        _LOGGER.info(str(message))
+
 def display_message(message, error=False, history=False):
     """
     Displays a message to the user in the Vim command line.
+    If an error, it also writes the message to the log file if enabled.
 
     Args:
         message (str): The message to display.
@@ -104,6 +111,8 @@ def display_message(message, error=False, history=False):
 
     if error:
         command = "echoerr"
+        # Copy the error message to the logger if it's enabled.
+        log_info(f"ERROR: {full_message}")
     elif history:
         command = "echom"
     else:
@@ -118,6 +127,7 @@ def display_message(message, error=False, history=False):
     except vim.error as e:
         # Fallback in case the vim command fails. This is unlikely but good practice.
         print(f"Vimini Fallback: {full_message} (vim.command failed: {e})")
+        log_info(f"ERROR: vim.command failed for message: '{full_message}'. Details: {e}")
 
 def is_buffer_modified(buffer=None):
     """
@@ -284,3 +294,57 @@ def upload_context_files(client):
         return None
 
     return files_to_process
+
+def set_logging(log_file=None):
+    """
+    Configures logging for the plugin.
+
+    If a log_file path is provided, it sets up a logger to write to that
+    file. If log_file is None, it disables logging by adding a NullHandler.
+    """
+    global _LOGGER
+
+    # Use a named logger to avoid interfering with other plugins or Vim's root logger.
+    logger = logging.getLogger('vimini')
+    logger.setLevel(logging.INFO) # Set level regardless of handler
+
+    # Clear existing handlers to prevent log duplication on re-initialization
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    # Stop messages from being passed to the root logger
+    logger.propagate = False
+
+    try:
+        if log_file:
+            # Expand user directory and variables
+            log_file = os.path.expanduser(os.path.expandvars(log_file))
+
+            # Ensure the directory for the log file exists.
+            log_dir = os.path.dirname(os.path.abspath(log_file))
+            if log_dir and not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
+
+            # Create a file handler to write to the log file.
+            handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
+            formatter = logging.Formatter(
+                '%(asctime)s - %(levelname)s - %(message)s'
+            )
+            handler.setFormatter(formatter)
+            logger.addHandler(handler)
+        else:
+            # If no log file, add a NullHandler to silence logging.
+            # This is better than setting _LOGGER to None, as calls to log_info()
+            # will still work without error; they just won't do anything.
+            logger.addHandler(logging.NullHandler())
+
+        _LOGGER = logger
+
+    except Exception as e:
+        # If logging setup fails for any reason, fall back to a NullHandler
+        # to ensure the plugin continues to function without logging.
+        if logger.hasHandlers():
+            logger.handlers.clear()
+        logger.addHandler(logging.NullHandler())
+        _LOGGER = logger
+        display_message(f"Failed to initialize log file '{log_file}': {e}", error=True)

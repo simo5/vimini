@@ -17,6 +17,9 @@ def cancel_autocomplete():
     This is called from Vimscript when the user types or leaves insert mode.
     """
     global _current_autocomplete_job_id
+
+    util.log_info("cancel_autocomplete()")
+
     with _autocomplete_lock:
         _current_autocomplete_job_id = None
         # Clear any stale results from a previously cancelled job.
@@ -141,6 +144,8 @@ def autocomplete(verbose=False):
     fetch a single-line completion from the Gemini API.
     """
     global _current_autocomplete_job_id
+
+    util.log_info(f"autocomplete(verbose={verbose})")
 
     # Prevent multiple autocomplete jobs from running and overwriting the cursor color.
     if _original_cursor_hl:

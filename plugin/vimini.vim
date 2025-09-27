@@ -28,6 +28,11 @@ endif
 " Configuration: Model name
 let g:vimini_model = get(g:, 'vimini_model', 'gemini-2.5-flash')
 
+" Configuration: Log file
+let g:vimini_log_file = get(g:, 'vimini_log_file', expand('~/.var/vimini/vimini.log'))
+" Configuration: Logging on/off
+let g:vimini_logging = get(g:, 'vimini_logging', 'off')
+
 let s:plugin_root_dir = fnamemodify(resolve(expand('<sfile>:p')), ':h')
 
 py3 << EOF
@@ -45,7 +50,8 @@ try:
     from vimini import main
     api_key = vim.eval('s:api_key')
     model = vim.eval('g:vimini_model')
-    main.initialize(api_key=api_key, model=model)
+    log_file = vim.eval('g:vimini_log_file') if vim.eval('g:vimini_logging') == 'on' else None
+    main.initialize(api_key=api_key, model=model, logfile=log_file)
 except Exception as e:
     # Escape single quotes in the error message to prevent Vimscript errors
     error_message = str(e).replace("'", "''")
@@ -108,6 +114,47 @@ function! ViminiThinking(...)
 endfunction
 
 command! -nargs=? ViminiThinking call ViminiThinking(<f-args>)
+
+" Expose a function to toggle logging on and off
+function! ViminiToggleLogging(...)
+  let l:option = get(a:, 1, '')
+
+  " Handle explicit setting
+  if !empty(l:option)
+    if l:option ==# 'on' || l:option ==# 'off'
+      let g:vimini_logging = l:option
+    else
+      echoerr "[Vimini] Invalid argument for ViminiToggleLogging. Use 'on' or 'off'."
+      return
+    endif
+  " Handle toggling
+  else
+    if g:vimini_logging ==# 'on'
+      let g:vimini_logging = 'off'
+    else
+      let g:vimini_logging = 'on'
+    endif
+  endif
+
+  " Call Python function to update logging state.
+  py3 << EOF
+try:
+    from vimini import main
+    log_state = vim.eval('g:vimini_logging')
+    if log_state == 'on':
+        log_file = vim.eval('g:vimini_log_file')
+        main.logging(log_file)
+    else:
+        main.logging()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error setting log state: {error_message}'")
+EOF
+
+  echo "[Vimini] Logging is now " . g:vimini_logging
+endfunction
+
+command! -nargs=? ViminiToggleLogging call ViminiToggleLogging(<f-args>)
 
 " Expose a function to generate code with Gemini
 function! ViminiCode(prompt)
