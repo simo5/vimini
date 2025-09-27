@@ -511,7 +511,7 @@ def commit(author=None):
 
         client = util.get_client()
         if not client:
-            util.display_message("Commit cancelled (client init failed). Reverting `git add`.", history=True)
+            util.display_message("Commit cancelled (client init failed). Reverting `git add`.", error=True)
             reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
             subprocess.run(reset_cmd, check=False)
             return
@@ -595,10 +595,12 @@ def commit(author=None):
 
         # If user cancelled, revert the staging and exit.
         if not commit_confirmed:
-            util.display_message("Commit cancelled. Reverting `git add`.", history=True)
+            util.display_message("Commit cancelled. Reverting `git add`.", error=True)
             reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
             subprocess.run(reset_cmd, check=False)
             return
+
+        util.log_info("Commit Message accepted")
 
         # Construct the commit command with subject, body, and sign-off.
         commit_cmd = ['git', '-C', repo_path, 'commit', '-s', '-m', subject]
