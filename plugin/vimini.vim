@@ -173,23 +173,18 @@ endfunction
 command! -nargs=* ViminiCode call ViminiCode(string(<q-args>))
 
 " Expose a function to apply the generated code
-function! ViminiApply(...)
-  let l:option = get(a:, 1, '')
+function! ViminiApply()
   py3 << EOF
 try:
     from vimini import main
-    option = vim.eval('l:option')
-    if option == 'append':
-        main.append_code()
-    else:
-        main.apply_code()
+    main.apply_code()
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
 
-command! -nargs=? ViminiApply call ViminiApply(<f-args>)
+command! -nargs=0 ViminiApply call ViminiApply()
 
 function! ViminiReview(q_args)
   " Reviews git diffs. The first argument can be a git object if prefixed

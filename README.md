@@ -189,8 +189,7 @@ by `g:vimini_log_file`. This is primarily useful for debugging.
 Takes the content of all open buffers as context, along with your
 `prompt`, and asks the Gemini model to generate code. The result is
 streamed into several new buffers:
-*   `Vimini Code`: The generated code.
-*   `Vimini Diff`: A diff view comparing the original code with the AI's suggestion.
+*   `Vimini Diff`: A diff view showing the proposed changes across one or more files.
 *   `Vimini Thoughts` (Optional): If `g:vimini_thinking` is `on`, this buffer shows the AI's internal monologue as it works.
 
 This command is ideal for asking the AI to refactor, debug, or extend
@@ -200,16 +199,13 @@ your current code.
 :ViminiCode Please refactor this function to be more concise
 ```
 
-After running `:ViminiCode`, you can use one of the following commands to
+After running `:ViminiCode`, you can use the following command to
 apply the changes:
 
-#### `:ViminiApply [append]`
-*   `:ViminiApply`: Replaces the entire content of your original buffer
-    with the AI-generated code.
-*   `:ViminiApply append`: Appends the AI-generated code to the end of
-    your original buffer.
+#### `:ViminiApply`
+*   `:ViminiApply`: Applies the AI-generated changes to the relevant files on disk and reloads them in Vim if they are open.
 
-Both commands will close the temporary `Vimini Code`, `Vimini Diff`, and
+This command will close the temporary `Vimini Diff` and
 `Vimini Thoughts` buffers.
 
 ### `:ViminiReview [C:<git_objects>] [{prompt}]`

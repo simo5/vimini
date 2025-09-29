@@ -233,7 +233,6 @@ def code(prompt, verbose=False):
                     with open(absolute_path, 'r', encoding='utf-8') as f:
                         original_content = f.read()
                 except Exception as e:
-                    util.display_message(f"Could not read file {relative_path}: {e}", error=True)
                     continue
 
             with tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_orig, \
@@ -256,9 +255,6 @@ def code(prompt, verbose=False):
                 if len(diff_lines) <= 2 and not original_content and not ai_generated_code:
                     continue # Empty diff
 
-                if combined_diff_output:
-                    combined_diff_output.append("\n" + "="*80 + "\n")
-
                 combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
                 if not file_exists:
                     combined_diff_output.append("new file mode 100644")
@@ -279,7 +275,7 @@ def code(prompt, verbose=False):
         vim.command('normal! 1G')
 
     except Exception as e:
-        util.display_message(f"Error: {e}", error=True)
+        util.display_message(f"Error: General code() function exception: {e}", error=True)
 
 def review(prompt, git_objects=None, verbose=False):
     """
@@ -734,65 +730,3 @@ def apply_code():
     finally:
         if data_key in _VIMINI_DATA_STORE:
             del _VIMINI_DATA_STORE[data_key]
-
-def append_code():
-    """
-    Finds the 'Vimini Code' buffer, appends its contents to the original
-    buffer, and closes the temporary Vimini Code and Vimini Diff buffers.
-    """
-    util.log_info("append_code()")
-    # Locate the source 'Vimini Code' buffer, which contains the AI-generated code.
-    ai_buffer = None
-    diff_buffer = None
-    thoughts_buffer = None
-    for buf in vim.buffers:
-        if buf.name and buf.name.endswith('Vimini Code'):
-            ai_buffer = buf
-        elif buf.name and buf.name.endswith('Vimini Diff'):
-            diff_buffer = buf
-        elif buf.name and buf.name.endswith('Vimini Thoughts'):
-            thoughts_buffer = buf
-
-    if not ai_buffer:
-        util.display_message("`Vimini Code` buffer not found. Was :ViminiCode run?", error=True)
-        return
-
-    # To find the original buffer, retrieve the buffer number that `code()` saved
-    # in the 'Vimini Code' buffer's local variables.
-    original_bufnr = int(vim.eval(f"getbufvar({ai_buffer.number}, 'vimini_source_bufnr', -1)"))
-    if original_bufnr == -1:
-        util.display_message("Could not find the original buffer. The link may have been lost.", error=True)
-        return
-
-    # Find the original buffer object from its number and ensure it's still valid.
-    original_buffer = next((b for b in vim.buffers if b.number == original_bufnr), None)
-    if not original_buffer or not original_buffer.valid:
-        util.display_message(f"The original buffer ({original_bufnr}) no longer exists.", error=True)
-        return
-
-    # Get content and name before buffers are modified or deleted.
-    ai_content = ai_buffer[:]
-    original_buffer_name = original_buffer.name or '[No Name]'
-
-    # Perform the append. This automatically marks the buffer as modified.
-    # Add a newline at the end if the buffer is not empty and doesn't end with one.
-    if len(original_buffer) > 0 and original_buffer[-1]:
-        original_buffer.append('')
-    original_buffer.append(ai_content)
-
-    # Switch window focus to the modified buffer.
-    target_win_nr = vim.eval(f"bufwinnr({original_buffer.number})")
-    if int(target_win_nr) > 0:
-        vim.command(f"{target_win_nr}wincmd w")
-    else:
-        # If no window is showing it, open it in the current window.
-        vim.command(f"buffer {original_buffer.number}")
-
-    # Clean up temporary buffers. Use '!' to discard any unsaved changes.
-    vim.command(f"bdelete! {ai_buffer.number}")
-    if diff_buffer and diff_buffer.number in [b.number for b in vim.buffers]:
-        vim.command(f"bdelete! {diff_buffer.number}")
-    if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
-        vim.command(f"bdelete! {thoughts_buffer.number}")
-
-    util.display_message(f"Appended code to `{original_buffer_name}`.", history=True)
