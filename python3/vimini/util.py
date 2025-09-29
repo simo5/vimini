@@ -103,8 +103,8 @@ def display_message(message, error=False, history=False):
         error (bool): If True, display as an error message.
         history (bool): If True (and not an error), save to message history.
     """
-    # Escape single quotes to prevent breaking the Vim command string.
-    safe_message = str(message).replace("'", "''")
+    # Escape single quotes and newlines to prevent breaking the Vim command string.
+    safe_message = str(message).replace("'", "''").replace('\n', ' ').replace('\r', '')
 
     prefix = f"[Vimini ({get_git_repo_name()})]"
     full_message = f"{prefix} {safe_message}"

@@ -1,8 +1,11 @@
 import vim
-import os, subprocess, tempfile, shlex, textwrap
+import os, json, subprocess, tempfile, shlex, textwrap, uuid
 from google.genai import types
 from vimini import util
 from vimini.autocomplete import autocomplete, cancel_autocomplete, process_autocomplete_queue
+
+# Global data store to exchange data between python calls without using vim variables for large data.
+_VIMINI_DATA_STORE = {}
 
 def initialize(api_key, model, logfile=None):
     """
@@ -84,8 +87,8 @@ def chat(prompt):
 def code(prompt, verbose=False):
     """
     Uploads all open files, sends them to the Gemini API with a prompt
-    to generate code. Displays thoughts (if verbose), the response, and a diff
-    in new buffers.
+    to generate code. Displays thoughts (if verbose) and a combined diff
+    for multiple file changes in new buffers.
     """
     util.log_info(f"code({prompt}, verbose={verbose})")
     try:
@@ -93,159 +96,186 @@ def code(prompt, verbose=False):
         if not client:
             return
 
-        # Store info from the original buffer before we do anything else.
         original_buffer = vim.current.buffer
-        original_bufnr = original_buffer.number
-        original_buffer_content = "\n".join(original_buffer[:])
-        original_filetype = vim.eval('&filetype')
+
+        project_root = util.get_git_repo_root()
+        if not project_root:
+            project_root = vim.eval('getcwd()')
 
         # Upload context files using the helper function.
         uploaded_files = util.upload_context_files(client)
-
-        # A `None` return value indicates an upload failure.
         if uploaded_files is None:
             return # The helper function has already displayed an error.
 
-        # Construct the full prompt for the API, referencing the uploaded files.
-        main_file_name = os.path.basename(original_buffer.name or f"Buffer {original_bufnr}")
+        # Define the schema for a structured JSON output with multiple files.
+        file_object_schema = types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                'file_path': types.Schema(type=types.Type.STRING, description="The full path of the file relative to the project directory."),
+                'file_content': types.Schema(type=types.Type.STRING, description="The new, complete source code for the file.")
+            },
+            required=['file_path', 'file_content']
+        )
+        multi_file_output_schema = types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                'files': types.Schema(
+                    type=types.Type.ARRAY,
+                    items=file_object_schema
+                )
+            },
+            required=['files']
+        )
+
+        main_file_name = os.path.relpath(original_buffer.name, project_root) if original_buffer.name and os.path.isabs(original_buffer.name) else (original_buffer.name or f"Buffer {original_buffer.number}")
         full_prompt = [
             (
                 f"{prompt}\n\n"
                 "Based on the user's request, please generate the code. "
                 f"Your primary task is to modify the file named '{main_file_name}'. "
                 "The other files have been provided for context.\n\n"
-                "IMPORTANT: Only output the raw code for the modified file. Do not include any explanations, "
-                "nor markdown code fences."
+                "IMPORTANT:\n"
+                "1. Your response must be a single JSON object with a 'files' key.\n"
+                "2. The value of 'files' must be an array of file objects.\n"
+                "3. Each file object must have two string keys: 'file_path' and 'file_content'.\n"
+                "4. 'file_path' must be the full path of the file relative to the project directory.\n"
+                "5. 'file_content' must be the new, complete source code for that file.\n"
+                "6. You can modify existing files or create new files as needed to fulfill the request."
             ),
             *uploaded_files
         ]
 
         thoughts_buffer = None
         if verbose:
-            # Create the Vimini Thoughts buffer before calling the model.
             vim.command('vnew')
             vim.command('file Vimini Thoughts')
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
             thoughts_buffer = vim.current.buffer
             thoughts_buffer[:] = ['']
 
-        # Create the ViminiCode buffer. This becomes the active window.
-        vim.command('vnew')
-        vim.command('file Vimini Code')
-        vim.command('setlocal buftype=nofile noswapfile')
-        if original_filetype: # Apply the filetype of the original buffer to the new one
-            vim.command(f'setlocal filetype={original_filetype}')
-        vim.command(f"let b:vimini_source_bufnr = {original_bufnr}")
-        ai_buffer = vim.current.buffer # Reference the new code buffer
-        ai_buffer[:] = ['']
-
-        # Get window numbers for faster switching during streaming.
-        thoughts_win_nr = None
-        if verbose:
-            thoughts_win_nr = vim.eval(f"bufwinnr({thoughts_buffer.number})")
-        ai_win_nr = vim.eval(f"bufwinnr({ai_buffer.number})")
-
-        # Display a Thinking.. message so users know they have to wait
         util.display_message("Thinking...")
 
-        # Set up the API call arguments
+        generation_config = types.GenerateContentConfig(
+            response_mime_type="application/json",
+            response_schema=multi_file_output_schema,
+        )
+        if verbose:
+            generation_config.thinking_config=types.ThinkingConfig(
+                include_thoughts=True
+            )
         stream_kwargs = {
             'model': util._MODEL,
-            'contents': full_prompt
+            'contents': full_prompt,
+            'config': generation_config
         }
-        # Enable thinking only if verbose is requested
-        if verbose:
-            stream_kwargs['config'] = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    include_thoughts=True
-                )
-            )
 
-        # Use generate_content_stream()
         response_stream = client.models.generate_content_stream(**stream_kwargs)
-        has_stripped_opening_fence = False
-
+        json_aggregator = ""
         for chunk in response_stream:
-            if not chunk.candidates:
-                continue
-            if not chunk.candidates[0].content:
-                continue
-            if not chunk.candidates[0].content.parts:
+            if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
                 continue
             for part in chunk.candidates[0].content.parts:
                 if not part.text:
                     continue
-
                 is_thought = hasattr(part, 'thought') and part.thought
-                target_buffer = thoughts_buffer if is_thought else ai_buffer
-
-                # Switch to the window displaying the buffer being updated.
-                target_win_nr = thoughts_win_nr if is_thought else ai_win_nr
-                if int(target_win_nr) > 0:
-                    vim.command(f"{target_win_nr}wincmd w")
-
-                # Split incoming text by newlines to handle chunks that span multiple lines
-                new_lines = part.text.split('\n')
-
-                # Append the first part of the new text to the current last line in the buffer
-                target_buffer[-1] += new_lines[0]
-
-                # If the chunk contained one or more newlines, add the rest as new lines
-                if len(new_lines) > 1:
-                    target_buffer.append(new_lines[1:])
-
-                if not is_thought:
-                    # Check for and strip the opening code fence as soon as it appears.
-                    if not has_stripped_opening_fence and ai_buffer and ai_buffer[0].lstrip().startswith('```'):
-                        ai_buffer[:] = ai_buffer[1:] # reset buffer with all content but the first line
-                        has_stripped_opening_fence = True
-
-                # Move cursor to the end and scroll view to keep the last line visible.
-                vim.command('normal! Gz-')
+                if is_thought and verbose and thoughts_buffer:
+                    vim.command(f"{vim.eval(f'bufwinnr({thoughts_buffer.number})')}wincmd w")
+                    new_lines = part.text.split('\n')
+                    thoughts_buffer[-1] += new_lines[0]
+                    if len(new_lines) > 1:
+                        thoughts_buffer.append(new_lines[1:])
+                    vim.command('normal! Gz-')
+                elif not is_thought:
+                    json_aggregator += part.text
                 util.display_message("Thinking...")
 
-        util.display_message("") # Clear the thinking message
-
-        # After the loop, remove the closing fence if it's the last line in the code buffer
-        if ai_buffer and ai_buffer[-1].strip() == '```':
-            ai_buffer[:] = ai_buffer[:-1]
-
-        # Reconstruct the final, cleaned code string for the diff logic that follows
-        ai_generated_code = "\n".join(list(ai_buffer))
-
-        # Force a redraw to show the final state after any last-line stripping
-        util.display_message("Thinking...")
-        vim.command("redraw!")
-
-        # --- Generate and display the diff ---
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.orig', encoding='utf-8') as f_orig, \
-             tempfile.NamedTemporaryFile(mode='w+', delete=False, suffix='.ai', encoding='utf-8') as f_ai:
-            f_orig.write(original_buffer_content)
-            f_ai.write(ai_generated_code)
-            orig_filepath = f_orig.name
-            ai_filepath = f_ai.name
+        util.display_message("")
 
         try:
-            cmd = ['diff', '-u', orig_filepath, ai_filepath]
-            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            if result.returncode > 1:
-                error_message = result.stderr.strip()
-                util.display_message(f"Could not generate diff: {error_message}", error=True)
-                return
-            diff_output = result.stdout
-        finally:
-            os.remove(orig_filepath)
-            os.remove(ai_filepath)
-
-        if not diff_output.strip():
-            util.display_message("AI content is identical to the original.", history=True)
+            parsed_json = json.loads(json_aggregator)
+            files_to_process = parsed_json.get('files', [])
+            if not isinstance(files_to_process, list):
+                raise ValueError("'files' key is not a list.")
+        except (json.JSONDecodeError, ValueError) as e:
+            util.display_message(f"AI did not return valid JSON for files: {e}", error=True)
+            vim.command('vnew')
+            vim.command('file Vimini Raw Output')
+            vim.command('setlocal buftype=nofile noswapfile')
+            vim.current.buffer[:] = json_aggregator.split('\n')
             return
 
-        # Open a new split window for the diff.
+        if not files_to_process:
+            util.display_message("AI returned no file changes.", history=True)
+            return
+
         vim.command('vnew')
         vim.command('file Vimini Diff')
         vim.command('setlocal buftype=nofile filetype=diff noswapfile')
-        vim.current.buffer[:] = diff_output.split('\n')
+        diff_buffer = vim.current.buffer
+
+        data_key = str(uuid.uuid4())
+        _VIMINI_DATA_STORE[data_key] = {
+            'files_to_apply': files_to_process,
+            'project_root': project_root
+        }
+        vim.command(f"let b:vimini_data_key = '{data_key}'")
+
+        combined_diff_output = []
+        for file_op in files_to_process:
+            relative_path = file_op['file_path']
+            ai_generated_code = file_op['file_content']
+            absolute_path = os.path.join(project_root, relative_path)
+
+            original_content = ""
+            file_exists = os.path.exists(absolute_path)
+            if file_exists:
+                try:
+                    with open(absolute_path, 'r', encoding='utf-8') as f:
+                        original_content = f.read()
+                except Exception as e:
+                    util.display_message(f"Could not read file {relative_path}: {e}", error=True)
+                    continue
+
+            with tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_orig, \
+                 tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_ai:
+                f_orig.write(original_content)
+                f_ai.write(ai_generated_code)
+                orig_filepath = f_orig.name
+                ai_filepath = f_ai.name
+
+            try:
+                # If the original file doesn't exist, diff against /dev/null
+                # for a cleaner "new file" diff, as requested.
+                source_path = orig_filepath if file_exists else "/dev/null"
+                cmd = ['diff', '-u', source_path, ai_filepath]
+                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if result.returncode > 1:
+                    continue # diff error
+
+                diff_lines = result.stdout.strip().split('\n')
+                if len(diff_lines) <= 2 and not original_content and not ai_generated_code:
+                    continue # Empty diff
+
+                if combined_diff_output:
+                    combined_diff_output.append("\n" + "="*80 + "\n")
+
+                combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
+                if not file_exists:
+                    combined_diff_output.append("new file mode 100644")
+                combined_diff_output.append(f"--- a/{relative_path}")
+                combined_diff_output.append(f"+++ b/{relative_path}")
+                combined_diff_output.extend(diff_lines[2:])
+
+            finally:
+                os.remove(orig_filepath)
+                os.remove(ai_filepath)
+
+        if not combined_diff_output:
+            util.display_message("AI content is identical to the original files.", history=True)
+            vim.command(f"bdelete! {diff_buffer.number}")
+            return
+
+        diff_buffer[:] = combined_diff_output
         vim.command('normal! 1G')
 
     except Exception as e:
@@ -628,62 +658,82 @@ def commit(author=None):
 
 def apply_code():
     """
-    Finds the 'Vimini Code' buffer, copies its contents over the original
-    buffer, and closes the temporary Vimini Code and Vimini Diff buffers.
+    Finds the 'Vimini Diff' buffer, writes all specified file changes to
+    disk, and reloads any affected open buffers.
     """
     util.log_info("apply_code()")
-    # Locate the source 'Vimini Code' buffer, which contains the AI-generated code.
-    ai_buffer = None
     diff_buffer = None
     thoughts_buffer = None
     for buf in vim.buffers:
-        if buf.name and buf.name.endswith('Vimini Code'):
-            ai_buffer = buf
-        elif buf.name and buf.name.endswith('Vimini Diff'):
+        if buf.name and buf.name.endswith('Vimini Diff'):
             diff_buffer = buf
         elif buf.name and buf.name.endswith('Vimini Thoughts'):
             thoughts_buffer = buf
 
-    if not ai_buffer:
-        util.display_message("`Vimini Code` buffer not found. Was :ViminiCode run?", error=True)
+    if not diff_buffer:
+        util.display_message("`Vimini Diff` buffer not found. Was :ViminiCode run?", error=True)
         return
 
-    # To find the original buffer, retrieve the buffer number that `code()` saved
-    # in the 'Vimini Code' buffer's local variables.
-    original_bufnr = int(vim.eval(f"getbufvar({ai_buffer.number}, 'vimini_source_bufnr', -1)"))
-    if original_bufnr == -1:
-        util.display_message("Could not find the original buffer. The link may have been lost.", error=True)
+    data_key = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_data_key', '')")
+    if not data_key:
+        util.display_message("Could not find data key in `Vimini Diff` buffer.", error=True)
         return
 
-    # Find the original buffer object from its number and ensure it's still valid.
-    original_buffer = next((b for b in vim.buffers if b.number == original_bufnr), None)
-    if not original_buffer or not original_buffer.valid:
-        util.display_message(f"The original buffer ({original_bufnr}) no longer exists.", error=True)
+    stored_data = _VIMINI_DATA_STORE.get(data_key)
+    if not stored_data:
+        util.display_message("Could not find data associated with the key. It may have expired or been cleared.", error=True)
         return
 
-    # Get content and name before buffers are modified or deleted.
-    ai_content = ai_buffer[:]
-    original_buffer_name = original_buffer.name or '[No Name]'
+    try:
+        files_to_apply = stored_data['files_to_apply']
+        project_root = stored_data['project_root']
+        modified_files = []
 
-    # Perform the overwrite. This automatically marks the buffer as modified.
-    original_buffer[:] = ai_content
+        for file_op in files_to_apply:
+            relative_path = file_op['file_path']
+            content = file_op['file_content']
+            absolute_path = os.path.join(project_root, relative_path)
 
-    # Switch window focus to the modified buffer.
-    target_win_nr = vim.eval(f"bufwinnr({original_buffer.number})")
-    if int(target_win_nr) > 0:
-        vim.command(f"{target_win_nr}wincmd w")
-    else:
-        # If no window is showing it, open it in the current window.
-        vim.command(f"buffer {original_buffer.number}")
+            try:
+                # Ensure the directory for the file exists.
+                dir_name = os.path.dirname(absolute_path)
+                if dir_name:
+                    os.makedirs(dir_name, exist_ok=True)
 
-    # Clean up temporary buffers. Use '!' to discard any unsaved changes.
-    vim.command(f"bdelete! {ai_buffer.number}")
-    if diff_buffer and diff_buffer.number in [b.number for b in vim.buffers]:
+                # Write the new content to the file.
+                with open(absolute_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                modified_files.append(relative_path)
+
+                # Check if this file is open in a buffer and reload it.
+                normalized_target_path = os.path.abspath(absolute_path)
+                for buf in vim.buffers:
+                    if buf.name and os.path.abspath(buf.name) == normalized_target_path:
+                        # Find a window displaying this buffer to switch to.
+                        win_nr = vim.eval(f'bufwinnr({buf.number})')
+                        if int(win_nr) > 0:
+                            vim.command(f"{win_nr}wincmd w") # Switch to window
+                            vim.command('e!') # Revert to saved version
+                            vim.command('wincmd p') # Switch back
+                        break
+
+            except Exception as e:
+                util.display_message(f"Error writing to {relative_path}: {e}", error=True)
+                # Continue to try and apply other files.
+
+        # Clean up temporary buffers.
         vim.command(f"bdelete! {diff_buffer.number}")
-    if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
-        vim.command(f"bdelete! {thoughts_buffer.number}")
+        if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
+            vim.command(f"bdelete! {thoughts_buffer.number}")
 
-    util.display_message(f"Applied changes to `{original_buffer_name}`.", history=True)
+        if modified_files:
+            util.display_message(f"Applied changes to: {', '.join(modified_files)}", history=True)
+
+    except (KeyError, os.error) as e:
+        util.display_message(f"Error applying changes: {e}", error=True)
+    finally:
+        if data_key in _VIMINI_DATA_STORE:
+            del _VIMINI_DATA_STORE[data_key]
 
 def append_code():
     """
