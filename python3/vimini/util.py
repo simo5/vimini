@@ -147,16 +147,24 @@ def is_buffer_modified(buffer=None):
 
 def find_context_files():
     """
-    Generate a list of files that are referenced by open buffers.
-    Each element of the list is a tuple containing the file name and the vim buffer number.
-    This list does not contain buffers that are not file-backed.
+    Generate a list of files that are referenced by open buffers, ensuring each
+    file path is included only once.
+
+    If multiple buffers point to the same file path, only the first buffer
+    encountered is used. Each element of the list is a tuple containing the
+    file path and the corresponding vim buffer number. This function filters
+    out buffers that are not backed by a file on disk.
     """
     files_to_upload = []
+    seen_file_paths = set()
     for b in vim.buffers:
         # A buffer is considered file-backed if its name is not empty
         # and the file actually exists on disk.
         if b.name and os.path.exists(b.name):
-            files_to_upload.append((b.name, b.number))
+            # If we haven't seen this file path before, add it.
+            if b.name not in seen_file_paths:
+                files_to_upload.append((b.name, b.number))
+                seen_file_paths.add(b.name)
     return files_to_upload
 
 def upload_context_files(client):
