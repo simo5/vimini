@@ -144,6 +144,7 @@ def code(prompt, verbose=False):
             'project_root': project_root
         }
         vim.command(f"let b:vimini_data_key = '{data_key}'")
+        vim.command(f"let b:vimini_project_root = '{project_root}'")
 
         combined_diff_output = []
         for file_op in files_to_process:
@@ -253,7 +254,8 @@ def show_diff():
 def apply_code():
     """
     Finds the 'Vimini Diff' buffer, writes all specified file changes to
-    disk, and reloads any affected open buffers.
+    disk, and reloads any affected open buffers. If an error occurs, the
+    diff buffer is preserved for manual editing and re-application.
     """
     util.log_info("apply_code()")
     diff_buffer = None
@@ -269,80 +271,133 @@ def apply_code():
         return
 
     data_key = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_data_key', '')")
-    if not data_key:
-        util.display_message("Could not find data key in `Vimini Diff` buffer.", error=True)
-        return
+    stored_data = _VIMINI_DATA_STORE.get(data_key) if data_key else None
 
-    stored_data = _VIMINI_DATA_STORE.get(data_key)
-    if not stored_data:
-        util.display_message("Could not find data associated with the key. It may have expired or been cleared.", error=True)
-        return
+    if stored_data:
+        # Initial apply from AI response data.
+        try:
+            files_to_apply = stored_data['files_to_apply']
+            project_root = stored_data['project_root']
+            modified_files = []
+            has_errors = False
 
-    try:
-        files_to_apply = stored_data['files_to_apply']
-        project_root = stored_data['project_root']
-        modified_files = []
+            for file_op in files_to_apply:
+                relative_path = file_op['file_path']
+                content = file_op['file_content']
+                file_type = file_op.get('file_type', 'text/plain')
+                absolute_path = os.path.join(project_root, relative_path)
 
-        for file_op in files_to_apply:
-            relative_path = file_op['file_path']
-            content = file_op['file_content']
-            file_type = file_op.get('file_type', 'text/plain')
-            absolute_path = os.path.join(project_root, relative_path)
+                try:
+                    dir_name = os.path.dirname(absolute_path)
+                    if dir_name:
+                        os.makedirs(dir_name, exist_ok=True)
 
-            try:
-                dir_name = os.path.dirname(absolute_path)
-                if dir_name:
-                    os.makedirs(dir_name, exist_ok=True)
-
-                if file_type == 'text/x-diff':
-                    try:
+                    if file_type == 'text/x-diff':
                         result = subprocess.run(
                             ['patch', '-p1', '-N', '-r', '-'],
-                            input=content,
-                            text=True,
-                            check=False,
-                            capture_output=True,
-                            cwd=project_root
+                            input=content, text=True, check=False,
+                            capture_output=True, cwd=project_root
                         )
                         if result.returncode != 0:
                             err_msg = f"patch failed for {relative_path}.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
                             util.display_message(err_msg, error=True)
+                            has_errors = True
                             continue
-                        modified_files.append(relative_path)
-                    except FileNotFoundError:
-                        util.display_message("Error: `patch` command not found. Is it in your PATH?", error=True)
-                        return
-                else: # 'text/plain' or unspecified
-                    with open(absolute_path, 'w', encoding='utf-8') as f:
-                        f.write(content)
+                    else:  # 'text/plain' or unspecified
+                        with open(absolute_path, 'w', encoding='utf-8') as f:
+                            f.write(content)
+
                     modified_files.append(relative_path)
 
-                # Check if this file is open in a buffer and reload it.
-                normalized_target_path = os.path.abspath(absolute_path)
-                for buf in vim.buffers:
-                    if buf.name and os.path.abspath(buf.name) == normalized_target_path:
-                        # Find a window displaying this buffer to switch to.
-                        win_nr = vim.eval(f'bufwinnr({buf.number})')
-                        if int(win_nr) > 0:
-                            vim.command(f"{win_nr}wincmd w") # Switch to window
-                            vim.command('e!') # Revert to saved version
-                            vim.command('wincmd p') # Switch back
-                        break
+                    # Reload buffer if file is open
+                    normalized_target_path = os.path.abspath(absolute_path)
+                    for buf in vim.buffers:
+                        if buf.name and os.path.abspath(buf.name) == normalized_target_path:
+                            win_nr = vim.eval(f'bufwinnr({buf.number})')
+                            if int(win_nr) > 0:
+                                vim.command(f"{win_nr}wincmd w")
+                                vim.command('e!')
+                                vim.command('wincmd p')
+                            break
+                except FileNotFoundError:
+                    util.display_message("Error: `patch` command not found. Is it in your PATH?", error=True)
+                    has_errors = True
+                    break # Fatal error
+                except Exception as e:
+                    util.display_message(f"Error processing {relative_path}: {e}", error=True)
+                    has_errors = True
 
-            except Exception as e:
-                util.display_message(f"Error writing to {relative_path}: {e}", error=True)
-                # Continue to try and apply other files.
+            if data_key in _VIMINI_DATA_STORE:
+                del _VIMINI_DATA_STORE[data_key]
 
-        # Clean up temporary buffers.
+            if has_errors:
+                util.display_message("Errors occurred. Diff buffer is preserved for manual review and re-application.", error=True)
+                return
+
+            # Success
+            if modified_files:
+                util.display_message(f"Applied changes to: {', '.join(modified_files)}", history=True)
+
+            vim.command(f"bdelete! {diff_buffer.number}")
+            if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
+                vim.command(f"bdelete! {thoughts_buffer.number}")
+
+        except Exception as e:
+            util.display_message(f"An unexpected error occurred during apply: {e}", error=True)
+            if data_key in _VIMINI_DATA_STORE:
+                del _VIMINI_DATA_STORE[data_key]
+        return
+
+    # Re-apply from buffer content.
+    project_root = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_project_root', '')")
+    if not project_root:
+        project_root = util.get_git_repo_root() or vim.eval('getcwd()')
+
+    diff_content = "\n".join(diff_buffer[:])
+    if not diff_content.strip():
+        util.display_message("Diff is empty. Nothing to apply.", history=True)
+        vim.command(f"bdelete! {diff_buffer.number}")
+        return
+
+    try:
+        result = subprocess.run(
+            ['patch', '-p1', '-N', '-r', '-'],
+            input=diff_content, text=True, check=False,
+            capture_output=True, cwd=project_root
+        )
+
+        if result.returncode != 0:
+            err_msg = f"Patch command failed. Please review the output and the diff.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+            util.display_message(err_msg, error=True)
+            return  # Preserve buffer
+
+        # Success on re-apply
+        util.display_message("Successfully applied modified diff.", history=True)
+
+        modified_files = []
+        for line in diff_content.split('\n'):
+            if line.startswith('--- a/'):
+                path = line[len('--- a/'):].strip()
+                if path != '/dev/null':
+                    modified_files.append(path)
+
+        for relative_path in set(modified_files):
+            absolute_path = os.path.join(project_root, relative_path)
+            normalized_target_path = os.path.abspath(absolute_path)
+            for buf in vim.buffers:
+                if buf.name and os.path.abspath(buf.name) == normalized_target_path:
+                    win_nr = vim.eval(f'bufwinnr({buf.number})')
+                    if int(win_nr) > 0:
+                        vim.command(f"{win_nr}wincmd w")
+                        vim.command('e!')
+                        vim.command('wincmd p')
+                    break
+
         vim.command(f"bdelete! {diff_buffer.number}")
         if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
             vim.command(f"bdelete! {thoughts_buffer.number}")
 
-        if modified_files:
-            util.display_message(f"Applied changes to: {', '.join(modified_files)}", history=True)
-
-    except (KeyError, os.error) as e:
-        util.display_message(f"Error applying changes: {e}", error=True)
-    finally:
-        if data_key in _VIMINI_DATA_STORE:
-            del _VIMINI_DATA_STORE[data_key]
+    except FileNotFoundError:
+        util.display_message("Error: `patch` command not found. Is it in your PATH?", error=True)
+    except Exception as e:
+        util.display_message(f"Error applying modified diff: {e}", error=True)
