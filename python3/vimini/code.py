@@ -34,9 +34,10 @@ def code(prompt, verbose=False):
             type=types.Type.OBJECT,
             properties={
                 'file_path': types.Schema(type=types.Type.STRING, description="The full path of the file relative to the project directory."),
-                'file_content': types.Schema(type=types.Type.STRING, description="The new, complete source code for the file.")
+                'file_type': types.Schema(type=types.Type.STRING, description="The content type. Use 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format."),
+                'file_content': types.Schema(type=types.Type.STRING, description="The new, complete source code for the file, or a patch in the unified diff format, corresponding to the file_type.")
             },
-            required=['file_path', 'file_content']
+            required=['file_path', 'file_type', 'file_content']
         )
         multi_file_output_schema = types.Schema(
             type=types.Type.OBJECT,
@@ -59,10 +60,12 @@ def code(prompt, verbose=False):
                 "IMPORTANT:\n"
                 "1. Your response must be a single JSON object with a 'files' key.\n"
                 "2. The value of 'files' must be an array of file objects.\n"
-                "3. Each file object must have two string keys: 'file_path' and 'file_content'.\n"
+                "3. Each file object must have three string keys: 'file_path', 'file_type', and 'file_content'.\n"
                 "4. 'file_path' must be the full path of the file relative to the project directory.\n"
-                "5. 'file_content' must be the new, complete source code for that file.\n"
-                "6. You can modify existing files or create new files as needed to fulfill the request."
+                "5. 'file_type' must be either 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format.\n"
+                "6. 'file_content' must contain either the new, complete source code or the diff patch, corresponding to the 'file_type'.\n"
+                "7. Diffs ('text/x-diff') can be returned only if explicitly mentioned as an acceptable output in the prompt or if the files are really difficult or too large to process. For small files, returning the entire modified file ('text/plain') is the most preferred option.\n"
+                "8. You can modify existing files or create new files as needed to fulfill the request."
             ),
             *uploaded_files
         ]
@@ -146,50 +149,53 @@ def code(prompt, verbose=False):
         for file_op in files_to_process:
             relative_path = file_op['file_path']
             ai_generated_code = file_op['file_content']
+            file_type = file_op.get('file_type', 'text/plain')
             absolute_path = os.path.join(project_root, relative_path)
-
-            original_content = ""
             file_exists = os.path.exists(absolute_path)
-            if file_exists:
+
+            if file_type == 'text/x-diff':
+                if ai_generated_code.strip():
+                    combined_diff_output.extend(ai_generated_code.split('\n'))
+            else: # 'text/plain' or unspecified
+                original_content = ""
+                if file_exists:
+                    try:
+                        with open(absolute_path, 'r', encoding='utf-8') as f:
+                            original_content = f.read()
+                    except Exception as e:
+                        continue
+
+                with tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_orig, \
+                     tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_ai:
+                    f_orig.write(original_content)
+                    f_ai.write(ai_generated_code)
+                    orig_filepath = f_orig.name
+                    ai_filepath = f_ai.name
+
                 try:
-                    with open(absolute_path, 'r', encoding='utf-8') as f:
-                        original_content = f.read()
-                except Exception as e:
-                    continue
+                    source_path = orig_filepath if file_exists else "/dev/null"
+                    cmd = ['diff', '-u', source_path, ai_filepath]
+                    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                    if result.returncode > 1:
+                        continue # diff error
 
-            with tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_orig, \
-                 tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_ai:
-                f_orig.write(original_content)
-                f_ai.write(ai_generated_code)
-                orig_filepath = f_orig.name
-                ai_filepath = f_ai.name
+                    diff_lines = result.stdout.strip().split('\n')
+                    if len(diff_lines) <= 2 and not original_content and not ai_generated_code:
+                        continue # Empty diff
 
-            try:
-                # If the original file doesn't exist, diff against /dev/null
-                # for a cleaner "new file" diff, as requested.
-                source_path = orig_filepath if file_exists else "/dev/null"
-                cmd = ['diff', '-u', source_path, ai_filepath]
-                result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                if result.returncode > 1:
-                    continue # diff error
+                    combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
+                    if not file_exists:
+                        combined_diff_output.append("new file mode 100644")
+                    combined_diff_output.append(f"--- a/{relative_path}")
+                    combined_diff_output.append(f"+++ b/{relative_path}")
+                    combined_diff_output.extend(diff_lines[2:])
 
-                diff_lines = result.stdout.strip().split('\n')
-                if len(diff_lines) <= 2 and not original_content and not ai_generated_code:
-                    continue # Empty diff
-
-                combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
-                if not file_exists:
-                    combined_diff_output.append("new file mode 100644")
-                combined_diff_output.append(f"--- a/{relative_path}")
-                combined_diff_output.append(f"+++ b/{relative_path}")
-                combined_diff_output.extend(diff_lines[2:])
-
-            finally:
-                os.remove(orig_filepath)
-                os.remove(ai_filepath)
+                finally:
+                    os.remove(orig_filepath)
+                    os.remove(ai_filepath)
 
         if not combined_diff_output:
-            util.display_message("AI content is identical to the original files.", history=True)
+            util.display_message("AI content is identical to the original files or returned empty diff.", history=True)
             vim.command(f"bdelete! {diff_buffer.number}")
             return
 
@@ -280,18 +286,36 @@ def apply_code():
         for file_op in files_to_apply:
             relative_path = file_op['file_path']
             content = file_op['file_content']
+            file_type = file_op.get('file_type', 'text/plain')
             absolute_path = os.path.join(project_root, relative_path)
 
             try:
-                # Ensure the directory for the file exists.
                 dir_name = os.path.dirname(absolute_path)
                 if dir_name:
                     os.makedirs(dir_name, exist_ok=True)
 
-                # Write the new content to the file.
-                with open(absolute_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                modified_files.append(relative_path)
+                if file_type == 'text/x-diff':
+                    try:
+                        result = subprocess.run(
+                            ['patch', '-p1', '-N', '-r', '-'],
+                            input=content,
+                            text=True,
+                            check=False,
+                            capture_output=True,
+                            cwd=project_root
+                        )
+                        if result.returncode != 0:
+                            err_msg = f"patch failed for {relative_path}.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+                            util.display_message(err_msg, error=True)
+                            continue
+                        modified_files.append(relative_path)
+                    except FileNotFoundError:
+                        util.display_message("Error: `patch` command not found. Is it in your PATH?", error=True)
+                        return
+                else: # 'text/plain' or unspecified
+                    with open(absolute_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    modified_files.append(relative_path)
 
                 # Check if this file is open in a buffer and reload it.
                 normalized_target_path = os.path.abspath(absolute_path)
