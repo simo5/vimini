@@ -411,3 +411,168 @@ def commit(author=None):
         util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
+
+def files_command(action, file_name=None):
+    """
+    Manages uploaded files with actions: list, info, delete.
+    """
+    util.log_info(f"files_command(action='{action}', file_name='{file_name}')")
+    try:
+        client = util.get_client()
+        if not client:
+            return
+
+        if action == "list":
+            util.display_message("Fetching file list...")
+            # The list response is an iterator, so we consume it into a list
+            all_files = list(client.files.list())
+            util.display_message("") # Clear message
+
+            # Prepare content for the new buffer
+            file_list_content = ["Vimini Files:", "------------"]
+            if not all_files:
+                file_list_content.append("No files have been uploaded.")
+            else:
+                for f in all_files:
+                    file_list_content.append(f.display_name)
+
+            # Display in a new, non-editable buffer
+            vim.command('vnew')
+            vim.command('file Vimini Files')
+            vim.current.buffer[:] = file_list_content
+            vim.command('setlocal buftype=nofile filetype=markdown noswapfile nomodifiable')
+
+        elif action == "info":
+            if not file_name:
+                # Check for an active Vimini Files window
+                vimini_files_win_found = False
+                for w in vim.windows:
+                    # Check for buffer name, which is more reliable than file path for special buffers.
+                    if w.valid and w.buffer.name and "Vimini Files" in w.buffer.name:
+                        # Found the window, get the filename from the current line
+                        line_num = w.cursor[0]
+                        file_name = w.buffer[line_num - 1].strip()
+                        # The list has a header, so ignore those lines.
+                        if "Vimini Files:" in file_name or "------------" in file_name or not file_name:
+                            file_name = None # It's a header/blank line, not a file
+                        vimini_files_win_found = True
+                        break
+                if not vimini_files_win_found or not file_name:
+                    util.display_message("Error: 'info' requires a file name or the cursor to be on a file in the Vimini Files window.", error=True)
+                    return
+
+            util.display_message(f"Fetching info for {file_name}...")
+
+            # Find the file object by display_name by listing all files
+            target_file = None
+            try:
+                all_files = list(client.files.list())
+                for f in all_files:
+                    if f.display_name == file_name:
+                        target_file = f
+                        break
+            except Exception as e:
+                util.display_message(f"Error listing files: {e}", error=True)
+                return
+
+            if not target_file:
+                util.display_message(f"Error: File '{file_name}' not found.", error=True)
+                return
+
+            util.display_message("") # Clear message
+
+            # Prepare content for the info buffer
+            info_content = [
+                f"File Info: {target_file.display_name}",
+                "---------------------------------",
+                f"ID:           {target_file.name}",
+                f"Display Name: {target_file.display_name}",
+                f"MIME Type:    {target_file.mime_type}",
+                f"Size:         {target_file.size_bytes} bytes",
+                f"Created:      {target_file.create_time.isoformat()}",
+                f"URI:          {target_file.uri}",
+            ]
+
+            # Display in a new, non-editable buffer
+            vim.command('vnew')
+            vim.command(f'file Vimini File Info: {file_name}')
+            vim.current.buffer[:] = info_content
+            vim.command('setlocal buftype=nofile filetype=markdown noswapfile nomodifiable')
+
+        elif action == "delete":
+            if not file_name:
+                # Same file selection logic as 'info'
+                vimini_files_win_found = False
+                for w in vim.windows:
+                    if w.valid and w.buffer.name and "Vimini Files" in w.buffer.name:
+                        line_num = w.cursor[0]
+                        file_name = w.buffer[line_num - 1].strip()
+                        if "Vimini Files:" in file_name or "------------" in file_name or not file_name:
+                            file_name = None
+                        vimini_files_win_found = True
+                        break
+                if not vimini_files_win_found or not file_name:
+                    util.display_message("Error: 'delete' requires a file name or the cursor to be on a file in the Vimini Files window.", error=True)
+                    return
+
+            util.display_message(f"Finding file '{file_name}' to delete...")
+
+            # Find the file object by its display_name
+            target_file = None
+            try:
+                all_files = list(client.files.list())
+                for f in all_files:
+                    if f.display_name == file_name:
+                        target_file = f
+                        break
+            except Exception as e:
+                util.display_message(f"Error listing files: {e}", error=True)
+                return
+
+            if not target_file:
+                util.display_message(f"Error: File '{file_name}' not found on server.", error=True)
+                return
+
+            # Delete the file
+            util.display_message(f"Deleting '{file_name}'...")
+            client.files.delete(name=target_file.name)
+
+            # Check if a Vimini Files window is open to refresh it
+            vimini_files_buffer = None
+            for b in vim.buffers:
+                if b.valid and b.name and "Vimini Files" in b.name:
+                    vimini_files_buffer = b
+                    break
+
+            if vimini_files_buffer:
+                util.display_message(f"File '{file_name}' deleted. Refreshing file list...")
+
+                # Re-fetch file list
+                all_files_after_delete = list(client.files.list())
+                file_list_content = ["Vimini Files:", "------------"]
+                if not all_files_after_delete:
+                    file_list_content.append("No files have been uploaded.")
+                else:
+                    for f in all_files_after_delete:
+                        file_list_content.append(f.display_name)
+
+                # Update the buffer. This requires making it modifiable first.
+                win_nr = int(vim.eval(f"bufwinnr({vimini_files_buffer.number})"))
+                if win_nr > 0:
+                    original_win_nr = int(vim.eval("winnr()"))
+                    vim.command(f"{win_nr}wincmd w")
+                    vim.command("setlocal modifiable")
+                    vimini_files_buffer[:] = file_list_content
+                    vim.command("setlocal nomodifiable")
+                    if original_win_nr != win_nr:
+                        vim.command(f"{original_win_nr}wincmd w") # Switch back
+
+                util.display_message(f"File '{file_name}' deleted. File list refreshed.", history=True)
+            else:
+                util.display_message(f"File '{file_name}' deleted successfully.", history=True)
+
+        else:
+            util.display_message(f"Error: Unknown action '{action}'. Available actions: list, info, delete.", error=True)
+
+    except Exception as e:
+        util.display_message(f"Error: {e}", error=True)

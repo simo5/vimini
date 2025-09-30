@@ -1,4 +1,3 @@
-" plugin/vimini.vim
 " Main entry point for vimini
 
 " Prevent the script from being loaded more than once.
@@ -261,6 +260,30 @@ endfunction
 
 command! -nargs=? ViminiCommit call ViminiCommit(<f-args>)
 
+" Expose a function to manage uploaded files
+function! ViminiFiles(q_args)
+  let l:args = split(a:q_args)
+  if empty(l:args)
+    echoerr "[Vimini] ViminiFiles requires an action (list, info, delete)."
+    return
+  endif
+
+  let l:action = l:args[0]
+  let l:file_name = get(l:args, 1, v:null)
+
+  py3 << EOF
+try:
+    from vimini import main
+    action = vim.eval('l:action')
+    file_name = vim.eval('l:file_name')
+    main.files_command(action, file_name=file_name)
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! -nargs=* ViminiFiles call ViminiFiles(<q-args>)
 
 " Expose a function for autocompletion.
 " This calls the non-blocking python function that handles the async request.
