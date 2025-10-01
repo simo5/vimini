@@ -1,5 +1,5 @@
 import vim
-import os, json, subprocess, tempfile, uuid
+import os, json, subprocess, tempfile
 from google.genai import types
 from vimini import util
 
@@ -138,12 +138,10 @@ def code(prompt, verbose=False):
         vim.command('setlocal buftype=nofile filetype=diff noswapfile')
         diff_buffer = vim.current.buffer
 
-        data_key = str(uuid.uuid4())
-        _VIMINI_DATA_STORE[data_key] = {
+        _VIMINI_DATA_STORE = {
             'files_to_apply': files_to_process,
             'project_root': project_root
         }
-        vim.command(f"let b:vimini_data_key = '{data_key}'")
         vim.command(f"let b:vimini_project_root = '{project_root}'")
 
         combined_diff_output = []
@@ -270,8 +268,7 @@ def apply_code():
         util.display_message("`Vimini Diff` buffer not found. Was :ViminiCode run?", error=True)
         return
 
-    data_key = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_data_key', '')")
-    stored_data = _VIMINI_DATA_STORE.get(data_key) if data_key else None
+    stored_data = _VIMINI_DATA_STORE if _VIMINI_DATA_STORE else None
 
     if stored_data:
         # Initial apply from AI response data.
@@ -327,12 +324,11 @@ def apply_code():
                     util.display_message(f"Error processing {relative_path}: {e}", error=True)
                     has_errors = True
 
-            if data_key in _VIMINI_DATA_STORE:
-                del _VIMINI_DATA_STORE[data_key]
-
             if has_errors:
                 util.display_message("Errors occurred. Diff buffer is preserved for manual review and re-application.", error=True)
                 return
+
+            _VIMINI_DATA_STORE = {}
 
             # Success
             if modified_files:
@@ -344,8 +340,7 @@ def apply_code():
 
         except Exception as e:
             util.display_message(f"An unexpected error occurred during apply: {e}", error=True)
-            if data_key in _VIMINI_DATA_STORE:
-                del _VIMINI_DATA_STORE[data_key]
+            _VIMINI_DATA_STORE = {}
         return
 
     # Re-apply from buffer content.
