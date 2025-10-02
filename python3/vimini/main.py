@@ -71,7 +71,7 @@ def chat(prompt):
         vim.command("redraw")
 
         # Send the prompt and get the response.
-        util.display_message("Thinking...")
+        util.display_message("Processing...")
         response = client.models.generate_content(
             model=util._MODEL,
             contents=prompt,
@@ -178,8 +178,8 @@ def review(prompt, git_objects=None, verbose=False):
             thoughts_win_nr = vim.eval(f"bufwinnr({thoughts_buffer.number})")
         review_win_nr = vim.eval(f"bufwinnr({review_buffer.number})")
 
-        # Display a Thinking.. message so users know they have to wait
-        util.display_message("Thinking...")
+        # Display a Processing.. message so users know they have to wait
+        util.display_message("Processing...")
 
         # Set up the API call arguments
         stream_kwargs = {
@@ -231,7 +231,7 @@ def review(prompt, git_objects=None, verbose=False):
 
                 # Move cursor to the end and scroll view to keep the last line visible.
                 vim.command('normal! Gz-')
-                util.display_message("Thinking...")
+                util.display_message("Processing...")
 
         util.display_message("") # Clear the thinking message
 

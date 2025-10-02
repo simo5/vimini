@@ -79,7 +79,7 @@ def code(prompt, verbose=False):
             thoughts_buffer = vim.current.buffer
             thoughts_buffer[:] = ['']
 
-        util.display_message("Thinking...")
+        util.display_message("Processing...")
 
         generation_config = types.GenerateContentConfig(
             response_mime_type="application/json",
@@ -113,7 +113,7 @@ def code(prompt, verbose=False):
                     vim.command('normal! Gz-')
                 elif not is_thought:
                     json_aggregator += part.text
-                util.display_message("Thinking...")
+                util.display_message("Processing...")
 
         util.display_message("")
 
