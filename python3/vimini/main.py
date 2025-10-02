@@ -279,6 +279,13 @@ def commit(author=None):
             util.display_message("No changes to commit.", history=True)
             return
 
+        # Get the diff stat to show in the confirmation popup.
+        staged_stat_cmd = ['git', '-C', repo_path, 'diff', '--staged', '--stat']
+        staged_stat_result = subprocess.run(staged_stat_cmd, capture_output=True, text=True, check=False)
+        diff_stat_output = ""
+        if staged_stat_result.returncode == 0:
+            diff_stat_output = staged_stat_result.stdout.strip()
+
         # Create prompt for AI to generate subject and body.
         prompt = (
             "Based on the following git diff, generate a commit message with a subject and a body.\n\n"
@@ -343,6 +350,11 @@ def commit(author=None):
         popup_content = [f"Subject: {subject}", ""]
         if body:
             popup_content.extend(body.split('\n'))
+
+        if diff_stat_output:
+            popup_content.extend(['', '--- Staged files ---'])
+            popup_content.extend(diff_stat_output.split('\n'))
+
         popup_content.extend(['', '---', 'Commit with this message? [y/n]'])
 
 
