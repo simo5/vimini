@@ -12,6 +12,7 @@ def code(prompt, verbose=False):
     to generate code. Displays thoughts (if verbose) and a combined diff
     for multiple file changes in new buffers.
     """
+    global _VIMINI_DATA_STORE
     util.log_info(f"code({prompt}, verbose={verbose})")
     try:
         client = util.get_client()
@@ -255,6 +256,7 @@ def apply_code():
     disk, and reloads any affected open buffers. If an error occurs, the
     diff buffer is preserved for manual editing and re-application.
     """
+    global _VIMINI_DATA_STORE
     util.log_info("apply_code()")
     diff_buffer = None
     thoughts_buffer = None
