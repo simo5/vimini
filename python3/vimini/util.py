@@ -29,7 +29,7 @@ def get_client():
             return None
     return _GENAI_CLIENT
 
-def get_git_repo_root(silent=False):
+def get_git_repo_root():
     """
     Finds the root directory of the git repository for the current buffer.
     Returns the repository root path on success, or None on failure.
@@ -39,8 +39,6 @@ def get_git_repo_root(silent=False):
     """
     current_file_path = vim.current.buffer.name
     if not current_file_path:
-        if not silent:
-            vim.command("echoerr '[Vimini] Cannot determine git repository from an unnamed buffer.'")
         return None
 
     # Determine the root of the git repository from the current file's directory.
@@ -54,16 +52,15 @@ def get_git_repo_root(silent=False):
             text=True,
             check=False
         )
-    except FileNotFoundError:
-        if not silent:
-            vim.command("echoerr '[Vimini] Git error: `git` command not found. Is it in your PATH?'")
+    except Exception as e:
+        message = "Git command not found or failed."
+        log_info(f"ERROR: {message} Exception: {e}")
         return None
 
 
     if repo_path_result.returncode != 0:
-        if not silent:
-            error_message = (repo_path_result.stderr or "Not a git repository.").strip().replace("'", "''")
-            vim.command(f"echoerr '[Vimini] Git error: {error_message}'")
+        message = "Git command not found or failed."
+        log_info(f"ERROR: {message} Error: {repo_path_result.stderr}")
         return None
 
     return repo_path_result.stdout.strip()
@@ -79,7 +76,7 @@ def get_git_repo_name():
 
     # Call get_git_repo_root silently to avoid error message recursion,
     # as this function is used within display_message itself.
-    repo_path = get_git_repo_root(silent=True)
+    repo_path = get_git_repo_root()
 
     if repo_path:
         _REPO_NAME_CACHE = os.path.basename(repo_path)
