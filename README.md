@@ -33,6 +33,8 @@ coding environment.
     ```
 *   `git` must be installed and in your `PATH` for the Git-related
     commands.
+*   `ripgrep` (`rg`) must be installed and in your `PATH` for the Ripgrep
+    integration commands.
 
 ## Installation
 
@@ -292,6 +294,33 @@ specific commit.
 
 " Generate a commit message without the co-author trailer
 :ViminiCommit -n
+```
+
+### Ripgrep Integration (Highly Experimental)
+
+> **Note:** The `ViminiRipGrep` command is basically an AI-assisted translation of the code at [https://gitlab.com/aarcange/ripgrep-edit](https://gitlab.com/aarcange/ripgrep-edit). Credit for the original project goes to Andrea Arcangeli.
+
+This powerful feature combines `ripgrep`'s fast searching with Gemini's AI-powered code modification capabilities, allowing you to perform project-wide refactoring from a single prompt.
+
+#### `:ViminiRipGrep {regex} {prompt}`
+
+This command initiates an AI-assisted search and replace workflow:
+1.  It runs `ripgrep` with the given `{regex}` to find all occurrences in your project.
+2.  The search results, including a few lines of context, are placed into a new temporary buffer named `ViminiRipGrep`.
+3.  This buffer's content is then sent to Gemini along with your `{prompt}` for modification.
+4.  Gemini applies your requested changes to the buffer content. You can then review and even manually edit the proposed changes directly in the `ViminiRipGrep` buffer before applying them.
+
+**Example:**
+To rename `old_function_name` to `new_function_name` across your entire project:
+```vim
+:ViminiRipGrep 'old_function_name' 'rename this function to new_function_name'
+```
+
+#### `:ViminiRipGrepApply`
+Once you are satisfied with the AI-generated changes in the `ViminiRipGrep` buffer, run this command. It will apply the modifications to the actual files on disk and close the temporary buffer.
+
+```vim
+:ViminiRipGrepApply
 ```
 
 ### `:ViminiFiles {action} [file_name]`

@@ -4,6 +4,8 @@ from google.genai import types
 from vimini import util
 from vimini.autocomplete import autocomplete, cancel_autocomplete, process_autocomplete_queue
 from vimini.code import code, show_diff, apply_code
+from vimini.ripgrep import command as ripgrep_command
+from vimini.ripgrep import apply as ripgrep_apply
 
 def initialize(api_key, model, logfile=None):
     """

@@ -399,3 +399,32 @@ augroup vimini_autocomplete
   autocmd TextChangedI * call s:ResetAutocompleteTimer()
   autocmd InsertLeave * call s:StopAutocompleteTimer()
 augroup END
+
+" Expose ripgrep search functionality
+function! s:ViminiRipGrep(q_args)
+  py3 << EOF
+try:
+    from vimini import main
+    arg_string = vim.eval('a:q_args')
+    main.ripgrep_command(arg_string)
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! -nargs=* ViminiRipGrep call s:ViminiRipGrep(<q-args>)
+
+" Expose ripgrep apply functionality
+function! ViminiRipGrepApply()
+  py3 << EOF
+try:
+    from vimini import main
+    main.ripgrep_apply()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! -nargs=0 ViminiRipGrepApply call ViminiRipGrepApply()
