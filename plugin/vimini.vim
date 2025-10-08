@@ -27,6 +27,9 @@ endif
 " Configuration: Model name
 let g:vimini_model = get(g:, 'vimini_model', 'gemini-2.5-flash')
 
+" Configuration: How to split new windows ('vertical' or 'horizontal').
+let g:vimini_split_method = get(g:, 'vimini_split_method', 'vertical')
+
 " Configuration: Log file
 let g:vimini_log_file = get(g:, 'vimini_log_file', expand('~/.var/vimini/vimini.log'))
 " Configuration: Logging on/off

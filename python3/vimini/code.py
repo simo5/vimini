@@ -80,7 +80,7 @@ def code(prompt, verbose=False):
     thoughts_buffer = None
     if verbose:
         try:
-            vim.command('vnew')
+            util.new_split()
             vim.command('file Vimini Thoughts')
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
             thoughts_buffer = vim.current.buffer
@@ -141,7 +141,7 @@ def code(prompt, verbose=False):
             raise ValueError("'files' key is not a list.")
     except (json.JSONDecodeError, ValueError) as e:
         util.display_message(f"AI did not return valid JSON for files: {e}", error=True)
-        vim.command('vnew')
+        util.new_split()
         vim.command('file Vimini Raw Output')
         vim.command('setlocal buftype=nofile noswapfile')
         vim.current.buffer[:] = json_aggregator.split('\n')
@@ -153,7 +153,7 @@ def code(prompt, verbose=False):
 
     # --- 6. Generate and Display Diff ---
     try:
-        vim.command('vnew')
+        util.new_split()
         vim.command('file Vimini Diff')
         vim.command('setlocal buftype=nofile filetype=diff noswapfile')
         diff_buffer = vim.current.buffer
@@ -255,7 +255,7 @@ def show_diff():
             return
 
         # Display the diff in a new split window.
-        vim.command('vnew')
+        util.new_split()
         vim.command('file Git Diff')
         # Setting filetype to 'diff' helps with syntax highlighting
         vim.command('setlocal buftype=nofile filetype=diff noswapfile')

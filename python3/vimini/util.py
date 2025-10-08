@@ -20,7 +20,7 @@ def get_client():
             vim.command("echoerr '[Vimini] API key not set. Please run :ViminiInit'")
             return None
         try:
-            vim.command("echo '[Vimini] Initializing API client...'" )
+            vim.command("echo '[Vimini] Initializing API client...'")
             vim.command("redraw")
             _GENAI_CLIENT = genai.Client(api_key=_API_KEY)
             vim.command("echo ''") # Clear the message
@@ -28,6 +28,18 @@ def get_client():
             vim.command(f"echoerr '[Vimini] Error creating API client: {e}'")
             return None
     return _GENAI_CLIENT
+
+def new_split():
+    """Creates a new split using the user's preferred method."""
+    try:
+        split_method = vim.eval("get(g:, 'vimini_split_method', 'vertical')")
+    except (vim.error, AttributeError):
+        split_method = 'vertical' # Fallback for non-vim environments
+
+    if split_method == 'horizontal':
+        vim.command('new')
+    else:
+        vim.command('vnew')
 
 def get_git_repo_root():
     """

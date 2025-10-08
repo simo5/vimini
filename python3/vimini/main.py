@@ -45,7 +45,7 @@ def list_models():
             model_list.append(f"- {model.name}")
 
         # Display the models in a new split window.
-        vim.command('vnew')
+        util.new_split()
         vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
         vim.current.buffer[:] = model_list
 
@@ -63,7 +63,7 @@ def chat(prompt):
             return
 
         # Immediately open a new split window for the chat.
-        vim.command('vnew')
+        util.new_split()
         vim.command('file Vimini Chat')
         vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
 
@@ -128,7 +128,7 @@ def review(prompt, git_objects=None, verbose=False):
             review_content = result.stdout
 
             # As requested, open a new buffer with the git show output, which becomes the context
-            vim.command('vnew')
+            util.new_split()
             # Truncate for display if the object string is too long
             display_objects = (git_objects[:40] + '..') if len(git_objects) > 40 else git_objects
             vim.command(f'file Vimini Git Review Target: {display_objects}')
@@ -161,14 +161,14 @@ def review(prompt, git_objects=None, verbose=False):
         thoughts_buffer = None
         if verbose:
             # Create the Vimini Thoughts buffer before calling the model.
-            vim.command('vnew')
+            util.new_split()
             vim.command('file Vimini Thoughts')
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
             thoughts_buffer = vim.current.buffer
             thoughts_buffer[:] = ['']
 
         # Create the Vimini Review buffer. This becomes the active window.
-        vim.command('vnew')
+        util.new_split()
         vim.command('file Vimini Review')
         vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
         review_buffer = vim.current.buffer # Reference the new review buffer
@@ -451,7 +451,7 @@ def files_command(action, file_name=None):
                     file_list_content.append(f.display_name)
 
             # Display in a new, non-editable buffer
-            vim.command('vnew')
+            util.new_split()
             vim.command('file Vimini Files')
             vim.current.buffer[:] = file_list_content
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile nomodifiable')
@@ -508,7 +508,7 @@ def files_command(action, file_name=None):
             ]
 
             # Display in a new, non-editable buffer
-            vim.command('vnew')
+            util.new_split()
             vim.command(f'file Vimini File Info: {file_name}')
             vim.current.buffer[:] = info_content
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile nomodifiable')
