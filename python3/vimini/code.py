@@ -14,12 +14,12 @@ def code(prompt, verbose=False):
     """
     global _VIMINI_DATA_STORE
     util.log_info(f"code({prompt}, verbose={verbose})")
+
+    # --- 1. Initialization and Setup ---
     try:
         client = util.get_client()
         if not client:
             return
-
-        original_buffer = vim.current.buffer
 
         project_root = util.get_git_repo_root()
         if not project_root:
@@ -28,57 +28,70 @@ def code(prompt, verbose=False):
         # Upload context files using the helper function.
         uploaded_files = util.upload_context_files(client)
         if uploaded_files is None:
-            return # The helper function has already displayed an error.
+            return  # The helper function has already displayed an error.
+    except Exception as e:
+        util.display_message(f"Error during initialization: {e}", error=True)
+        return
 
-        # Define the schema for a structured JSON output with multiple files.
-        file_object_schema = types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                'file_path': types.Schema(type=types.Type.STRING, description="The full path of the file relative to the project directory."),
-                'file_type': types.Schema(type=types.Type.STRING, description="The content type. Use 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format."),
-                'file_content': types.Schema(type=types.Type.STRING, description="The new, complete source code for the file, or a patch in the unified diff format, corresponding to the file_type.")
-            },
-            required=['file_path', 'file_type', 'file_content']
-        )
-        multi_file_output_schema = types.Schema(
-            type=types.Type.OBJECT,
-            properties={
-                'files': types.Schema(
-                    type=types.Type.ARRAY,
-                    items=file_object_schema
-                )
-            },
-            required=['files']
-        )
+    # --- 2. Define Schema and Prompt ---
+    # This section is unlikely to raise exceptions.
+    file_object_schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            'file_path': types.Schema(type=types.Type.STRING, description="The full path of the file relative to the project directory."),
+            'file_type': types.Schema(type=types.Type.STRING, description="The content type. Use 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format."),
+            'file_content': types.Schema(type=types.Type.STRING, description="The new, complete source code for the file, or a patch in the unified diff format, corresponding to the file_type.")
+        },
+        required=['file_path', 'file_type', 'file_content']
+    )
+    multi_file_output_schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            'files': types.Schema(
+                type=types.Type.ARRAY,
+                items=file_object_schema
+            )
+        },
+        required=['files']
+    )
 
-        main_file_name = os.path.relpath(original_buffer.name, project_root) if original_buffer.name and os.path.isabs(original_buffer.name) else (original_buffer.name or f"Buffer {original_buffer.number}")
-        full_prompt = [
-            (
-                f"{prompt}\n\n"
-                "Based on the user's request, please generate the code. "
-                f"Your primary task is to modify the file named '{main_file_name}'. "
-                "The other files have been provided for context.\n\n"
-                "IMPORTANT:\n"
-                "1. Your response must be a single JSON object with a 'files' key.\n"
-                "2. The value of 'files' must be an array of file objects.\n"
-                "3. Each file object must have three string keys: 'file_path', 'file_type', and 'file_content'.\n"
-                "4. 'file_path' must be the full path of the file relative to the project directory.\n"
-                "5. 'file_type' must be either 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format.\n"
-                "6. 'file_content' must contain either the new, complete source code or the diff patch, corresponding to the 'file_type'.\n"
-                "7. Diffs ('text/x-diff') can be returned only if explicitly mentioned as an acceptable output in the prompt or if the files are really difficult or too large to process. For small files, returning the entire modified file ('text/plain') is the most preferred option.\n"
-                "8. You can modify existing files or create new files as needed to fulfill the request."
-            ),
-            *uploaded_files
-        ]
+    original_buffer = vim.current.buffer
+    main_file_name = os.path.relpath(original_buffer.name, project_root) if original_buffer.name and os.path.isabs(original_buffer.name) else (original_buffer.name or f"Buffer {original_buffer.number}")
+    full_prompt = [
+        (
+            f"{prompt}\n\n"
+            "Based on the user's request, please generate the code. "
+            f"Your primary task is to modify the file named '{main_file_name}'. "
+            "The other files have been provided for context.\n\n"
+            "IMPORTANT:\n"
+            "1. Your response must be a single JSON object with a 'files' key.\n"
+            "2. The value of 'files' must be an array of file objects.\n"
+            "3. Each file object must have three string keys: 'file_path', 'file_type', and 'file_content'.\n"
+            "4. 'file_path' must be the full path of the file relative to the project directory.\n"
+            "5. 'file_type' must be either 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format.\n"
+            "6. 'file_content' must contain either the new, complete source code or the diff patch, corresponding to the 'file_type'.\n"
+            "7. Diffs ('text/x-diff') can be returned only if explicitly mentioned as an acceptable output in the prompt or if the files are really difficult or too large to process. For small files, returning the entire modified file ('text/plain') is the most preferred option.\n"
+            "8. You can modify existing files or create new files as needed to fulfill the request."
+        ),
+        *uploaded_files
+    ]
 
-        thoughts_buffer = None
-        if verbose:
+    # --- 3. Set up Thoughts Buffer (if verbose) ---
+    thoughts_buffer = None
+    if verbose:
+        try:
             vim.command('vnew')
             vim.command('file Vimini Thoughts')
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
             thoughts_buffer = vim.current.buffer
             thoughts_buffer[:] = ['']
+        except Exception as e:
+            util.display_message(f"Error creating thoughts buffer: {e}", error=True)
+            return
 
+    # --- 4. Call API and Stream Response ---
+    json_aggregator = ""
+    try:
         util.display_message("Processing...")
 
         generation_config = types.GenerateContentConfig(
@@ -96,7 +109,6 @@ def code(prompt, verbose=False):
         }
 
         response_stream = client.models.generate_content_stream(**stream_kwargs)
-        json_aggregator = ""
         for chunk in response_stream:
             if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
                 continue
@@ -116,24 +128,31 @@ def code(prompt, verbose=False):
                 util.display_message("Processing...")
 
         util.display_message("")
+    except Exception as e:
+        util.display_message("")  # Clear "Processing..."
+        util.display_message(f"Error during API call to Gemini: {e}", error=True)
+        return
 
-        try:
-            parsed_json = json.loads(json_aggregator)
-            files_to_process = parsed_json.get('files', [])
-            if not isinstance(files_to_process, list):
-                raise ValueError("'files' key is not a list.")
-        except (json.JSONDecodeError, ValueError) as e:
-            util.display_message(f"AI did not return valid JSON for files: {e}", error=True)
-            vim.command('vnew')
-            vim.command('file Vimini Raw Output')
-            vim.command('setlocal buftype=nofile noswapfile')
-            vim.current.buffer[:] = json_aggregator.split('\n')
-            return
+    # --- 5. Parse JSON Response ---
+    try:
+        parsed_json = json.loads(json_aggregator)
+        files_to_process = parsed_json.get('files', [])
+        if not isinstance(files_to_process, list):
+            raise ValueError("'files' key is not a list.")
+    except (json.JSONDecodeError, ValueError) as e:
+        util.display_message(f"AI did not return valid JSON for files: {e}", error=True)
+        vim.command('vnew')
+        vim.command('file Vimini Raw Output')
+        vim.command('setlocal buftype=nofile noswapfile')
+        vim.current.buffer[:] = json_aggregator.split('\n')
+        return
 
-        if not files_to_process:
-            util.display_message("AI returned no file changes.", history=True)
-            return
+    if not files_to_process:
+        util.display_message("AI returned no file changes.", history=True)
+        return
 
+    # --- 6. Generate and Display Diff ---
+    try:
         vim.command('vnew')
         vim.command('file Vimini Diff')
         vim.command('setlocal buftype=nofile filetype=diff noswapfile')
@@ -201,9 +220,9 @@ def code(prompt, verbose=False):
 
         diff_buffer[:] = combined_diff_output
         vim.command('normal! 1G')
-
     except Exception as e:
-        util.display_message(f"Error: General code() function exception: {e}", error=True)
+        util.display_message(f"Error generating or displaying diff: {e}", error=True)
+        return
 
 def show_diff():
     """
