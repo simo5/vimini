@@ -20,7 +20,7 @@ def get_client():
             vim.command("echoerr '[Vimini] API key not set. Please run :ViminiInit'")
             return None
         try:
-            vim.command("echo '[Vimini] Initializing API client...'")
+            vim.command("echo '[Vimini] Initializing API client...'" )
             vim.command("redraw")
             _GENAI_CLIENT = genai.Client(api_key=_API_KEY)
             vim.command("echo ''") # Clear the message
@@ -262,7 +262,8 @@ def upload_context_files(client):
         buf_content_bytes = buf_content.encode('utf-8')
         buf_io = io.BytesIO(buf_content_bytes)
         mime_type, _ = mimetypes.guess_type(file_path)
-        if not mime_type: mime_type = 'text/plain'
+        if not mime_type or not mime_type.startswith('text/'):
+            mime_type = 'text/plain'
 
         try:
             uploaded_file = client.files.upload(
