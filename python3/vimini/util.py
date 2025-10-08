@@ -1,5 +1,5 @@
 import vim
-import os, subprocess, time, io, mimetypes, logging
+import os, subprocess, time, io, mimetypes, logging, inspect
 from google import genai
 from google.genai import types
 
@@ -90,26 +90,46 @@ def log_info(message):
     if _LOGGER:
         _LOGGER.info(str(message))
 
-def display_message(message, error=False, history=False):
+def display_message(message, error=False, history=False, filename=None, line_number=None):
     """
     Displays a message to the user in the Vim command line.
     If an error, it also writes the message to the log file if enabled.
+    This function automatically determines the caller's filename and line number
+    for logging purposes if they are not provided.
 
     Args:
         message (str): The message to display.
         error (bool): If True, display as an error message.
         history (bool): If True (and not an error), save to message history.
+        filename (str, optional): The source file of the message for logging.
+        line_number (int, optional): The line number of the message for logging.
     """
+    if filename is None or line_number is None:
+        try:
+            # stack()[0] is current frame (display_message), stack()[1] is the caller's frame.
+            caller_frame_record = inspect.stack()[1]
+            frame = caller_frame_record[0]
+            info = inspect.getframeinfo(frame)
+            filename = info.filename
+            line_number = info.lineno
+        except (IndexError, AttributeError):
+            # If we can't get caller info, just proceed without it.
+            filename, line_number = None, None
+
     # Escape single quotes and newlines to prevent breaking the Vim command string.
-    safe_message = str(message).replace("'", "''").replace('\n', ' ').replace('\r', '')
+    safe_message = str(message).replace("'", "\"").replace('\n', ' ').replace('\r', '')
 
     prefix = f"[Vimini ({get_git_repo_name()})]"
     full_message = f"{prefix} {safe_message}"
 
+    log_context = ""
+    if filename and line_number:
+        log_context = f"[{os.path.basename(filename)}:{line_number}] "
+
     if error:
         command = "echoerr"
         # Copy the error message to the logger if it's enabled.
-        log_info(f"ERROR: {full_message}")
+        log_info(f"ERROR: {log_context}{message}")
     elif history:
         command = "echom"
     else:
@@ -124,7 +144,7 @@ def display_message(message, error=False, history=False):
     except vim.error as e:
         # Fallback in case the vim command fails. This is unlikely but good practice.
         print(f"Vimini Fallback: {full_message} (vim.command failed: {e})")
-        log_info(f"ERROR: vim.command failed for message: '{full_message}'. Details: {e}")
+        log_info(f"ERROR: {log_context}vim.command failed for message: '{full_message}'. Details: {e}")
 
 def is_buffer_modified(buffer=None):
     """
