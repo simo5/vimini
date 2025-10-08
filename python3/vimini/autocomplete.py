@@ -18,8 +18,6 @@ def cancel_autocomplete():
     """
     global _current_autocomplete_job_id
 
-    util.log_info("cancel_autocomplete()")
-
     with _autocomplete_lock:
         _current_autocomplete_job_id = None
         # Clear any stale results from a previously cancelled job.
