@@ -1,5 +1,5 @@
 import vim
-import os, subprocess, time, io, mimetypes, logging, inspect
+import os, subprocess, time, io, logging, inspect
 from google import genai
 from google.genai import types
 
@@ -273,9 +273,9 @@ def upload_context_files(client):
 
         buf_content_bytes = buf_content.encode('utf-8')
         buf_io = io.BytesIO(buf_content_bytes)
-        mime_type, _ = mimetypes.guess_type(file_path)
-        if not mime_type or not mime_type.startswith('text/'):
-            mime_type = 'text/plain'
+        # Always force plain text, the GEeminiAPI is very fussy with thr type
+        # and returns 400 errors on types it doesn't like
+        mime_type = 'text/plain'
 
         try:
             uploaded_file = client.files.upload(
