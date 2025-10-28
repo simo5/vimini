@@ -258,7 +258,8 @@ function! ViminiCommit(...)
 try:
     from vimini import main
     author = vim.eval('l:author')
-    main.commit(author=author)
+    temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
+    main.commit(author=author, temperature=temperature)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")

@@ -242,14 +242,14 @@ def review(prompt, git_objects=None, verbose=False):
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
-def commit(author=None):
+def commit(author=None, temperature=None):
     """
     Generates a detailed commit message (subject and body) using the Gemini
     API based on all current changes. It stages everything, shows the generated
     message in a popup for review, and then commits, optionally with a
     'Co-authored-by' trailer.
     """
-    util.log_info(f"commit(author='{author}')")
+    util.log_info(f"commit(author='{author}', temperature={temperature})")
     try:
         repo_path = util.get_git_repo_root()
         if not repo_path:
@@ -311,9 +311,17 @@ def commit(author=None):
             subprocess.run(reset_cmd, check=False)
             return
 
+        generation_config = types.GenerationConfig()
+        if temperature is not None:
+            try:
+                generation_config.temperature = float(temperature)
+            except (ValueError, TypeError):
+                util.display_message(f"Invalid temperature value: {temperature}. Using default.", error=True)
+
         response = client.models.generate_content(
             model=util._MODEL,
             contents=prompt,
+            generation_config=generation_config,
         )
         util.display_message("")
 

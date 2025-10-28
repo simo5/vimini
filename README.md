@@ -87,7 +87,19 @@ customizations.
     let g:vimini_model = 'gemini-2.5-flash' " Or 'gemini-2.5-pro', etc.
     ```
 
-3.  **Thinking Display (`g:vimini_thinking`)**:
+3.  **Generation Temperature (`g:vimini_temperature`)**:
+    Control the creativity of the AI's responses for commands like
+    `:ViminiCode` and `:ViminiCommit`. The temperature is a value between
+    0.0 and 2.0. Higher values (e.g., 1.0) make the output more random
+    and creative, while lower values (e.g., 0.2) make it more focused
+    and deterministic. By default, it is not set, allowing the model to
+    use its default temperature.
+    ```vim
+    " Set a specific temperature for generation
+    let g:vimini_temperature = 0.7
+    ```
+
+4.  **Thinking Display (`g:vimini_thinking`)**:
     Control whether the AI's "thinking" process is displayed in a
     separate buffer during code generation and reviews.
     ```vim
@@ -99,7 +111,7 @@ customizations.
     ```
     This can also be controlled with the `:ViminiThinking` command.
 
-4.  **Autocomplete (`g:vimini_autocomplete`)**:
+5.  **Autocomplete (`g:vimini_autocomplete`)**:
     Enable or disable the real-time autocomplete feature. It is disabled
     by default.
     ```vim
@@ -111,7 +123,7 @@ customizations.
     ```
     This can also be controlled with the `:ViminiToggleAutocomplete` command.
 
-5.  **Logging (`g:vimini_logging` and `g:vimini_log_file`)**:
+6.  **Logging (`g:vimini_logging` and `g:vimini_log_file`)**:
     Control whether Vimini logs its activity to a file, which can be
     useful for debugging. Logging is disabled by default.
     ```vim
@@ -123,7 +135,7 @@ customizations.
     ```
     Logging can also be controlled at runtime with the `:ViminiToggleLogging` command.
 
-6.  **Commit Author (`g:vimini_commit_author`)**:
+7.  **Commit Author (`g:vimini_commit_author`)**:
     Customize the `Co-authored-by` trailer used in `:ViminiCommit`.
     ```vim
     " Set a custom author trailer (Default is 'Co-authored-by: Gemini <gemini@google.com>')
