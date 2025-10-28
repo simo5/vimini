@@ -27,6 +27,9 @@ endif
 " Configuration: Model name
 let g:vimini_model = get(g:, 'vimini_model', 'gemini-2.5-flash')
 
+" Configuration: Temperature for generation. Must be between 0.0 and 2.0.
+let g:vimini_temperature = get(g:, 'vimini_temperature', v:null)
+
 " Configuration: How to split new windows ('vertical' or 'horizontal').
 let g:vimini_split_method = get(g:, 'vimini_split_method', 'vertical')
 
@@ -165,7 +168,8 @@ try:
     from vimini import main
     prompt = vim.eval('a:prompt')
     verbose = vim.eval('g:vimini_thinking') == 'on'
-    main.code(prompt, verbose)
+    temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
+    main.code(prompt, verbose=verbose, temperature=temperature)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")

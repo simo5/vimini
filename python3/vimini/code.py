@@ -6,14 +6,14 @@ from vimini import util
 # Global data store to exchange data between python calls without using vim variables for large data.
 _VIMINI_DATA_STORE = {}
 
-def code(prompt, verbose=False):
+def code(prompt, verbose=False, temperature=None):
     """
     Uploads all open files, sends them to the Gemini API with a prompt
     to generate code. Displays thoughts (if verbose) and a combined diff
     for multiple file changes in new buffers.
     """
     global _VIMINI_DATA_STORE
-    util.log_info(f"code({prompt}, verbose={verbose})")
+    util.log_info(f"code({prompt}, verbose={verbose}, temperature={temperature})")
 
     # --- 1. Initialization and Setup ---
     try:
@@ -98,6 +98,16 @@ def code(prompt, verbose=False):
             response_mime_type="application/json",
             response_schema=multi_file_output_schema,
         )
+        if temperature is not None:
+            try:
+                temp_float = float(temperature)
+                if 0.0 <= temp_float <= 2.0:
+                    generation_config.temperature = temp_float
+                else:
+                    util.display_message("Temperature must be between 0.0 and 2.0. Using default.", error=True)
+            except (ValueError, TypeError):
+                util.display_message("Invalid temperature value. Using default.", error=True)
+
         if verbose:
             generation_config.thinking_config=types.ThinkingConfig(
                 include_thoughts=True
