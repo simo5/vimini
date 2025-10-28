@@ -84,14 +84,14 @@ def chat(prompt):
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
-def review(prompt, git_objects=None, verbose=False):
+def review(prompt, git_objects=None, verbose=False, temperature=None):
     """
     Sends content to the Gemini API for a code review.
     If git_objects are provided, it reviews the output of `git show <objects>`.
     Otherwise, it reviews the content of the current buffer.
     The review is displayed in a new buffer, streaming thoughts if verbose.
     """
-    util.log_info(f"review({prompt}, git_objects='{git_objects}', verbose={verbose})")
+    util.log_info(f"review({prompt}, git_objects='{git_objects}', verbose={verbose}, temperature={temperature})")
     try:
         client = util.get_client()
         if not client:
@@ -184,17 +184,28 @@ def review(prompt, git_objects=None, verbose=False):
         util.display_message("Processing...")
 
         # Set up the API call arguments
+        generation_config = types.GenerateContentConfig()
+
+        if temperature is not None:
+            try:
+                temp_float = float(temperature)
+                if 0.0 <= temp_float <= 2.0:
+                    generation_config.temperature = temp_float
+                else:
+                    util.display_message("Temperature must be between 0.0 and 2.0. Using default.", error=True)
+            except (ValueError, TypeError):
+                util.display_message(f"Invalid temperature value: {temperature}. Using default.", error=True)
+
+        if verbose:
+            generation_config.thinking_config=types.ThinkingConfig(
+                include_thoughts=True
+            )
+
         stream_kwargs = {
             'model': util._MODEL,
-            'contents': full_prompt
+            'contents': full_prompt,
+            'config': generation_config
         }
-        # Enable thinking only if verbose is requested
-        if verbose:
-            stream_kwargs['config'] = types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(
-                    include_thoughts=True
-                )
-            )
 
         # Use generate_content_stream()
         response_stream = client.models.generate_content_stream(**stream_kwargs)
@@ -311,18 +322,20 @@ def commit(author=None, temperature=None):
             subprocess.run(reset_cmd, check=False)
             return
 
-        generation_config = types.GenerationConfig()
+        generation_config = types.GenerateContentConfig()
         if temperature is not None:
             try:
                 generation_config.temperature = float(temperature)
             except (ValueError, TypeError):
                 util.display_message(f"Invalid temperature value: {temperature}. Using default.", error=True)
 
-        response = client.models.generate_content(
-            model=util._MODEL,
-            contents=prompt,
-            generation_config=generation_config,
-        )
+        stream_kwargs = {
+            'model': util._MODEL,
+            'contents': prompt,
+            'config': generation_config
+        }
+
+        response = client.models.generate_content(**stream_kwargs)
         util.display_message("")
 
         # Parse the response into subject and a raw body.

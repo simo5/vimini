@@ -221,7 +221,8 @@ try:
     prompt = vim.eval('l:prompt_arg')
     git_objects = vim.eval('l:git_objects_arg')
     verbose = vim.eval('g:vimini_thinking') == 'on'
-    main.review(prompt, git_objects=git_objects, verbose=verbose)
+    temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
+    main.review(prompt, git_objects=git_objects, verbose=verbose, temperature=temperature)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
