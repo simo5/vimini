@@ -94,31 +94,14 @@ def code(prompt, verbose=False, temperature=None):
     try:
         util.display_message("Processing...")
 
-        generation_config = types.GenerateContentConfig(
+        kwargs = util.create_generation_kwargs(
+            contents=full_prompt,
+            temperature=temperature,
+            verbose=verbose,
             response_mime_type="application/json",
-            response_schema=multi_file_output_schema,
+            response_schema=multi_file_output_schema
         )
-        if temperature is not None:
-            try:
-                temp_float = float(temperature)
-                if 0.0 <= temp_float <= 2.0:
-                    generation_config.temperature = temp_float
-                else:
-                    util.display_message("Temperature must be between 0.0 and 2.0. Using default.", error=True)
-            except (ValueError, TypeError):
-                util.display_message("Invalid temperature value. Using default.", error=True)
-
-        if verbose:
-            generation_config.thinking_config=types.ThinkingConfig(
-                include_thoughts=True
-            )
-        stream_kwargs = {
-            'model': util._MODEL,
-            'contents': full_prompt,
-            'config': generation_config
-        }
-
-        response_stream = client.models.generate_content_stream(**stream_kwargs)
+        response_stream = client.models.generate_content_stream(**kwargs)
         for chunk in response_stream:
             if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
                 continue

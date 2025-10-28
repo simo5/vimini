@@ -239,10 +239,10 @@ def command(arg_string):
 
         util.display_message("Calling Gemini to modify results...")
 
-        response = client.models.generate_content(
-            model=util._MODEL,
+        generation_kwargs = util.create_generation_kwargs(
             contents=[full_prompt]
         )
+        response = client.models.generate_content(**generation_kwargs)
         util.display_message("")
 
         new_content = response.text

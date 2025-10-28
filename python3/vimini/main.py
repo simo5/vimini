@@ -74,10 +74,8 @@ def chat(prompt):
 
         # Send the prompt and get the response.
         util.display_message("Processing...")
-        response = client.models.generate_content(
-            model=util._MODEL,
-            contents=prompt,
-        )
+        kwargs = util.create_generation_kwargs(contents=prompt)
+        response = client.models.generate_content(**kwargs)
         util.display_message("") # Clear the thinking message
         vim.current.buffer.append(response.text.split('\n'))
 
@@ -184,31 +182,14 @@ def review(prompt, git_objects=None, verbose=False, temperature=None):
         util.display_message("Processing...")
 
         # Set up the API call arguments
-        generation_config = types.GenerateContentConfig()
-
-        if temperature is not None:
-            try:
-                temp_float = float(temperature)
-                if 0.0 <= temp_float <= 2.0:
-                    generation_config.temperature = temp_float
-                else:
-                    util.display_message("Temperature must be between 0.0 and 2.0. Using default.", error=True)
-            except (ValueError, TypeError):
-                util.display_message(f"Invalid temperature value: {temperature}. Using default.", error=True)
-
-        if verbose:
-            generation_config.thinking_config=types.ThinkingConfig(
-                include_thoughts=True
-            )
-
-        stream_kwargs = {
-            'model': util._MODEL,
-            'contents': full_prompt,
-            'config': generation_config
-        }
+        kwargs = util.create_generation_kwargs(
+            contents=full_prompt,
+            temperature=temperature,
+            verbose=verbose
+        )
 
         # Use generate_content_stream()
-        response_stream = client.models.generate_content_stream(**stream_kwargs)
+        response_stream = client.models.generate_content_stream(**kwargs)
 
         for chunk in response_stream:
             if not chunk.candidates:
@@ -322,20 +303,12 @@ def commit(author=None, temperature=None):
             subprocess.run(reset_cmd, check=False)
             return
 
-        generation_config = types.GenerateContentConfig()
-        if temperature is not None:
-            try:
-                generation_config.temperature = float(temperature)
-            except (ValueError, TypeError):
-                util.display_message(f"Invalid temperature value: {temperature}. Using default.", error=True)
+        kwargs = util.create_generation_kwargs(
+            contents=prompt,
+            temperature=temperature
+        )
 
-        stream_kwargs = {
-            'model': util._MODEL,
-            'contents': prompt,
-            'config': generation_config
-        }
-
-        response = client.models.generate_content(**stream_kwargs)
+        response = client.models.generate_content(**kwargs)
         util.display_message("")
 
         # Parse the response into subject and a raw body.

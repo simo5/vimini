@@ -158,6 +158,48 @@ def display_message(message, error=False, history=False, filename=None, line_num
         print(f"Vimini Fallback: {full_message} (vim.command failed: {e})")
         log_info(f"ERROR: {log_context}vim.command failed for message: '{full_message}'. Details: {e}")
 
+def create_generation_kwargs(contents, temperature=None, verbose=False, response_mime_type=None, response_schema=None):
+    """
+    Creates a dictionary of keyword arguments for the Gemini API's
+    generate_content and generate_content_stream methods.
+
+    Args:
+        contents: The prompt/contents for the API call.
+        temperature (float, optional): The generation temperature.
+        verbose (bool, optional): If True, enables streaming of 'thoughts'.
+        response_mime_type (str, optional): The desired MIME type for the response.
+        response_schema (types.Schema, optional): The desired response schema.
+
+    Returns:
+        dict: A dictionary of keyword arguments for the API call.
+    """
+    generation_config = types.GenerateContentConfig()
+
+    if temperature is not None:
+        try:
+            temp_float = float(temperature)
+            if 0.0 <= temp_float <= 2.0:
+                generation_config.temperature = temp_float
+            else:
+                display_message("Temperature must be between 0.0 and 2.0. Using default.", error=True)
+        except (ValueError, TypeError):
+            display_message(f"Invalid temperature value: {temperature}. Using default.", error=True)
+
+    if verbose:
+        generation_config.thinking_config = types.ThinkingConfig(include_thoughts=True)
+
+    if response_mime_type:
+        generation_config.response_mime_type = response_mime_type
+
+    if response_schema:
+        generation_config.response_schema = response_schema
+
+    return {
+        'model': _MODEL,
+        'contents': contents,
+        'config': generation_config
+    }
+
 def is_buffer_modified(buffer=None):
     """
     Checks if a given buffer (or the current one) has unsaved modifications.
