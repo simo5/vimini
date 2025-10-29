@@ -20,7 +20,7 @@ def get_client():
             vim.command("echoerr '[Vimini] API key not set. Please run :ViminiInit'")
             return None
         try:
-            vim.command("echo '[Vimini] Initializing API client...'")
+            vim.command("echo '[Vimini] Initializing API client...'" )
             vim.command("redraw")
             _GENAI_CLIENT = genai.Client(api_key=_API_KEY)
             vim.command("echo ''") # Clear the message
@@ -320,6 +320,16 @@ def upload_context_files(client):
             # Uploaded file is recent enough, use it.
             files_to_process.append(found_file)
 
+    # --- Log context files status before upload ---
+    reused_file_paths = {f.display_name for f in files_to_process}
+    upload_file_paths = {path for path, _ in files_requiring_upload}
+    all_context_file_paths = sorted(list(reused_file_paths | upload_file_paths))
+
+    log_info(f"Found {len(all_context_file_paths)} context files:")
+    for file_path in all_context_file_paths:
+        status = " (will upload)" if file_path in upload_file_paths else " (already available)"
+        log_info(f"  - {file_path}{status}")
+
 
     # --- 2. Upload necessary files ---
     if files_requiring_upload:
@@ -402,6 +412,8 @@ def upload_context_files(client):
     if not files_to_process:
         display_message("No content found in open buffers to create context.", history=True)
         return None
+
+    log_info(f"Returning {files_to_process} as context files")
 
     return files_to_process
 

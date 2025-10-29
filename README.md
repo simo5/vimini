@@ -142,6 +142,13 @@ customizations.
     let g:vimini_commit_author = 'Co-authored-by: My AI Assistant <ai@example.com>'
     ```
 
+8.  **Context Files (`g:context_files`)**:
+    In addition to all files currently open in Vim buffers, you can specify a list of files to always include as context for AI commands like `:ViminiCode`. This is useful for providing the AI with important project files (like configurations, core utilities, or type definitions) without needing to have them open.
+    ```vim
+    " Always include these files as context for code generation tasks
+    let g:context_files = ['package.json', 'src/main.js', 'src/utils/api.js']
+    ```
+
 ## Usage
 
 Vimini exposes several commands for interacting with the Gemini API:
@@ -200,7 +207,7 @@ by `g:vimini_log_file`. This is primarily useful for debugging.
 
 ### `:ViminiCode {prompt}`
 
-Takes the content of all open buffers as context, along with your
+Takes the content of all open buffers (and any files specified in `g:context_files`) as context, along with your
 `prompt`, and asks the Gemini model to generate code. The result is
 streamed into several new buffers:
 *   `Vimini Diff`: A diff view showing the proposed changes across one or more files.
@@ -221,6 +228,23 @@ apply the changes:
 
 This command will close the temporary `Vimini Diff` and
 `Vimini Thoughts` buffers.
+
+### `:ViminiContextFiles`
+
+Opens an interactive file manager in a new split window to easily manage the list of files in `g:context_files`. This allows you to add or remove files that should always be included as context for AI commands, without manually editing your `.vimrc`.
+
+**How to use the manager:**
+*   Navigate the file system like a normal file explorer.
+*   Files marked with a `C` prefix are currently in the context list.
+*   **`<Enter>` on a file**: Toggles its inclusion in the context.
+*   **`<Enter>` on a directory**: Navigates into that directory.
+*   **`l`**: Shows a popup with a summary of the currently active and pending context files.
+
+When you are done, simply close the window (e.g., with `:q`). A popup will ask you to confirm whether to save the changes to `g:context_files` for the current Vim session.
+
+```vim
+:ViminiContextFiles
+```
 
 ### `:ViminiReview [C:<git_objects>] [{prompt}]`
 
