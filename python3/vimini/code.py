@@ -57,17 +57,29 @@ def code(prompt, verbose=False, temperature=None):
 
     original_buffer = vim.current.buffer
     main_file_name = os.path.relpath(original_buffer.name, project_root) if original_buffer.name and os.path.isabs(original_buffer.name) else (original_buffer.name or f"Buffer {original_buffer.number}")
+
+    context_file_names = sorted([f.display_name for f in uploaded_files])
+    file_list_str = "\n".join(f"- {name}" for name in context_file_names)
+
+    context_files_section = ""
+    if file_list_str:
+        context_files_section = (
+            "The following files have been uploaded for context:\n"
+            f"{file_list_str}\n\n"
+        )
+
     full_prompt = [
         (
             f"{prompt}\n\n"
             "Based on the user's request, please generate the code. "
             f"Your primary task is to modify the file named '{main_file_name}'. "
             "The other files have been provided for context.\n\n"
+            f"{context_files_section}"
             "IMPORTANT:\n"
             "1. Your response must be a single JSON object with a 'files' key.\n"
             "2. The value of 'files' must be an array of file objects.\n"
             "3. Each file object must have three string keys: 'file_path', 'file_type', and 'file_content'.\n"
-            "4. 'file_path' must be the full path of the file relative to the project directory.\n"
+            "4. 'file_path' must be the full path of the file relative to the project directory. When modifying a file from the context, you MUST use its original file path for the 'file_path' property.\n"
             "5. 'file_type' must be either 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format.\n"
             "6. 'file_content' must contain either the new, complete source code or the diff patch, corresponding to the 'file_type'.\n"
             "7. Diffs ('text/x-diff') can be returned only if explicitly mentioned as an acceptable output in the prompt or if the files are really difficult or too large to process. For small files, returning the entire modified file ('text/plain') is the most preferred option.\n"
