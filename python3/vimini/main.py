@@ -753,76 +753,105 @@ def confirm_context_files():
         # Clean up the global variable now that the context manager is closed.
         _VIMINI_PENDING_CONTEXT_FILES = None
 
-def files_command(action, file_name=None):
+def _refresh_files_buffer():
     """
-    Manages uploaded files with actions: list, info, delete.
+    Helper to re-fetch files and update the content of the 'Vimini Files' buffer.
     """
-    util.log_info(f"files_command(action='{action}', file_name='{file_name}')")
+    # Find the 'Vimini Files' buffer
+    vimini_files_buffer = None
+    for b in vim.buffers:
+        if b.valid and b.name and b.name.endswith('Vimini Files'):
+            vimini_files_buffer = b
+            break
+    if not vimini_files_buffer:
+        return
+
+    client = util.get_client()
+    if not client:
+        return
+
+    all_files = list(client.files.list())
+    file_list_content = [
+        "Vimini Remote Files",
+        "-------------------",
+        " d: delete | i: info | q: close",
+        ""
+    ]
+    if not all_files:
+        file_list_content.append("No files have been uploaded.")
+    else:
+        # Sorting is good for consistency
+        for f in sorted(all_files, key=lambda x: x.display_name):
+            file_list_content.append(f.display_name)
+
+    # Switch to window, update buffer, switch back
+    win_nr = int(vim.eval(f"bufwinnr({vimini_files_buffer.number})"))
+    if win_nr > 0:
+        original_win_nr = int(vim.eval("winnr()"))
+        vim.command(f"{win_nr}wincmd w")
+        # Save cursor position before modifying the buffer
+        cursor_pos = vim.eval("getpos('.')")
+
+        vim.command("setlocal modifiable")
+        vimini_files_buffer[:] = file_list_content
+        vim.command("setlocal nomodifiable")
+
+        # Restore cursor position, adjusting if necessary
+        new_line_count = len(vimini_files_buffer)
+        lnum = int(cursor_pos[1])
+        if lnum > new_line_count:
+            lnum = new_line_count
+        # Ensure line number is at least 1
+        if lnum < 1:
+            lnum = 1
+        cursor_pos[1] = str(lnum)
+        cursor_pos[0] = '0' # Use current buffer to be safe
+
+        vim.command(f"call setpos('.', {cursor_pos})")
+
+        if original_win_nr != win_nr:
+            vim.command(f"{original_win_nr}wincmd w")
+
+def _files_buffer_action(action):
+    """
+    Performs an action ('info' or 'delete') on the file under the cursor
+    in the 'Vimini Files' buffer.
+    """
     try:
+        w = vim.current.window
+        # Check if we are in the right buffer
+        if not (w.valid and w.buffer.name and w.buffer.name.endswith('Vimini Files')):
+            return
+
+        line_num = w.cursor[0]
+        line = w.buffer[line_num - 1].strip()
+
+        # Ignore header/blank lines
+        if not line or line.startswith("Vimini") or line.startswith("---") or "delete |" in line:
+            return
+
+        file_name = line
         client = util.get_client()
         if not client:
             return
 
-        if action == "list":
-            util.display_message("Fetching file list...")
-            # The list response is an iterator, so we consume it into a list
-            all_files = list(client.files.list())
-            util.display_message("") # Clear message
+        # Find the file object by its display_name
+        util.display_message(f"Finding '{file_name}'...")
+        target_file = None
+        all_files = list(client.files.list())
+        for f in all_files:
+            if f.display_name == file_name:
+                target_file = f
+                break
 
-            # Prepare content for the new buffer
-            file_list_content = ["Vimini Files:", "------------"]
-            if not all_files:
-                file_list_content.append("No files have been uploaded.")
-            else:
-                for f in all_files:
-                    file_list_content.append(f.display_name)
+        if not target_file:
+            util.display_message(f"Error: File '{file_name}' no longer exists on server. Refreshing list.", error=True)
+            _refresh_files_buffer()
+            return
 
-            # Display in a new, non-editable buffer
-            util.new_split()
-            vim.command('file Vimini Files')
-            vim.current.buffer[:] = file_list_content
-            vim.command('setlocal buftype=nofile filetype=markdown noswapfile nomodifiable')
+        util.display_message("") # Clear message
 
-        elif action == "info":
-            if not file_name:
-                # Check for an active Vimini Files window
-                vimini_files_win_found = False
-                for w in vim.windows:
-                    # Check for buffer name, which is more reliable than file path for special buffers.
-                    if w.valid and w.buffer.name and "Vimini Files" in w.buffer.name:
-                        # Found the window, get the filename from the current line
-                        line_num = w.cursor[0]
-                        file_name = w.buffer[line_num - 1].strip()
-                        # The list has a header, so ignore those lines.
-                        if "Vimini Files:" in file_name or "------------" in file_name or not file_name:
-                            file_name = None # It's a header/blank line, not a file
-                        vimini_files_win_found = True
-                        break
-                if not vimini_files_win_found or not file_name:
-                    util.display_message("Error: 'info' requires a file name or the cursor to be on a file in the Vimini Files window.", error=True)
-                    return
-
-            util.display_message(f"Fetching info for {file_name}...")
-
-            # Find the file object by display_name by listing all files
-            target_file = None
-            try:
-                all_files = list(client.files.list())
-                for f in all_files:
-                    if f.display_name == file_name:
-                        target_file = f
-                        break
-            except Exception as e:
-                util.display_message(f"Error listing files: {e}", error=True)
-                return
-
-            if not target_file:
-                util.display_message(f"Error: File '{file_name}' not found.", error=True)
-                return
-
-            util.display_message("") # Clear message
-
-            # Prepare content for the info buffer
+        if action == "info":
             info_content = [
                 f"File Info: {target_file.display_name}",
                 "---------------------------------",
@@ -833,87 +862,59 @@ def files_command(action, file_name=None):
                 f"Created:      {target_file.create_time.isoformat()}",
                 f"URI:          {target_file.uri}",
             ]
-
-            # Display in a new, non-editable buffer
             util.new_split()
             vim.command(f'file Vimini File Info: {file_name}')
             vim.current.buffer[:] = info_content
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile nomodifiable')
 
         elif action == "delete":
-            if not file_name:
-                # Same file selection logic as 'info'
-                vimini_files_win_found = False
-                for w in vim.windows:
-                    if w.valid and w.buffer.name and "Vimini Files" in w.buffer.name:
-                        line_num = w.cursor[0]
-                        file_name = w.buffer[line_num - 1].strip()
-                        if "Vimini Files:" in file_name or "------------" in file_name or not file_name:
-                            file_name = None
-                        vimini_files_win_found = True
-                        break
-                if not vimini_files_win_found or not file_name:
-                    util.display_message("Error: 'delete' requires a file name or the cursor to be on a file in the Vimini Files window.", error=True)
-                    return
-
-            util.display_message(f"Finding file '{file_name}' to delete...")
-
-            # Find the file object by its display_name
-            target_file = None
-            try:
-                all_files = list(client.files.list())
-                for f in all_files:
-                    if f.display_name == file_name:
-                        target_file = f
-                        break
-            except Exception as e:
-                util.display_message(f"Error listing files: {e}", error=True)
-                return
-
-            if not target_file:
-                util.display_message(f"Error: File '{file_name}' not found on server.", error=True)
-                return
-
-            # Delete the file
             util.display_message(f"Deleting '{file_name}'...")
             client.files.delete(name=target_file.name)
-
-            # Check if a Vimini Files window is open to refresh it
-            vimini_files_buffer = None
-            for b in vim.buffers:
-                if b.valid and b.name and "Vimini Files" in b.name:
-                    vimini_files_buffer = b
-                    break
-
-            if vimini_files_buffer:
-                util.display_message(f"File '{file_name}' deleted. Refreshing file list...")
-
-                # Re-fetch file list
-                all_files_after_delete = list(client.files.list())
-                file_list_content = ["Vimini Files:", "------------"]
-                if not all_files_after_delete:
-                    file_list_content.append("No files have been uploaded.")
-                else:
-                    for f in all_files_after_delete:
-                        file_list_content.append(f.display_name)
-
-                # Update the buffer. This requires making it modifiable first.
-                win_nr = int(vim.eval(f"bufwinnr({vimini_files_buffer.number})"))
-                if win_nr > 0:
-                    original_win_nr = int(vim.eval("winnr()"))
-                    vim.command(f"{win_nr}wincmd w")
-                    vim.command("setlocal modifiable")
-                    vimini_files_buffer[:] = file_list_content
-                    vim.command("setlocal nomodifiable")
-                    if original_win_nr != win_nr:
-                        vim.command(f"{original_win_nr}wincmd w") # Switch back
-
-                util.display_message(f"File '{file_name}' deleted. File list refreshed.", history=True)
-            else:
-                util.display_message(f"File '{file_name}' deleted successfully.", history=True)
-
-        else:
-            util.display_message(f"Error: Unknown action '{action}'. Available actions: list, info, delete.", error=True)
+            util.display_message(f"File '{file_name}' deleted. Refreshing list...", history=True)
+            _refresh_files_buffer()
 
     except Exception as e:
-        util.display_message(f"Error: {e}", error=True)
+        util.display_message(f"Error during file action: {e}", error=True)
+
+def files_command():
+    """
+    Opens an interactive buffer listing all remote files, with key mappings
+    to manage them.
+    """
+    util.log_info("files_command()")
+    try:
+        client = util.get_client()
+        if not client:
+            return
+
+        util.display_message("Fetching file list...")
+        all_files = list(client.files.list())
+        util.display_message("")
+
+        file_list_content = [
+            "Vimini Remote Files",
+            "-------------------",
+            " d: delete | i: info | q: close",
+            ""
+        ]
+        if not all_files:
+            file_list_content.append("No files have been uploaded.")
+        else:
+            for f in sorted(all_files, key=lambda x: x.display_name):
+                file_list_content.append(f.display_name)
+
+        util.new_split()
+        vim.command('file Vimini Files')
+        buf = vim.current.buffer
+        buf[:] = file_list_content
+        vim.command('setlocal buftype=nofile noswapfile filetype=markdown')
+
+        # Mappings for actions
+        vim.command("nnoremap <buffer> <silent> i :py3 from vimini.main import _files_buffer_action; _files_buffer_action('info')<CR>")
+        vim.command("nnoremap <buffer> <silent> d :py3 from vimini.main import _files_buffer_action; _files_buffer_action('delete')<CR>")
+        vim.command("nnoremap <buffer> <silent> q :q<CR>")
+
+        vim.command('setlocal nomodifiable')
+
+    except Exception as e:
+        util.display_message(f"Error listing files: {e}", error=True)
