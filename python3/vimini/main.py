@@ -1,11 +1,15 @@
 import vim
-import os, subprocess, shlex, textwrap
+import os, subprocess, shlex, textwrap, json
 from google.genai import types
 from vimini import util
 from vimini.autocomplete import autocomplete, cancel_autocomplete, process_autocomplete_queue
 from vimini.code import code, show_diff, apply_code
 from vimini.ripgrep import command as ripgrep_command
 from vimini.ripgrep import apply as ripgrep_apply
+
+# Global variable to hold the list of pending context files while the
+# context file manager is open.
+_VIMINI_PENDING_CONTEXT_FILES = None
 
 def initialize(api_key, model, logfile=None):
     """
@@ -419,6 +423,335 @@ def commit(author=None, temperature=None):
         util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
+
+def context_files_command():
+    """
+    Shows a new buffer with a file explorer to manage g:context_files.
+    """
+    util.log_info("context_files_command()")
+    global _VIMINI_PENDING_CONTEXT_FILES
+    try:
+        # 1. Get paths and existing context files
+        current_path = os.path.abspath(vim.eval('getcwd()'))
+        project_root = util.get_git_repo_root() or current_path
+
+        try:
+            initial_context_files = vim.eval("get(g:, 'context_files', [])")
+            if not isinstance(initial_context_files, list):
+                initial_context_files = []
+        except vim.error:
+            initial_context_files = []
+
+        # Store the pending list in the global python variable.
+        _VIMINI_PENDING_CONTEXT_FILES = initial_context_files
+
+        context_files_abs = set()
+        for f in initial_context_files:
+            path = os.path.expanduser(f)
+            if not os.path.isabs(path):
+                path = os.path.join(project_root, path)
+            context_files_abs.add(os.path.normpath(path))
+
+        # 2. Get directory listing for the current path
+        buffer_lines = ["> .."]
+        dirs_to_ignore = {'.git', '__pycache__', 'node_modules', '.venv', 'target'}
+        dirs, files = [], []
+        try:
+            for name in os.listdir(current_path):
+                if name in dirs_to_ignore:
+                    continue
+                full_path = os.path.join(current_path, name)
+                if os.path.isdir(full_path):
+                    dirs.append(name)
+                else:
+                    files.append(name)
+        except OSError as e:
+            util.display_message(f"Error reading directory '{current_path}': {e}", error=True)
+            return
+
+        # 3. Format lines
+        for d in sorted(dirs):
+            buffer_lines.append(f"> {d}")
+        for f in sorted(files):
+            full_path = os.path.join(current_path, f)
+            is_in_context = os.path.normpath(full_path) in context_files_abs
+            prefix = "C " if is_in_context else "  "
+            buffer_lines.append(f"{prefix}{f}")
+
+        # 4. Create and populate the new buffer
+        util.new_split()
+        vim.command('file ViminiContextFiles')
+        buf = vim.current.buffer
+        buf[:] = buffer_lines
+
+        # 5. Set buffer options
+        vim.command('setlocal buftype=nofile noswapfile nomodifiable')
+        vim.command(f"let b:vimini_context_root = '{project_root}'")
+        vim.command(f"let b:vimini_context_path = '{current_path}'")
+
+        # 6. Set up key mappings and autocmd for close confirmation
+        vim.command("nnoremap <buffer> <silent> <CR> :py3 from vimini.main import toggle_context_file; toggle_context_file()<CR>")
+        vim.command("nnoremap <buffer> <silent> l :py3 from vimini.main import show_context_lists; show_context_lists()<CR>")
+        vim.command("autocmd BufUnload <buffer> :py3 from vimini.main import confirm_context_files; confirm_context_files()")
+        vim.command('setlocal readonly')
+
+    except Exception as e:
+        util.display_message(f"Error managing context files: {e}", error=True)
+
+def toggle_context_file():
+    """
+    Called by <Enter> mapping in the ViminiContextFiles buffer.
+    Adds/removes a file from g:context_files, or navigates directories.
+    """
+    global _VIMINI_PENDING_CONTEXT_FILES
+    try:
+        buf = vim.current.buffer
+        win = vim.current.window
+        line_num, col = win.cursor
+        line = buf[line_num - 1]
+        if not line:
+            return
+
+        current_path = vim.eval("get(b:, 'vimini_context_path', '')")
+        project_root = vim.eval("get(b:, 'vimini_context_root', '')")
+        if not current_path or not project_root:
+            util.display_message("Error: Context buffer variables not set.", error=True)
+            return
+
+        # --- Directory Navigation Logic ---
+        if line.startswith('> '):
+            dir_name = line[2:].strip()
+            if dir_name == '..':
+                new_path = os.path.dirname(current_path)
+            else:
+                new_path = os.path.join(current_path, dir_name)
+            new_path = os.path.abspath(new_path)
+
+            # Re-render the buffer for the new path
+            context_files_list = _VIMINI_PENDING_CONTEXT_FILES
+            if not isinstance(context_files_list, list):
+                # This should not happen if context_files_command() was called.
+                util.display_message("Error: Pending context files list is not available.", error=True)
+                return
+
+            context_files_abs = set()
+            for f in context_files_list:
+                path = os.path.expanduser(f)
+                if not os.path.isabs(path):
+                    path = os.path.join(project_root, path)
+                context_files_abs.add(os.path.normpath(path))
+
+            buffer_lines = ["> .."]
+            dirs_to_ignore = {'.git', '__pycache__', 'node_modules', '.venv', 'target'}
+            dirs, files = [], []
+            try:
+                for name in os.listdir(new_path):
+                    if name in dirs_to_ignore: continue
+                    full_item_path = os.path.join(new_path, name)
+                    if os.path.isdir(full_item_path):
+                        dirs.append(name)
+                    else:
+                        files.append(name)
+            except OSError as e:
+                util.display_message(f"Error reading directory '{new_path}': {e}", error=True)
+                return
+
+            for d in sorted(dirs): buffer_lines.append(f"> {d}")
+            for f in sorted(files):
+                full_file_path = os.path.join(new_path, f)
+                is_in_context = os.path.normpath(full_file_path) in context_files_abs
+                prefix = "C " if is_in_context else "  "
+                buffer_lines.append(f"{prefix}{f}")
+
+            vim.command('setlocal modifiable')
+            buf[:] = buffer_lines
+            vim.command(f"let b:vimini_context_path = '{new_path}'")
+            vim.command('setlocal readonly')
+            win.cursor = (1, 0)
+            return
+
+        # --- File Toggling Logic ---
+        if len(line) < 3: return
+        prefix = line[:2]
+        file_name = line[2:].strip()
+        is_in_context = (prefix == "C ")
+
+        full_path_on_line = os.path.normpath(os.path.join(current_path, file_name))
+        relative_path_for_storage = os.path.relpath(full_path_on_line, project_root)
+
+        context_files_list = _VIMINI_PENDING_CONTEXT_FILES
+        if not isinstance(context_files_list, list):
+            util.display_message("Error: Pending context files list is not available.", error=True)
+            return
+
+        new_list = []
+        if is_in_context:
+            # Remove it
+            for f in context_files_list:
+                path_in_list = os.path.expanduser(f)
+                if not os.path.isabs(path_in_list):
+                    path_in_list = os.path.join(project_root, path_in_list)
+                if os.path.normpath(path_in_list) != full_path_on_line:
+                    new_list.append(f)
+            new_prefix = "  "
+        else:
+            # Add it
+            new_list = context_files_list
+            is_already_present = False
+            for f in context_files_list:
+                path_in_list = os.path.expanduser(f)
+                if not os.path.isabs(path_in_list):
+                    path_in_list = os.path.join(project_root, path_in_list)
+                if os.path.normpath(path_in_list) == full_path_on_line:
+                    is_already_present = True
+                    break
+            if not is_already_present:
+                new_list.append(relative_path_for_storage)
+            new_prefix = "C "
+
+        _VIMINI_PENDING_CONTEXT_FILES = new_list
+
+        vim.command('setlocal modifiable')
+        buf[line_num - 1] = f"{new_prefix}{file_name}"
+        vim.command('setlocal readonly')
+        vim.command("redraw")
+        win.cursor = (line_num, col)
+
+    except Exception as e:
+        vim.command(f"echoerr '[Vimini] Error toggling context file: {str(e).replace("'", "''")}'")
+
+def show_context_lists():
+    """
+    Called by 'l' mapping in the ViminiContextFiles buffer.
+    Shows a popup with the current and pending context file lists.
+    """
+    global _VIMINI_PENDING_CONTEXT_FILES
+    popup_id = 0
+    try:
+        # Get active context files
+        try:
+            active_files = vim.eval("get(g:, 'context_files', [])")
+            if not isinstance(active_files, list):
+                active_files = []
+        except vim.error:
+            active_files = []
+
+        # Get pending context files
+        pending_files = _VIMINI_PENDING_CONTEXT_FILES
+        if pending_files is None:
+            # This shouldn't happen if the buffer is open, but as a safeguard
+            pending_files = active_files
+
+        # Build popup content
+        popup_content = ["--- Active Context Files ---"]
+        if active_files:
+            popup_content.extend(sorted(active_files))
+        else:
+            popup_content.append("(none)")
+
+        # Compare and add pending files if different
+        if sorted(active_files) != sorted(pending_files):
+            popup_content.append("")
+            popup_content.append("--- Pending Context Files (unsaved) ---")
+            if pending_files:
+                popup_content.extend(sorted(pending_files))
+            else:
+                popup_content.append("(none)")
+
+        popup_content.extend(['', '(Press any key to close)'])
+
+        # Create the popup
+        popup_options = {
+            'title': ' Context Lists ', 'line': 0, 'col': 0,
+            'minwidth': 40, 'maxwidth': 80,
+            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
+            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
+            'close': 'none', 'zindex': 200,
+        }
+        popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+        vim.command("redraw!")
+        # Wait for any key to be pressed.
+        vim.eval('getchar()')
+
+    except Exception as e:
+        util.display_message(f"Error showing context lists: {e}", error=True)
+    finally:
+        # Ensure the popup is always closed.
+        if int(popup_id) > 0:
+            vim.eval(f"popup_close({popup_id})")
+            vim.command("redraw!")
+
+def confirm_context_files():
+    """
+    Called on BufUnload of the context files buffer.
+    Shows a confirmation popup to save or discard changes to the context.
+    """
+    global _VIMINI_PENDING_CONTEXT_FILES
+    try:
+        # If the global variable was not set, something is wrong, or another
+        # buffer closed. We should only act if it's populated.
+        if _VIMINI_PENDING_CONTEXT_FILES is None:
+            return
+
+        pending_files = _VIMINI_PENDING_CONTEXT_FILES
+
+        # Get the original list
+        try:
+            original_files = vim.eval("get(g:, 'context_files', [])")
+            if not isinstance(original_files, list):
+                original_files = []
+        except vim.error:
+            original_files = []
+
+        # If there's no change, do nothing.
+        if sorted(pending_files) == sorted(original_files):
+            return
+
+        # Build the popup content
+        popup_content = ["Set new context files?", ""]
+        if pending_files:
+            popup_content.append("--- Files ---")
+            for f in sorted(pending_files):
+                popup_content.append(f"- {f}")
+        else:
+            popup_content.append("(Context will be empty)")
+
+        popup_content.extend(['', '---', 'Accept changes? [y/n]'])
+
+        popup_options = {
+            'title': ' Confirm Context ', 'line': 0, 'col': 0,
+            'minwidth': 40, 'maxwidth': 80,
+            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
+            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
+            'close': 'none', 'zindex': 200,
+        }
+        popup_id = vim.eval(f"popup_create({popup_content}, {popup_options})")
+        vim.command("redraw!")
+
+        commit_confirmed = False
+        try:
+            answer_code = vim.eval('getchar()')
+            answer_char = chr(int(answer_code))
+            if answer_char.lower() == 'y':
+                commit_confirmed = True
+        except (vim.error, ValueError, TypeError):
+            pass
+        finally:
+            vim.eval(f"popup_close({popup_id})")
+            vim.command("redraw!")
+
+        if commit_confirmed:
+            # Use json.dumps to create a string that is a valid Vimscript list literal.
+            vim.command(f"let g:context_files = {json.dumps(pending_files)}")
+            util.display_message("Context files updated.", history=True)
+        else:
+            util.display_message("Context file changes discarded.", history=True)
+
+    except Exception as e:
+        util.display_message(f"Error confirming context files: {e}", error=True)
+    finally:
+        # Clean up the global variable now that the context manager is closed.
+        _VIMINI_PENDING_CONTEXT_FILES = None
 
 def files_command(action, file_name=None):
     """

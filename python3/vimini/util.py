@@ -218,31 +218,49 @@ def is_buffer_modified(buffer=None):
 
 def find_context_files():
     """
-    Generate a list of files that are referenced by open buffers, ensuring each
-    file path is included only once.
+    Generate a list of files to be used as context. This includes:
+    1. All files currently open in Vim buffers that are backed by a file on disk.
+    2. All files specified in `g:context_files`, which are always included if they exist.
 
-    If multiple buffers point to the same file path, only the first buffer
-    encountered is used. Each element of the list is a tuple containing the
-    file path and the corresponding vim buffer number. This function filters
-    out buffers that are not backed by a file on disk.
+    If a file is both in an open buffer and `g:context_files`, the content
+    from the open buffer is used. Each element of the list is a tuple containing
+    the file path and the corresponding vim buffer number (or None if the file
+    is not open in a buffer and should be read from disk).
     """
     files_to_upload = []
     seen_file_paths = set()
+
+    # First, add all file-backed buffers. This gives them priority.
     for b in vim.buffers:
-        # A buffer is considered file-backed if its name is not empty
-        # and the file actually exists on disk.
         if b.name and os.path.exists(b.name):
-            # If we haven't seen this file path before, add it.
-            if b.name not in seen_file_paths:
-                files_to_upload.append((b.name, b.number))
-                seen_file_paths.add(b.name)
+            abs_path = os.path.abspath(b.name)
+            if abs_path not in seen_file_paths:
+                files_to_upload.append((abs_path, b.number))
+                seen_file_paths.add(abs_path)
+
+    # Second, add any files from g:context_files that aren't already in the list.
+    context_files_list = []
+    try:
+        var = vim.eval("get(g:, 'context_files', [])")
+        if isinstance(var, list):
+            context_files_list = var
+    except (vim.error, AttributeError):
+        pass # Not in vim or variable doesn't exist.
+
+    for file_path in context_files_list:
+        abs_path = os.path.abspath(file_path)
+        if os.path.exists(abs_path) and abs_path not in seen_file_paths:
+            # This file should be read from disk.
+            files_to_upload.append((abs_path, None))
+            seen_file_paths.add(abs_path)
+
     return files_to_upload
 
 def upload_context_files(client):
     """
-    Lists previously uploaded files, then uploads the content of all relevant
-    Vim buffers to use as context for the AI. It re-uploads files if they have
-    been modified on disk since the last upload.
+    Uploads files to use as context. This includes files from open buffers and
+    from the `g:context_files` list. It re-uploads files if they have been
+    modified since the last upload.
     Returns a list of active file API resources, or None on failure.
     """
     # --- 1. Determine which files to upload vs. reuse ---
@@ -252,7 +270,7 @@ def upload_context_files(client):
 
     context_files = find_context_files()
     if not context_files:
-        display_message("No file-backed buffers found to use as context.", history=True)
+        display_message("No context files found (from open buffers or g:context_files).", history=True)
         return None
 
     # Load existing files into a map for quick lookup.
@@ -273,22 +291,23 @@ def upload_context_files(client):
             continue
 
         # File was found, check if it's stale.
-        buffer = vim.buffers[buf_number]
         is_stale = False
+        buffer_is_modified = False
+        if buf_number is not None:
+            buffer = vim.buffers[buf_number]
+            if is_buffer_modified(buffer):
+                is_stale = True
+                buffer_is_modified = True
 
-        # If buffer is modified, it's stale; skip timestamp check.
-        if is_buffer_modified(buffer):
-            is_stale = True
-        else:
-            # If buffer not modified, check timestamp on disk.
+        if not buffer_is_modified:
+            # Check disk if buffer isn't modified, or if there is no buffer.
             try:
                 disk_mtime = os.path.getmtime(file_path)
                 uploaded_time = found_file.create_time.timestamp()
                 if uploaded_time < disk_mtime:
                     is_stale = True
             except (OSError, AttributeError):
-                # If we can't get times, re-upload to be safe.
-                is_stale = True
+                is_stale = True # Re-upload to be safe.
 
         if is_stale:
             files_requiring_upload.append((file_path, buf_number))
@@ -308,8 +327,19 @@ def upload_context_files(client):
 
     uploaded_files = []
     for file_path, buf_number in files_requiring_upload:
-        buf = vim.buffers[buf_number]
-        buf_content = "\n".join(buf[:])
+        buf_content = ""
+        if buf_number is not None:
+            buf = vim.buffers[buf_number]
+            buf_content = "\n".join(buf[:])
+        else:
+            # Read from disk for files not in a buffer.
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    buf_content = f.read()
+            except Exception as e:
+                display_message(f"Could not read context file {file_path}: {e}", error=True)
+                continue # Skip this file
+
         if not buf_content.strip():
             continue
 
