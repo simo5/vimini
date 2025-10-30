@@ -424,6 +424,55 @@ def commit(author=None, temperature=None):
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
+def _draw_context_files_listing(target_path, project_root, context_files_list):
+    """
+    Generates the list of lines for the context files buffer.
+    """
+    # 1. Create a set of absolute paths for files in context for quick lookups.
+    context_files_abs = set()
+    for f in context_files_list:
+        path = os.path.expanduser(f)
+        if not os.path.isabs(path):
+            path = os.path.join(project_root, path)
+        context_files_abs.add(os.path.normpath(path))
+
+    # 2. Prepare buffer header
+    buffer_lines = [
+        "| Vimini Context Files",
+        "|------------------------------------------",
+        "| <CR>: toggle/enter | l: list | q: close",
+        "| C: in context | >: directory",
+        "",
+        "> .."
+    ]
+
+    # 3. Get directory listing
+    dirs_to_ignore = {'.git', '__pycache__', 'node_modules', '.venv', 'target'}
+    dirs, files = [], []
+    try:
+        for name in os.listdir(target_path):
+            if name in dirs_to_ignore:
+                continue
+            full_path = os.path.join(target_path, name)
+            if os.path.isdir(full_path):
+                dirs.append(name)
+            else:
+                files.append(name)
+    except OSError as e:
+        util.display_message(f"Error reading directory '{target_path}': {e}", error=True)
+        return None
+
+    # 4. Format and append directory and file lines
+    for d in sorted(dirs):
+        buffer_lines.append(f"> {d}")
+    for f in sorted(files):
+        full_path = os.path.join(target_path, f)
+        is_in_context = os.path.normpath(full_path) in context_files_abs
+        prefix = "C " if is_in_context else "  "
+        buffer_lines.append(f"{prefix}{f}")
+
+    return buffer_lines
+
 def context_files_command():
     """
     Shows a new buffer with a file explorer to manage g:context_files.
@@ -445,54 +494,29 @@ def context_files_command():
         # Store the pending list in the global python variable.
         _VIMINI_PENDING_CONTEXT_FILES = initial_context_files
 
-        context_files_abs = set()
-        for f in initial_context_files:
-            path = os.path.expanduser(f)
-            if not os.path.isabs(path):
-                path = os.path.join(project_root, path)
-            context_files_abs.add(os.path.normpath(path))
+        # 2. Get directory listing using the helper
+        buffer_lines = _draw_context_files_listing(current_path, project_root, _VIMINI_PENDING_CONTEXT_FILES)
+        if buffer_lines is None:
+            return # Error was displayed by helper
 
-        # 2. Get directory listing for the current path
-        buffer_lines = ["> .."]
-        dirs_to_ignore = {'.git', '__pycache__', 'node_modules', '.venv', 'target'}
-        dirs, files = [], []
-        try:
-            for name in os.listdir(current_path):
-                if name in dirs_to_ignore:
-                    continue
-                full_path = os.path.join(current_path, name)
-                if os.path.isdir(full_path):
-                    dirs.append(name)
-                else:
-                    files.append(name)
-        except OSError as e:
-            util.display_message(f"Error reading directory '{current_path}': {e}", error=True)
-            return
-
-        # 3. Format lines
-        for d in sorted(dirs):
-            buffer_lines.append(f"> {d}")
-        for f in sorted(files):
-            full_path = os.path.join(current_path, f)
-            is_in_context = os.path.normpath(full_path) in context_files_abs
-            prefix = "C " if is_in_context else "  "
-            buffer_lines.append(f"{prefix}{f}")
-
-        # 4. Create and populate the new buffer
+        # 3. Create and populate the new buffer
         util.new_split()
         vim.command('file ViminiContextFiles')
         buf = vim.current.buffer
         buf[:] = buffer_lines
 
-        # 5. Set buffer options
+        # 4. Set buffer options
         vim.command('setlocal buftype=nofile noswapfile nomodifiable')
         vim.command(f"let b:vimini_context_root = '{project_root}'")
         vim.command(f"let b:vimini_context_path = '{current_path}'")
 
-        # 6. Set up key mappings and autocmd for close confirmation
+        # 5. Set up key mappings and autocmd for close confirmation
         vim.command("nnoremap <buffer> <silent> <CR> :py3 from vimini.main import toggle_context_file; toggle_context_file()<CR>")
         vim.command("nnoremap <buffer> <silent> l :py3 from vimini.main import show_context_lists; show_context_lists()<CR>")
+        vim.command("nnoremap <buffer> <silent> q :q<CR>")
         vim.command("autocmd BufUnload <buffer> :py3 from vimini.main import confirm_context_files; confirm_context_files()")
+        # Move cursor past header to the first file/directory entry.
+        vim.current.window.cursor = (6, 0)
         vim.command('setlocal readonly')
 
     except Exception as e:
@@ -509,7 +533,9 @@ def toggle_context_file():
         win = vim.current.window
         line_num, col = win.cursor
         line = buf[line_num - 1]
-        if not line:
+
+        # Ignore empty lines or header/comment lines
+        if not line.strip() or line.strip().startswith('|'):
             return
 
         current_path = vim.eval("get(b:, 'vimini_context_path', '')")
@@ -525,6 +551,11 @@ def toggle_context_file():
                 new_path = os.path.dirname(current_path)
             else:
                 new_path = os.path.join(current_path, dir_name)
+
+            # If not a valid directory, stay in the current one to redraw it.
+            if not os.path.isdir(new_path):
+                new_path = current_path
+
             new_path = os.path.abspath(new_path)
 
             # Re-render the buffer for the new path
@@ -534,49 +565,43 @@ def toggle_context_file():
                 util.display_message("Error: Pending context files list is not available.", error=True)
                 return
 
-            context_files_abs = set()
-            for f in context_files_list:
-                path = os.path.expanduser(f)
-                if not os.path.isabs(path):
-                    path = os.path.join(project_root, path)
-                context_files_abs.add(os.path.normpath(path))
-
-            buffer_lines = ["> .."]
-            dirs_to_ignore = {'.git', '__pycache__', 'node_modules', '.venv', 'target'}
-            dirs, files = [], []
-            try:
-                for name in os.listdir(new_path):
-                    if name in dirs_to_ignore: continue
-                    full_item_path = os.path.join(new_path, name)
-                    if os.path.isdir(full_item_path):
-                        dirs.append(name)
-                    else:
-                        files.append(name)
-            except OSError as e:
-                util.display_message(f"Error reading directory '{new_path}': {e}", error=True)
-                return
-
-            for d in sorted(dirs): buffer_lines.append(f"> {d}")
-            for f in sorted(files):
-                full_file_path = os.path.join(new_path, f)
-                is_in_context = os.path.normpath(full_file_path) in context_files_abs
-                prefix = "C " if is_in_context else "  "
-                buffer_lines.append(f"{prefix}{f}")
+            buffer_lines = _draw_context_files_listing(new_path, project_root, context_files_list)
+            if buffer_lines is None:
+                return # Error displayed by helper
 
             vim.command('setlocal modifiable')
             buf[:] = buffer_lines
             vim.command(f"let b:vimini_context_path = '{new_path}'")
             vim.command('setlocal readonly')
-            win.cursor = (1, 0)
+            win.cursor = (6, 0)
             return
 
         # --- File Toggling Logic ---
         if len(line) < 3: return
         prefix = line[:2]
         file_name = line[2:].strip()
-        is_in_context = (prefix == "C ")
 
         full_path_on_line = os.path.normpath(os.path.join(current_path, file_name))
+
+        # If not a valid file, redraw current directory and do nothing else.
+        if not os.path.isfile(full_path_on_line):
+            context_files_list = _VIMINI_PENDING_CONTEXT_FILES
+            if not isinstance(context_files_list, list):
+                util.display_message("Error: Pending context files list is not available.", error=True)
+                return
+
+            buffer_lines = _draw_context_files_listing(current_path, project_root, context_files_list)
+            if buffer_lines is None:
+                return # Error displayed by helper
+
+            vim.command('setlocal modifiable')
+            buf[:] = buffer_lines
+            vim.command('setlocal readonly')
+            win.cursor = (6, 0) # cursor to top after redraw
+            return
+
+        is_in_context = (prefix == "C ")
+
         relative_path_for_storage = os.path.relpath(full_path_on_line, project_root)
 
         context_files_list = _VIMINI_PENDING_CONTEXT_FILES
