@@ -269,7 +269,9 @@ def upload_context_files(client):
     display_message("Checking context files...")
 
     context_files = find_context_files()
-    if not context_files:
+    if context_files:
+        log_info(f"Considering these context files {context_files}")
+    else:
         display_message("No context files found (from open buffers or g:context_files).", history=True)
         return None
 
@@ -413,7 +415,9 @@ def upload_context_files(client):
         display_message("No content found in open buffers to create context.", history=True)
         return None
 
-    log_info(f"Returning {files_to_process} as context files")
+    log_info(f"Final active context files ({len(files_to_process)}):")
+    for file in files_to_process:
+        log_info(f"  - {file.display_name}")
 
     return files_to_process
 
