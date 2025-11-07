@@ -251,23 +251,29 @@ let g:vimini_commit_author = get(g:, 'vimini_commit_author', 'Co-authored-by: Ge
 " Expose a function to generate and execute a git commit
 function! ViminiCommit(...)
   let l:author = g:vimini_commit_author
-  if a:0 > 0 && a:1 ==# '-n'
-    let l:author = v:null
-  endif
+  let l:regenerate = 0
+  for l:arg in a:000
+    if l:arg ==# '-n'
+      let l:author = v:null
+    elseif l:arg ==# '-r'
+      let l:regenerate = 1
+    endif
+  endfor
 
   py3 << EOF
 try:
     from vimini import main
     author = vim.eval('l:author')
+    regenerate = bool(int(vim.eval('l:regenerate')))
     temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    main.commit(author=author, temperature=temperature)
+    main.commit(author=author, temperature=temperature, regenerate=regenerate)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
 
-command! -nargs=? ViminiCommit call ViminiCommit(<f-args>)
+command! -nargs=* ViminiCommit call ViminiCommit(<f-args>)
 
 " Expose a function to manage uploaded files
 function! ViminiFiles()

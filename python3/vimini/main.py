@@ -238,51 +238,69 @@ def review(prompt, git_objects=None, verbose=False, temperature=None):
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
-def commit(author=None, temperature=None):
+def commit(author=None, temperature=None, regenerate=False):
     """
-    Generates a detailed commit message (subject and body) using the Gemini
-    API based on all current changes. It stages everything, shows the generated
-    message in a popup for review, and then commits, optionally with a
-    'Co-authored-by' trailer.
+    Generates a commit message. By default, it stages all changes and creates
+    a new commit. If `regenerate` is True, it regenerates the message for the
+    HEAD commit and amends it.
     """
-    util.log_info(f"commit(author='{author}', temperature={temperature})")
+    util.log_info(f"commit(author='{author}', temperature={temperature}, regenerate={regenerate})")
     try:
         repo_path = util.get_git_repo_root()
         if not repo_path:
             return # Error handled by helper
 
-        # Stage all changes to get a complete diff for the commit message.
-        util.display_message("Staging all changes... (git add .)")
-        add_cmd = ['git', '-C', repo_path, 'add', '.']
-        add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False)
+        diff_to_process = ""
+        diff_stat_output = ""
 
-        if add_result.returncode != 0:
-            error_message = (add_result.stderr or add_result.stdout).strip()
-            util.display_message(f"Git add failed: {error_message}", error=True)
-            return
-        util.display_message("")
+        if regenerate:
+            util.display_message("Getting diff from HEAD...")
+            diff_cmd = ['git', '-C', repo_path, 'show', '--format=']
+            diff_result = subprocess.run(diff_cmd, capture_output=True, text=True, check=False)
 
-        # Get the diff of what was just staged.
-        staged_diff_cmd = ['git', '-C', repo_path, 'diff', '--staged']
-        staged_diff_result = subprocess.run(staged_diff_cmd, capture_output=True, text=True, check=False)
+            if diff_result.returncode != 0:
+                error_message = (diff_result.stderr or "git show HEAD failed.").strip()
+                util.display_message(f"Git error: {error_message}", error=True)
+                return
+            diff_to_process = diff_result.stdout.strip()
 
-        if staged_diff_result.returncode != 0:
-            error_message = staged_diff_result.stderr.strip()
-            util.display_message(f"Git error getting staged diff: {error_message}", error=True)
-            return
+            stat_cmd = ['git', '-C', repo_path, 'show', '--format=', '--stat']
+            stat_result = subprocess.run(stat_cmd, capture_output=True, text=True, check=False)
+            if stat_result.returncode == 0:
+                diff_stat_output = stat_result.stdout.strip()
+        else:
+            # Stage all changes to get a complete diff for the commit message.
+            util.display_message("Staging all changes... (git add .)")
+            add_cmd = ['git', '-C', repo_path, 'add', '.']
+            add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False)
 
-        diff_to_process = staged_diff_result.stdout.strip()
+            if add_result.returncode != 0:
+                error_message = (add_result.stderr or add_result.stdout).strip()
+                util.display_message(f"Git add failed: {error_message}", error=True)
+                return
+            util.display_message("")
+
+            # Get the diff of what was just staged.
+            staged_diff_cmd = ['git', '-C', repo_path, 'diff', '--staged']
+            staged_diff_result = subprocess.run(staged_diff_cmd, capture_output=True, text=True, check=False)
+
+            if staged_diff_result.returncode != 0:
+                error_message = staged_diff_result.stderr.strip()
+                util.display_message(f"Git error getting staged diff: {error_message}", error=True)
+                return
+
+            diff_to_process = staged_diff_result.stdout.strip()
+
+            # Get the diff stat to show in the confirmation popup.
+            staged_stat_cmd = ['git', '-C', repo_path, 'diff', '--staged', '--stat']
+            staged_stat_result = subprocess.run(staged_stat_cmd, capture_output=True, text=True, check=False)
+            if staged_stat_result.returncode == 0:
+                diff_stat_output = staged_stat_result.stdout.strip()
 
         if not diff_to_process:
-            util.display_message("No changes to commit.", history=True)
+            message = "HEAD commit is empty. Nothing to regenerate." if regenerate else "No changes to commit."
+            util.display_message(message, history=True)
             return
-
-        # Get the diff stat to show in the confirmation popup.
-        staged_stat_cmd = ['git', '-C', repo_path, 'diff', '--staged', '--stat']
-        staged_stat_result = subprocess.run(staged_stat_cmd, capture_output=True, text=True, check=False)
-        diff_stat_output = ""
-        if staged_stat_result.returncode == 0:
-            diff_stat_output = staged_stat_result.stdout.strip()
 
         # Create prompt for AI to generate subject and body.
         prompt = (
@@ -302,9 +320,12 @@ def commit(author=None, temperature=None):
 
         client = util.get_client()
         if not client:
-            util.display_message("Commit cancelled (client init failed). Reverting `git add`.", error=True)
-            reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
-            subprocess.run(reset_cmd, check=False)
+            msg = "Commit cancelled (client init failed)."
+            if not regenerate:
+                msg += " Reverting `git add`."
+                reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
+                subprocess.run(reset_cmd, check=False)
+            util.display_message(msg, error=True)
             return
 
         kwargs = util.create_generation_kwargs(
@@ -341,9 +362,12 @@ def commit(author=None, temperature=None):
 
 
         if not subject:
-            util.display_message("Failed to generate a commit message. Reverting `git add`.", error=True)
-            reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
-            subprocess.run(reset_cmd, check=False)
+            msg = "Failed to generate a commit message."
+            if not regenerate:
+                msg += " Reverting `git add`."
+                reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
+                subprocess.run(reset_cmd, check=False)
+            util.display_message(msg, error=True)
             return
 
         # Show the generated message in a popup for review and confirmation.
@@ -352,17 +376,20 @@ def commit(author=None, temperature=None):
             popup_content.extend(body.split('\n'))
 
         if diff_stat_output:
-            popup_content.extend(['', '--- Staged files ---'])
+            stat_header = '--- Files in commit ---' if regenerate else '--- Staged files ---'
+            popup_content.extend(['', stat_header])
             popup_content.extend(diff_stat_output.split('\n'))
 
-        popup_content.extend(['', '---', 'Commit with this message? [y/n]'])
+        popup_title = ' Regenerate Commit Message ' if regenerate else ' Commit Message '
+        popup_question = 'Amend HEAD with this message? [y/n]' if regenerate else 'Commit with this message? [y/n]'
+        popup_content.extend(['', '---', popup_question])
 
 
         # The str() representation of a Python dict is compatible with Vimscript's
         # dict syntax, which is required for vim.eval(). For popup_create, the
         # value 0 for 'line' and 'col' centers the popup.
         popup_options = {
-            'title': ' Commit Message ', 'line': 0, 'col': 0,
+            'title': popup_title, 'line': 0, 'col': 0,
             'minwidth': 50, 'maxwidth': 80,
             'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
             'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
@@ -393,31 +420,41 @@ def commit(author=None, temperature=None):
 
         # If user cancelled, revert the staging and exit.
         if not commit_confirmed:
-            util.display_message("Commit cancelled. Reverting `git add`.", error=True)
-            reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
-            subprocess.run(reset_cmd, check=False)
+            if regenerate:
+                util.display_message("Amend cancelled.", error=True)
+            else:
+                util.display_message("Commit cancelled. Reverting `git add`.", error=True)
+                reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
+                subprocess.run(reset_cmd, check=False)
             return
 
         util.log_info("Commit Message accepted")
 
         # Construct the commit command with subject, body, and sign-off.
-        commit_cmd = ['git', '-C', repo_path, 'commit', '-s', '-m', subject]
+        commit_cmd = ['git', '-C', repo_path, 'commit']
+        if regenerate:
+            commit_cmd.append('--amend')
+        commit_cmd.extend(['-s', '-m', subject])
+
         if body:
             commit_cmd.extend(['-m', body])
         if author:
             commit_cmd.extend(['-m', '', '-m', author]) # Blank line before trailer.
 
-        util.display_message(f"Committing with subject: {subject}", history=True)
+        action = "Amending" if regenerate else "Committing"
+        util.display_message(f"{action} with subject: {subject}", history=True)
         vim.command("redraw")
 
         commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, check=False)
 
         if commit_result.returncode == 0:
             success_message = commit_result.stdout.strip().split('\n')[0]
-            util.display_message(f"Commit successful: {success_message}", history=True)
+            action_past = "Amend" if regenerate else "Commit"
+            util.display_message(f"{action_past} successful: {success_message}", history=True)
         else:
             error_message = (commit_result.stderr or commit_result.stdout).strip()
-            util.display_message(f"Git commit failed: {error_message}", error=True)
+            action_past = "amend" if regenerate else "commit"
+            util.display_message(f"Git {action_past} failed: {error_message}", error=True)
 
     except FileNotFoundError:
         util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
