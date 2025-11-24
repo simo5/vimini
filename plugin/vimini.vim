@@ -13,7 +13,7 @@ let g:loaded_vimini = 1
 " 2. ~/.vimini/api_key file
 let s:api_key = get(g:, 'vimini_api_key', '')
 if empty(s:api_key)
-  let s:api_key_path = expand('~/.config/gemini.token')
+  let s:api_key_path = expand('~/.config/gemini_token')
   if filereadable(s:api_key_path)
     try
       let s:api_key = trim(readfile(s:api_key_path)[0])
