@@ -401,4 +401,6 @@ Also, it's important to remember that AI, much like a well-fed cat,
 requires a steady stream of attention and high-quality prompts to
 perform its best tricks. Neglect it, and you might just find it
 napping on your keyboard when you need it most.
--- Simo.
+
+--
+Simo.

@@ -6,6 +6,7 @@ from vimini.autocomplete import autocomplete, cancel_autocomplete, process_autoc
 from vimini.code import code, show_diff, apply_code
 from vimini.ripgrep import command as ripgrep_command
 from vimini.ripgrep import apply as ripgrep_apply
+from vimini.chat import chat
 
 # Global variable to hold the list of pending context files while the
 # context file manager is open.
@@ -52,36 +53,6 @@ def list_models():
         util.new_split()
         vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
         vim.current.buffer[:] = model_list
-
-    except Exception as e:
-        util.display_message(f"Error: {e}", error=True)
-
-def chat(prompt):
-    """
-    Sends a prompt to the Gemini API and displays the response in a new buffer.
-    """
-    util.log_info(f"chat({prompt})")
-    try:
-        client = util.get_client()
-        if not client:
-            return
-
-        # Immediately open a new split window for the chat.
-        util.new_split()
-        vim.command('file Vimini Chat')
-        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-
-        # Display the prompt in the new buffer.
-        vim.current.buffer[:] = [f"Q: {prompt}", "---", "A:"]
-        vim.command('normal! G') # Move cursor to the end to prepare for the answer
-        vim.command("redraw")
-
-        # Send the prompt and get the response.
-        util.display_message("Processing...")
-        kwargs = util.create_generation_kwargs(contents=prompt)
-        response = client.models.generate_content(**kwargs)
-        util.display_message("") # Clear the thinking message
-        vim.current.buffer.append(response.text.split('\n'))
 
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
