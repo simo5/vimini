@@ -1,4 +1,4 @@
-" Main entry point for vimini
+" Vimini: Google Gemini Integration for Vim
 
 " Prevent the script from being loaded more than once.
 if exists('g:loaded_vimini')
@@ -194,11 +194,12 @@ command! -nargs=0 ViminiApply call ViminiApply()
 
 function! ViminiReview(q_args)
   " Reviews git diffs. Git objects can be specified with "-c <refs>".
-  " A security-focused review can be requested with "-s".
+  " A security-focused review can be requested with "--security".
   " The rest of the arguments are treated as a prompt.
   let l:git_objects_arg = v:null
   let l:prompt_arg = ''
   let l:security_focus = 0
+  let l:save_review = 0
   let l:args = split(a:q_args)
 
   let l:c_idx = index(l:args, '-c')
@@ -213,10 +214,16 @@ function! ViminiReview(q_args)
     endif
   endif
 
-  let l:s_idx = index(l:args, '-s')
+  let l:s_idx = index(l:args, '--security')
   if l:s_idx != -1
     let l:security_focus = 1
     call remove(l:args, l:s_idx)
+  endif
+
+  let l:save_idx = index(l:args, '--save')
+  if l:save_idx != -1
+    let l:save_review = 1
+    call remove(l:args, l:save_idx)
   endif
 
   let l:prompt_arg = join(l:args, ' ')
@@ -227,9 +234,10 @@ try:
     prompt = vim.eval('l:prompt_arg')
     git_objects = vim.eval('l:git_objects_arg')
     security_focus = bool(int(vim.eval('l:security_focus')))
+    save_review = bool(int(vim.eval('l:save_review')))
     verbose = vim.eval('g:vimini_thinking') == 'on'
     temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, temperature=temperature)
+    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, temperature=temperature, save=save_review)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")

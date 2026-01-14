@@ -246,14 +246,19 @@ When you are done, simply close the window (e.g., with `:q`). A popup will ask y
 :ViminiContextFiles
 ```
 
-### `:ViminiReview [-c <git_objects>] [{prompt}]`
+### `:ViminiReview [-c <git_objects>] [--security] [--save] [{prompt}]`
 
-Sends content to the Gemini model for a code review. This command has two modes:
+Sends content to the Gemini model for a code review. This command has two main modes:
 
 1.  **Current Buffer Review**: If no `-c` option is provided, it sends the content of the current buffer for review.
-2.  **Git Object Review**: If the `-c <git_objects>` option is provided, it reviews the changes specified by the git objects. It sends the `git show` output (the diff) to the AI, and critically, it also uploads the full content of all changed files to provide complete context for the review. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or `HEAD~1`.
+2.  **Git Object Review**: If the `-c <git_objects>` option is provided, it reviews the changes specified by the git objects. It sends the `git show` output (the diff) to the AI, and critically, it also uploads the full content of all changed files to provide complete context for the review. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or a range like `HEAD~3..HEAD`.
 
 You can add an optional `{prompt}` to guide the AI's review. The review will be displayed in a new vertical split buffer. If `g:vimini_thinking` is `on`, an additional buffer showing the AI's thought process will also be opened.
+
+**Additional Options:**
+
+*   `--security`: Narrows the scope of the review to focus exclusively on security vulnerabilities, insecure coding practices, and potential attack vectors.
+*   `--save`: Used with `-c`. This option reviews each commit in the given range individually and saves each review to a separate file in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
 
 **Examples:**
 
@@ -267,8 +272,11 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 " Review the changes in the latest commit
 :ViminiReview -c HEAD
 
-" Review changes from two commits ago and ask for security vulnerabilities
-:ViminiReview -c HEAD~2 "Check for security vulnerabilities"
+" Review changes from two commits ago, focusing only on security
+:ViminiReview -c HEAD~2 --security
+
+" Review the last 3 commits and save each review to a file
+:ViminiReview -c HEAD~3..HEAD --save
 ```
 
 ### Autocomplete
