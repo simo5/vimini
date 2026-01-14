@@ -246,12 +246,12 @@ When you are done, simply close the window (e.g., with `:q`). A popup will ask y
 :ViminiContextFiles
 ```
 
-### `:ViminiReview [C:<git_objects>] [{prompt}]`
+### `:ViminiReview [-c <git_objects>] [{prompt}]`
 
 Sends content to the Gemini model for a code review. This command has two modes:
 
-1.  **Current Buffer Review**: If no `git_objects` are provided, it sends the content of the current buffer for review.
-2.  **Git Object Review**: If the command starts with `C:<git_objects>`, it reviews the output of `git show <git_objects>`. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or `HEAD~1`.
+1.  **Current Buffer Review**: If no `-c` option is provided, it sends the content of the current buffer for review.
+2.  **Git Object Review**: If the `-c <git_objects>` option is provided, it reviews the output of `git show <git_objects>`. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or `HEAD~1`.
 
 You can add an optional `{prompt}` to guide the AI's review. The review will be displayed in a new vertical split buffer. If `g:vimini_thinking` is `on`, an additional buffer showing the AI's thought process will also be opened.
 
@@ -265,10 +265,10 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 :ViminiReview
 
 " Review the changes in the latest commit
-:ViminiReview C:HEAD
+:ViminiReview -c HEAD
 
 " Review changes from two commits ago and ask for security vulnerabilities
-:ViminiReview C:HEAD~2 "Check for security vulnerabilities"
+:ViminiReview -c HEAD~2 "Check for security vulnerabilities"
 ```
 
 ### Autocomplete

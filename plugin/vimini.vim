@@ -193,27 +193,25 @@ endfunction
 command! -nargs=0 ViminiApply call ViminiApply()
 
 function! ViminiReview(q_args)
-  " Reviews git diffs. The first argument can be a git object if prefixed
-  " with "C:". The rest of the arguments are treated as a prompt.
-  " If no "C:" argument is found, all arguments form the prompt.
+  " Reviews git diffs. Git objects can be specified with "-c <refs>".
+  " The rest of the arguments are treated as a prompt.
   let l:git_objects_arg = v:null
   let l:prompt_arg = ''
-  let l:args = split(a:q_args) " Parse the string from <q-args> into arguments
+  let l:args = split(a:q_args)
 
-  if !empty(l:args)
-    let l:first_arg = l:args[0]
-    " Check if the first argument is a git object reference
-    if strpart(l:first_arg, 0, 2) ==# 'C:'
-      let l:git_objects_arg = strpart(l:first_arg, 2)
-      " The rest of the arguments form the prompt
-      if len(l:args) > 1
-        let l:prompt_arg = join(l:args[1:], ' ')
-      endif
+  let l:c_idx = index(l:args, '-c')
+
+  if l:c_idx != -1
+    if l:c_idx + 1 < len(l:args)
+      let l:git_objects_arg = l:args[l:c_idx + 1]
+      call remove(l:args, l:c_idx, l:c_idx + 1)
     else
-      " All arguments form the prompt
-      let l:prompt_arg = join(l:args, ' ')
+      echoerr "[Vimini] Error: -c option requires an argument."
+      return
     endif
   endif
+
+  let l:prompt_arg = join(l:args, ' ')
 
   py3 << EOF
 try:
