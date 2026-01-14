@@ -1,12 +1,14 @@
 import vim
 import subprocess
 import shlex
+import os
 from vimini import util
 
 def review(prompt, git_objects=None, verbose=False, temperature=None):
     """
     Sends content to the Gemini API for a code review.
     If git_objects are provided, it reviews the output of `git show <objects>`.
+    The full content of the changed files are also provided as context.
     Otherwise, it reviews the content of the current buffer.
     The review is displayed in a new buffer, streaming thoughts if verbose.
     """
@@ -18,6 +20,7 @@ def review(prompt, git_objects=None, verbose=False, temperature=None):
 
         review_content = ""
         content_source_description = ""
+        uploaded_files = []
 
         if git_objects:
             # Handle review of git objects
@@ -33,6 +36,7 @@ def review(prompt, git_objects=None, verbose=False, temperature=None):
                     util.display_message("Security error: Git options (like flags starting with '-') are not allowed.", error=True)
                     return
 
+            # 1. Get the diff content for review
             cmd = ['git', '-C', repo_path, 'show'] + objects_to_show
 
             util.display_message(f"Running git show {git_objects}... ")
@@ -42,9 +46,23 @@ def review(prompt, git_objects=None, verbose=False, temperature=None):
                 error_message = (result.stderr or "git show failed.").strip()
                 util.display_message(f"Git error: {error_message}", error=True)
                 return
-            util.display_message("") # Clear message
 
             review_content = result.stdout
+
+            # 2. Get changed files and upload them as context.
+            util.display_message("Getting changed files for context...")
+            cmd_files = ['git', '-C', repo_path, 'show', '--name-only', '--format='] + objects_to_show
+            result_files = subprocess.run(cmd_files, capture_output=True, text=True, check=False)
+            if result_files.returncode == 0:
+                changed_files_relative = [f for f in result_files.stdout.strip().split('\n') if f]
+                if changed_files_relative:
+                    # Construct absolute paths for context files.
+                    context_files_to_upload = [os.path.join(repo_path, rel_path) for rel_path in changed_files_relative]
+                    uploaded_files = util.upload_context_files(client, file_paths_to_include=context_files_to_upload) or []
+            else:
+                util.display_message("Warning: Could not determine list of changed files.", error=True)
+
+            util.display_message("") # Clear message
 
             # As requested, open a new buffer with the git show output, which becomes the context
             util.new_split()
@@ -66,16 +84,29 @@ def review(prompt, git_objects=None, verbose=False, temperature=None):
             util.display_message("Nothing to review.", history=True)
             return
 
+        context_files_section = ""
+        if uploaded_files:
+            context_file_names = sorted([f.display_name for f in uploaded_files])
+            file_list_str = "\n".join(f"- {name}" for name in context_file_names)
+            context_files_section = (
+                "The following files have been uploaded for context and contain the full, "
+                "up-to-date source code for the changes being reviewed:\n"
+                f"{file_list_str}\n\n"
+            )
+
         # Construct the full prompt for the API.
-        full_prompt = (
+        prompt_text = (
             f"Please review {content_source_description} for potential issues, "
             "improvements, best practices, and any possible bugs. "
             "Provide a concise summary and actionable suggestions.\n\n"
+            f"{context_files_section}"
             "--- CONTENT TO REVIEW ---\n"
             f"{review_content}\n"
             "--- END CONTENT TO REVIEW ---"
             f"\n{prompt}\n"
         )
+
+        full_prompt = [prompt_text, *uploaded_files]
 
         thoughts_buffer = None
         if verbose:

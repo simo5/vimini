@@ -216,9 +216,11 @@ def is_buffer_modified(buffer=None):
     # The 'modified' option is a boolean (1 or 0) in Vim's buffer-local options.
     return bool(buffer.options['modified'])
 
-def find_context_files():
+def find_context_files(file_paths_to_include=None):
     """
-    Generate a list of files to be used as context. This includes:
+    Generate a list of files to be used as context.
+    If file_paths_to_include is provided, it will be used as the source of truth for file paths.
+    Otherwise, this includes:
     1. All files currently open in Vim buffers that are backed by a file on disk.
     2. All files specified in `g:context_files`, which are always included if they exist.
 
@@ -229,6 +231,22 @@ def find_context_files():
     """
     files_to_upload = []
     seen_file_paths = set()
+
+    if file_paths_to_include is not None:
+        # If a specific list of files is provided, use that.
+        # We still need to check if they are open in buffers to get latest content.
+        open_buffers_by_path = {}
+        for b in vim.buffers:
+            if b.name and os.path.exists(b.name):
+                open_buffers_by_path[os.path.abspath(b.name)] = b.number
+
+        for file_path in file_paths_to_include:
+            abs_path = os.path.abspath(file_path)
+            if os.path.exists(abs_path) and abs_path not in seen_file_paths:
+                buf_num = open_buffers_by_path.get(abs_path)
+                files_to_upload.append((abs_path, buf_num))
+                seen_file_paths.add(abs_path)
+        return files_to_upload
 
     # First, add all file-backed buffers. This gives them priority.
     for b in vim.buffers:
@@ -256,7 +274,7 @@ def find_context_files():
 
     return files_to_upload
 
-def upload_context_files(client):
+def upload_context_files(client, file_paths_to_include=None):
     """
     Uploads files to use as context. This includes files from open buffers and
     from the `g:context_files` list. It re-uploads files if they have been
@@ -268,7 +286,7 @@ def upload_context_files(client):
     files_requiring_upload = []
     display_message("Checking context files...")
 
-    context_files = find_context_files()
+    context_files = find_context_files(file_paths_to_include)
     if context_files:
         log_info(f"Considering these context files {context_files}")
     else:
