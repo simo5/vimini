@@ -171,11 +171,12 @@ def code(prompt, verbose=False, temperature=None):
 
         combined_diff_output = []
         for file_op in files_to_process:
-            relative_path = file_op['file_path']
+            api_path = file_op['file_path']
             ai_generated_code = file_op['file_content']
             file_type = file_op.get('file_type', 'text/plain')
-            absolute_path = os.path.join(project_root, relative_path)
+            absolute_path = util.get_absolute_path_from_api_path(api_path)
             file_exists = os.path.exists(absolute_path)
+            relative_path = os.path.relpath(absolute_path, project_root)
 
             if file_type == 'text/x-diff':
                 if ai_generated_code.strip():
@@ -305,10 +306,10 @@ def apply_code():
             has_errors = False
 
             for file_op in files_to_apply:
-                relative_path = file_op['file_path']
+                api_path = file_op['file_path']
                 content = file_op['file_content']
                 file_type = file_op.get('file_type', 'text/plain')
-                absolute_path = os.path.join(project_root, relative_path)
+                absolute_path = util.get_absolute_path_from_api_path(api_path)
 
                 try:
                     dir_name = os.path.dirname(absolute_path)
@@ -322,7 +323,8 @@ def apply_code():
                             capture_output=True, cwd=project_root
                         )
                         if result.returncode != 0:
-                            err_msg = f"patch failed for {relative_path}.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+                            relative_path_for_display = os.path.relpath(absolute_path, project_root)
+                            err_msg = f"patch failed for {relative_path_for_display}.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
                             util.display_message(err_msg, error=True)
                             has_errors = True
                             continue
@@ -330,7 +332,8 @@ def apply_code():
                         with open(absolute_path, 'w', encoding='utf-8') as f:
                             f.write(content)
 
-                    modified_files.append(relative_path)
+                    relative_path_for_display = os.path.relpath(absolute_path, project_root)
+                    modified_files.append(relative_path_for_display)
 
                     # Reload buffer if file is open
                     normalized_target_path = os.path.abspath(absolute_path)
@@ -347,7 +350,8 @@ def apply_code():
                     has_errors = True
                     break # Fatal error
                 except Exception as e:
-                    util.display_message(f"Error processing {relative_path}: {e}", error=True)
+                    relative_path_for_display = os.path.relpath(absolute_path, project_root)
+                    util.display_message(f"Error processing {relative_path_for_display}: {e}", error=True)
                     has_errors = True
 
             if has_errors:

@@ -8,6 +8,7 @@ _API_KEY = None
 _MODEL = None
 _GENAI_CLIENT = None # Global, lazily-initialized client.
 _REPO_NAME_CACHE = None # Cache for the git repository directory name.
+_REPO_ROOT_CACHE = None # Cache for the git repository root path.
 _LOGGER = None
 
 def get_client():
@@ -80,9 +81,10 @@ def get_git_repo_root():
 def get_git_repo_name():
     """
     Fetches and caches the name of the directory of the current git repository.
+    Also caches the full path to the repo root for reuse by other functions.
     Returns "temp" if not in a git repository.
     """
-    global _REPO_NAME_CACHE
+    global _REPO_NAME_CACHE, _REPO_ROOT_CACHE
     if _REPO_NAME_CACHE is not None:
         return _REPO_NAME_CACHE
 
@@ -91,11 +93,79 @@ def get_git_repo_name():
     repo_path = get_git_repo_root()
 
     if repo_path:
+        _REPO_ROOT_CACHE = repo_path
         _REPO_NAME_CACHE = os.path.basename(repo_path)
     else:
+        _REPO_ROOT_CACHE = None
         _REPO_NAME_CACHE = "temp"
 
     return _REPO_NAME_CACHE
+
+def get_relative_path(file_path):
+    """
+    Computes a path for a file relative to its git repository root,
+    or to the user's home directory as a fallback.
+    Prepends the capitalized git repo name or 'HOME' to the path.
+    """
+    if not file_path:
+        return ""
+
+    abs_path = os.path.abspath(file_path)
+
+    # Prime the repo root cache. This assumes we are operating within a single
+    # project context, so we use the repo of the current buffer for all files.
+    repo_name = get_git_repo_name() # This also populates _REPO_ROOT_CACHE
+    git_root = _REPO_ROOT_CACHE
+
+    if git_root and abs_path.startswith(git_root):
+        relative_path = os.path.relpath(abs_path, git_root)
+        return f"{repo_name.upper()}:{relative_path}"
+
+    home_dir = os.path.expanduser('~')
+    # Check if the path is inside the home directory.
+    if abs_path.startswith(home_dir):
+        try:
+            relative_path = os.path.relpath(abs_path, home_dir)
+            return f"HOME:{relative_path}"
+        except ValueError:
+            # This can happen on Windows if home_dir and abs_path are on different drives,
+            # even with startswith check if symlinks are involved. Fallback is safe.
+            pass
+
+    # Fallback for files not in git repo or home, or on different drives on Windows.
+    return os.path.basename(abs_path)
+
+def get_absolute_path_from_api_path(api_path):
+    """
+    Inverse of get_relative_path. Converts a path from the API format
+    (e.g., 'REPO:src/main.py') back to an absolute path on the local filesystem.
+    """
+    if not api_path:
+        return ""
+
+    project_root = get_git_repo_root() or vim.eval('getcwd()')
+
+    if ':' not in api_path:
+        # Fallback for paths without a prefix: assume relative to project root.
+        return os.path.join(project_root, api_path)
+
+    prefix, relative_path = api_path.split(':', 1)
+
+    # This ensures the caches are populated
+    repo_name = get_git_repo_name()
+    git_root = _REPO_ROOT_CACHE # Populated by get_git_repo_name()
+
+    if git_root and prefix == repo_name.upper():
+        return os.path.join(git_root, relative_path)
+
+    if prefix == 'HOME':
+        home_dir = os.path.expanduser('~')
+        return os.path.join(home_dir, relative_path)
+
+    # If the prefix doesn't match, it might be a new file within the project.
+    # Treat the whole string as a path relative to the project root. This
+    # handles cases where the model returns a simple relative path for a new file.
+    return os.path.join(project_root, api_path)
 
 def log_info(message):
     """Writes a message to the logger if it's enabled."""
@@ -129,7 +199,7 @@ def display_message(message, error=False, history=False, filename=None, line_num
             filename, line_number = None, None
 
     # Escape single quotes and newlines to prevent breaking the Vim command string.
-    safe_message = str(message).replace("'", "\"").replace('\n', ' ').replace('\r', '')
+    safe_message = str(message).replace("'", '"').replace('\n', ' ').replace('\r', '')
 
     prefix = f"[Vimini ({get_git_repo_name()})]"
     full_message = f"{prefix} {safe_message}"

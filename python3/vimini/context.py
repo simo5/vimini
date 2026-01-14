@@ -96,7 +96,8 @@ def upload_context_files(client, file_paths_to_include=None):
         pass
 
     for file_path, buf_number in context_files:
-        found_file = existing_files.get(file_path)
+        relative_path = util.get_relative_path(file_path)
+        found_file = existing_files.get(relative_path)
 
         if not found_file:
             # Not found, needs uploading.
@@ -135,7 +136,7 @@ def upload_context_files(client, file_paths_to_include=None):
 
     # --- Log context files status before upload ---
     reused_file_paths = {f.display_name for f in files_to_process}
-    upload_file_paths = {path for path, _ in files_requiring_upload}
+    upload_file_paths = {util.get_relative_path(path) for path, _ in files_requiring_upload}
     all_context_file_paths = sorted(list(reused_file_paths | upload_file_paths))
 
     util.log_info(f"Found {len(all_context_file_paths)} context files:")
@@ -194,6 +195,7 @@ def upload_context_files(client, file_paths_to_include=None):
     uploaded_files = []
     for file_info in files_with_content:
         file_path = file_info['path']
+        relative_path = util.get_relative_path(file_path)
         buf_content_bytes = file_info['content_bytes']
 
         buf_io = io.BytesIO(buf_content_bytes)
@@ -205,13 +207,13 @@ def upload_context_files(client, file_paths_to_include=None):
             uploaded_file = client.files.upload(
                 file=buf_io,
                 config=types.UploadFileConfig(
-                    display_name=file_path,
+                    display_name=relative_path,
                     mime_type=mime_type
                 ),
             )
             uploaded_files.append(uploaded_file)
         except Exception as e:
-            util.display_message(f"Error uploading {file_path}: {e}", error=True)
+            util.display_message(f"Error uploading {relative_path}: {e}", error=True)
             return None # Fail fast on upload error
 
     # --- 4. Wait for all files (reused and new) to become ACTIVE ---
