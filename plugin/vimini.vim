@@ -194,9 +194,11 @@ command! -nargs=0 ViminiApply call ViminiApply()
 
 function! ViminiReview(q_args)
   " Reviews git diffs. Git objects can be specified with "-c <refs>".
+  " A security-focused review can be requested with "-s".
   " The rest of the arguments are treated as a prompt.
   let l:git_objects_arg = v:null
   let l:prompt_arg = ''
+  let l:security_focus = 0
   let l:args = split(a:q_args)
 
   let l:c_idx = index(l:args, '-c')
@@ -211,6 +213,12 @@ function! ViminiReview(q_args)
     endif
   endif
 
+  let l:s_idx = index(l:args, '-s')
+  if l:s_idx != -1
+    let l:security_focus = 1
+    call remove(l:args, l:s_idx)
+  endif
+
   let l:prompt_arg = join(l:args, ' ')
 
   py3 << EOF
@@ -218,9 +226,10 @@ try:
     from vimini import main
     prompt = vim.eval('l:prompt_arg')
     git_objects = vim.eval('l:git_objects_arg')
+    security_focus = bool(int(vim.eval('l:security_focus')))
     verbose = vim.eval('g:vimini_thinking') == 'on'
     temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    main.review(prompt, git_objects=git_objects, verbose=verbose, temperature=temperature)
+    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, temperature=temperature)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")

@@ -251,7 +251,7 @@ When you are done, simply close the window (e.g., with `:q`). A popup will ask y
 Sends content to the Gemini model for a code review. This command has two modes:
 
 1.  **Current Buffer Review**: If no `-c` option is provided, it sends the content of the current buffer for review.
-2.  **Git Object Review**: If the `-c <git_objects>` option is provided, it reviews the output of `git show <git_objects>`. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or `HEAD~1`.
+2.  **Git Object Review**: If the `-c <git_objects>` option is provided, it reviews the changes specified by the git objects. It sends the `git show` output (the diff) to the AI, and critically, it also uploads the full content of all changed files to provide complete context for the review. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or `HEAD~1`.
 
 You can add an optional `{prompt}` to guide the AI's review. The review will be displayed in a new vertical split buffer. If `g:vimini_thinking` is `on`, an additional buffer showing the AI's thought process will also be opened.
 

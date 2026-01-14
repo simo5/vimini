@@ -4,7 +4,7 @@ import shlex
 import os
 from vimini import util
 
-def review(prompt, git_objects=None, verbose=False, temperature=None):
+def review(prompt, git_objects=None, security_focus=False, verbose=False, temperature=None):
     """
     Sends content to the Gemini API for a code review.
     If git_objects are provided, it reviews the output of `git show <objects>`.
@@ -12,7 +12,7 @@ def review(prompt, git_objects=None, verbose=False, temperature=None):
     Otherwise, it reviews the content of the current buffer.
     The review is displayed in a new buffer, streaming thoughts if verbose.
     """
-    util.log_info(f"review({prompt}, git_objects='{git_objects}', verbose={verbose}, temperature={temperature})")
+    util.log_info(f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, temperature={temperature})")
     try:
         client = util.get_client()
         if not client:
@@ -95,10 +95,22 @@ def review(prompt, git_objects=None, verbose=False, temperature=None):
             )
 
         # Construct the full prompt for the API.
+        if security_focus:
+            review_instructions = (
+                f"Please review {content_source_description} exclusively for potential security issues or hazards. "
+                "Focus on identifying vulnerabilities, insecure coding practices, and potential attack vectors. "
+                "Provide clear, actionable suggestions for mitigation. Do not comment on code style, "
+                "performance, or other non-security aspects."
+            )
+        else:
+            review_instructions = (
+                f"Please review {content_source_description} for potential issues, "
+                "improvements, best practices, and any possible bugs. "
+                "Provide a concise summary and actionable suggestions."
+            )
+
         prompt_text = (
-            f"Please review {content_source_description} for potential issues, "
-            "improvements, best practices, and any possible bugs. "
-            "Provide a concise summary and actionable suggestions.\n\n"
+            f"{review_instructions}\n\n"
             f"{context_files_section}"
             "--- CONTENT TO REVIEW ---\n"
             f"{review_content}\n"
