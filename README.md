@@ -383,17 +383,17 @@ Once you are satisfied with the AI-generated changes in the `ViminiRipGrep` buff
 
 ### `:ViminiFiles`
 
-Opens an interactive buffer to manage files uploaded to Google for use with
-the Gemini API. This allows you to interact with a persistent set of files
-that the model can use for context across different prompts.
+Commands like `:ViminiCode` automatically upload files to Google to provide
+context for the AI. These files persist on the server. `:ViminiFiles` opens an
+interactive buffer to manage these remotely stored files, allowing you to view
+details or delete them when they are no longer needed.
 
 The command opens a `Vimini Files` buffer that lists all your uploaded files.
 
 **How to use the manager:**
-*   **`i`**: Shows detailed information about the file under the cursor in a
-    new window.
-*   **`d`**: Deletes the file under the cursor from the server. The file list
-    is refreshed automatically.
+*   **`i`**: Shows detailed information about the file under the cursor in a new window.
+*   **`d`**: Deletes the file under the cursor from the server. The list is refreshed automatically.
+*   **`D`**: Deletes all uploaded files from the server (with confirmation).
 *   **`q`**: Closes the `Vimini Files` buffer.
 
 ```vim

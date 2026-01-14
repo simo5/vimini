@@ -647,7 +647,7 @@ def _refresh_files_buffer():
     file_list_content = [
         "Vimini Remote Files",
         "-------------------",
-        " d: delete | i: info | q: close",
+        " d: delete | D: delete all | i: info | q: close",
         ""
     ]
     if not all_files:
@@ -749,6 +749,74 @@ def _files_buffer_action(action):
     except Exception as e:
         util.display_message(f"Error during file action: {e}", error=True)
 
+def _delete_all_files():
+    """
+    Deletes all remote files after confirmation.
+    """
+    try:
+        client = util.get_client()
+        if not client:
+            return
+
+        all_files = list(client.files.list())
+        if not all_files:
+            util.display_message("No remote files to delete.", history=True)
+            return
+
+        # --- Confirmation Popup ---
+        popup_content = [
+            f"Delete all {len(all_files)} remote files?",
+            "This action cannot be undone.",
+            "",
+            "Confirm deletion? [y/n]"
+        ]
+        popup_options = {
+            'title': ' Confirm Deletion ', 'line': 0, 'col': 0,
+            'minwidth': 40, 'maxwidth': 60,
+            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
+            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
+            'close': 'none', 'zindex': 200,
+        }
+        popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+        vim.command("redraw!")
+
+        confirmed = False
+        try:
+            answer_code = vim.eval('getchar()')
+            answer_char = chr(int(answer_code))
+            if answer_char.lower() == 'y':
+                confirmed = True
+        except (vim.error, ValueError, TypeError):
+            pass # confirmed remains False
+        finally:
+            vim.eval(f"popup_close({popup_id})")
+            vim.command("redraw!")
+
+        if not confirmed:
+            util.display_message("Deletion of all files cancelled.", history=True)
+            return
+
+        util.display_message(f"Deleting all {len(all_files)} remote files...")
+        deleted_count = 0
+        failed_count = 0
+        for f in all_files:
+            try:
+                client.files.delete(name=f.name)
+                deleted_count += 1
+            except Exception as e:
+                util.log_info(f"Failed to delete file {f.display_name}: {e}")
+                failed_count += 1
+
+        message = f"Deleted {deleted_count} files."
+        if failed_count > 0:
+            message += f" {failed_count} files failed to delete."
+        util.display_message(message, history=True)
+
+        _refresh_files_buffer()
+
+    except Exception as e:
+        util.display_message(f"Error deleting all files: {e}", error=True)
+
 def files_command():
     """
     Opens an interactive buffer listing all remote files, with key mappings
@@ -767,7 +835,7 @@ def files_command():
         file_list_content = [
             "Vimini Remote Files",
             "-------------------",
-            " d: delete | i: info | q: close",
+            " d: delete | D: delete all | i: info | q: close",
             ""
         ]
         if not all_files:
@@ -785,6 +853,7 @@ def files_command():
         # Mappings for actions
         vim.command("nnoremap <buffer> <silent> i :py3 from vimini.context import _files_buffer_action; _files_buffer_action('info')<CR>")
         vim.command("nnoremap <buffer> <silent> d :py3 from vimini.context import _files_buffer_action; _files_buffer_action('delete')<CR>")
+        vim.command("nnoremap <buffer> <silent> D :py3 from vimini.context import _delete_all_files; _delete_all_files()<CR>")
         vim.command("nnoremap <buffer> <silent> q :q<CR>")
 
         vim.command('setlocal nomodifiable')
