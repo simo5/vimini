@@ -20,7 +20,7 @@ def get_client():
             vim.command("echoerr '[Vimini] API key not set. Please run :ViminiInit'")
             return None
         try:
-            vim.command("echo '[Vimini] Initializing API client...'" )
+            vim.command("echo '[Vimini] Initializing API client...'")
             vim.command("redraw")
             _GENAI_CLIENT = genai.Client(api_key=_API_KEY)
             vim.command("echo ''") # Clear the message
@@ -351,29 +351,58 @@ def upload_context_files(client, file_paths_to_include=None):
         log_info(f"  - {file_path}{status}")
 
 
-    # --- 2. Upload necessary files ---
-    if files_requiring_upload:
-        display_message(f"Uploading {len(files_requiring_upload)} context file(s)...")
-
-    uploaded_files = []
+    # --- 2. Prepare and filter files for upload ---
+    files_with_content = []
     for file_path, buf_number in files_requiring_upload:
-        buf_content = ""
+        content = ""
         if buf_number is not None:
             buf = vim.buffers[buf_number]
-            buf_content = "\n".join(buf[:])
+            content = "\n".join(buf[:])
         else:
             # Read from disk for files not in a buffer.
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
-                    buf_content = f.read()
+                    content = f.read()
             except Exception as e:
                 display_message(f"Could not read context file {file_path}: {e}", error=True)
                 continue # Skip this file
 
-        if not buf_content.strip():
+        if not content.strip():
             continue
 
-        buf_content_bytes = buf_content.encode('utf-8')
+        content_bytes = content.encode('utf-8')
+        files_with_content.append({
+            'path': file_path,
+            'content_bytes': content_bytes,
+            'size': len(content_bytes)
+        })
+
+    # Limit total upload size to 1MB
+    MAX_UPLOAD_BYTES = 1 * 1024 * 1024 # 1 Megabyte
+    total_size = sum(f['size'] for f in files_with_content)
+    eliminated_files = []
+
+    while total_size > MAX_UPLOAD_BYTES and files_with_content:
+        # Find and remove the largest file
+        largest_file = max(files_with_content, key=lambda f: f['size'])
+        files_with_content.remove(largest_file)
+        total_size -= largest_file['size']
+        eliminated_files.append(os.path.basename(largest_file['path']))
+
+    if eliminated_files:
+        display_message(f"Context files > 1MB. Excluded: {', '.join(sorted(eliminated_files))}", history=True)
+        log_info(f"Excluded {len(eliminated_files)} files from context upload due to size limit: {', '.join(sorted(eliminated_files))}")
+
+
+    # --- 3. Upload necessary files ---
+    if files_with_content:
+        display_message(f"Uploading {len(files_with_content)} context file(s)...")
+
+    uploaded_files = []
+    for file_info in files_with_content:
+        file_path = file_info['path']
+        buf_content_bytes = file_info['content_bytes']
+
         buf_io = io.BytesIO(buf_content_bytes)
         # Always force plain text, the GEeminiAPI is very fussy with thr type
         # and returns 400 errors on types it doesn't like
@@ -392,7 +421,7 @@ def upload_context_files(client, file_paths_to_include=None):
             display_message(f"Error uploading {file_path}: {e}", error=True)
             return None # Fail fast on upload error
 
-    # --- 3. Wait for all files (reused and new) to become ACTIVE ---
+    # --- 4. Wait for all files (reused and new) to become ACTIVE ---
     pending_files = []
     for f in uploaded_files:
         # Re-check the state of reused files as well.
