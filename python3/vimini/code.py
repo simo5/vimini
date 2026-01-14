@@ -1,7 +1,7 @@
 import vim
 import os, json, subprocess, tempfile
 from google.genai import types
-from vimini import util
+from vimini import util, context
 
 # Global data store to exchange data between python calls without using vim variables for large data.
 _VIMINI_DATA_STORE = {}
@@ -26,7 +26,7 @@ def code(prompt, verbose=False, temperature=None):
             project_root = vim.eval('getcwd()')
 
         # Upload context files using the helper function.
-        uploaded_files = util.upload_context_files(client)
+        uploaded_files = context.upload_context_files(client)
         if uploaded_files is None:
             return  # The helper function has already displayed an error.
     except Exception as e:

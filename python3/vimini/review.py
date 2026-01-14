@@ -3,7 +3,7 @@ import subprocess
 import shlex
 import os
 import re
-from vimini import util
+from vimini import util, context
 
 def _generate_review_stream(client, review_content, uploaded_files, prompt, content_source_description, security_focus, verbose, temperature, review_buffer, thoughts_buffer):
     """
@@ -177,7 +177,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                     changed_files_relative = [f for f in result_files.stdout.strip().split('\n') if f]
                     if changed_files_relative:
                         context_files_to_upload = [os.path.join(repo_path, rel_path) for rel_path in changed_files_relative]
-                        uploaded_files_single = util.upload_context_files(client, file_paths_to_include=context_files_to_upload) or []
+                        uploaded_files_single = context.upload_context_files(client, file_paths_to_include=context_files_to_upload) or []
 
                 _generate_review_stream(
                     client, review_content_single, uploaded_files_single, prompt,
@@ -248,7 +248,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                 if changed_files_relative:
                     # Construct absolute paths for context files.
                     context_files_to_upload = [os.path.join(repo_path, rel_path) for rel_path in changed_files_relative]
-                    uploaded_files = util.upload_context_files(client, file_paths_to_include=context_files_to_upload) or []
+                    uploaded_files = context.upload_context_files(client, file_paths_to_include=context_files_to_upload) or []
             else:
                 util.display_message("Warning: Could not determine list of changed files.", error=True)
 
