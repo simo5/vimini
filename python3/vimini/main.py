@@ -55,13 +55,13 @@ def list_models():
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
-def commit(author=None, temperature=None, regenerate=False):
+def commit(author=None, temperature=None, regenerate=False, refinement=None):
     """
     Generates a commit message. By default, it stages all changes and creates
     a new commit. If `regenerate` is True, it regenerates the message for the
     HEAD commit and amends it.
     """
-    util.log_info(f"commit(author='{author}', temperature={temperature}, regenerate={regenerate})")
+    util.log_info(f"commit(author='{author}', temperature={temperature}, regenerate={regenerate}, refinement='{refinement}')")
     try:
         repo_path = util.get_git_repo_root()
         if not repo_path:
@@ -127,8 +127,14 @@ def commit(author=None, temperature=None, regenerate=False):
             "2. Do not add any prefixes like 'feat:' or 'fix:' to the subject.\n"
             "3. The body should be a brief description of the changes, explaining the 'what' and 'why'.\n"
             "4. Separate the subject and body with '---' on its own line.\n"
-            "5. Only output the raw text, with no extra explanations or markdown.\n\n"
-            "--- GIT DIFF ---\n"
+            "5. Only output the raw text, with no extra explanations or markdown."
+        )
+
+        if refinement:
+            prompt += f"\n\nADDITIONAL INSTRUCTIONS:\n{refinement}"
+
+        prompt += (
+            "\n\n--- GIT DIFF ---\n"
             f"{diff_to_process}\n"
             "--- END GIT DIFF ---"
         )
