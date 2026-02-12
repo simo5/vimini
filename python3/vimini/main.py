@@ -86,15 +86,53 @@ def commit(author=None, temperature=None, regenerate=False, refinement=None):
             if stat_result.returncode == 0:
                 diff_stat_output = stat_result.stdout.strip()
         else:
-            # Stage all changes to get a complete diff for the commit message.
-            util.display_message("Staging all changes... (git add .)")
-            add_cmd = ['git', '-C', repo_path, 'add', '.']
-            add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False)
+            # Stage changes with filtering (exclude dotfiles and swap/backup files)
+            util.display_message("Staging changes...")
 
-            if add_result.returncode != 0:
-                error_message = (add_result.stderr or add_result.stdout).strip()
-                util.display_message(f"Git add failed: {error_message}", error=True)
-                return
+            # Get status to find files to add.
+            status_cmd = ['git', '-C', repo_path, 'status', '-z', '--porcelain']
+            status_result = subprocess.run(status_cmd, capture_output=True, text=True, check=False)
+
+            files_to_add = []
+            if status_result.returncode == 0:
+                output = status_result.stdout
+                i = 0
+                n = len(output)
+                while i < n:
+                    if i + 3 > n: break
+                    status = output[i:i+2]
+                    path_start = i + 3
+                    path_end = output.find('\0', path_start)
+                    if path_end == -1: break
+
+                    path = output[path_start:path_end]
+                    i = path_end + 1
+
+                    # Handle renames (R) or copies (C) which have a second path
+                    if status[0] in ('R', 'C'):
+                        orig_end = output.find('\0', i)
+                        if orig_end != -1:
+                            i = orig_end + 1
+
+                    basename = os.path.basename(path)
+                    # Exclude dotfiles, backup files (~), and swap files
+                    if (basename.startswith('.') or
+                        basename.endswith('~') or
+                        basename.endswith('.swp') or
+                        basename.endswith('.swo')):
+                        continue
+
+                    files_to_add.append(path)
+
+            if files_to_add:
+                add_cmd = ['git', '-C', repo_path, 'add', '--'] + files_to_add
+                add_result = subprocess.run(add_cmd, capture_output=True, text=True, check=False)
+
+                if add_result.returncode != 0:
+                    error_message = (add_result.stderr or add_result.stdout).strip()
+                    util.display_message(f"Git add failed: {error_message}", error=True)
+                    return
+
             util.display_message("")
 
             # Get the diff of what was just staged.
