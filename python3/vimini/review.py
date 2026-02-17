@@ -218,13 +218,14 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             util.display_message("Nothing to review.", history=True)
             return
 
-        thoughts_buffer = None
+        job_id = util.reserve_next_job_id()
+
+        thoughts_buf_num = -1
         if verbose:
-            util.new_split()
-            vim.command('file Vimini Thoughts')
-            vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-            thoughts_buffer = vim.current.buffer
-            thoughts_buffer[:] = ['']
+            try:
+                thoughts_buf_num = util.create_thoughts_buffer(job_id)
+            except Exception as e:
+                util.display_message(f"Error creating thoughts buffer: {e}", error=True)
 
         util.new_split()
         vim.command('file Vimini Review')
@@ -244,7 +245,6 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
         )
 
         review_buf_num = review_buffer.number
-        thoughts_buf_num = thoughts_buffer.number if thoughts_buffer else -1
 
         def on_chunk(text):
             util.append_to_buffer(review_buf_num, text)
@@ -261,7 +261,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             'on_chunk': on_chunk,
             'on_thought': on_thought,
             'on_error': on_error
-        })
+        }, job_id=job_id)
 
     except FileNotFoundError:
         util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)

@@ -85,20 +85,13 @@ def code(prompt, verbose=False, temperature=None):
         *uploaded_files
     ]
 
+    job_id = util.reserve_next_job_id()
+
     # --- 3. Set up Thoughts Buffer (if verbose) ---
     thoughts_buffer_num = -1
     if verbose:
         try:
-            util.new_split()
-            # Unique name for concurrent thoughts buffers
-            import time
-            ts = int(time.time() * 1000) % 10000
-            vim.command(f'file Vimini Thoughts {ts}')
-            vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-            thoughts_buffer = vim.current.buffer
-            thoughts_buffer[:] = ['']
-            thoughts_buffer_num = thoughts_buffer.number
-            # We don't force switch back, letting user decide where to be.
+            thoughts_buffer_num = util.create_thoughts_buffer(job_id)
         except Exception as e:
             util.display_message(f"Error creating thoughts buffer: {e}", error=True)
             return
@@ -135,7 +128,7 @@ def code(prompt, verbose=False, temperature=None):
         'on_thought': on_thought,
         'on_finish': on_finish,
         'on_error': on_error
-    })
+    }, job_id=job_id)
 
 def _finalize_code_generation(json_aggregator, project_root):
     """Parses accumulated JSON and generates diff."""

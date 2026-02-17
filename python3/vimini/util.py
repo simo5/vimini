@@ -347,7 +347,15 @@ def set_logging(log_file=None):
         _LOGGER = logger
         display_message(f"Failed to initialize log file '{log_file}': {e}", error=True)
 
-def start_async_job(client, kwargs, callbacks):
+def reserve_next_job_id():
+    """
+    Reserves and returns the next available job ID.
+    """
+    global _JOB_COUNTER
+    _JOB_COUNTER += 1
+    return _JOB_COUNTER
+
+def start_async_job(client, kwargs, callbacks, job_id=None):
     """
     Starts an asynchronous job to call the Gemini API.
 
@@ -360,12 +368,15 @@ def start_async_job(client, kwargs, callbacks):
                    'on_finish': func()
                    'on_error': func(error_message)
                    'status_message': str (optional custom status message)
+        job_id (int, optional): The job ID to use. If None, a new one is reserved.
     """
     global _JOB_COUNTER, _ACTIVE_JOBS
 
-    # Increment Job Counter for unique ID
-    _JOB_COUNTER += 1
-    job_id = _JOB_COUNTER
+    if job_id is None:
+        # Increment Job Counter for unique ID
+        _JOB_COUNTER += 1
+        job_id = _JOB_COUNTER
+
     _ACTIVE_JOBS[job_id] = callbacks
 
     # Note: We do NOT clear _JOB_QUEUE here, to allow concurrent jobs.
@@ -465,6 +476,33 @@ def process_queue():
     # If no more active jobs, stop the timer
     if not _ACTIVE_JOBS:
         vim.command("call ViminiInternalStopJobTimer()")
+
+def create_thoughts_buffer(job_id):
+    """
+    Creates a new buffer for displaying Vimini thoughts.
+
+    Args:
+        job_id (int): The unique ID of the job.
+
+    Returns:
+        int: The buffer number of the newly created buffer.
+    """
+    new_split()
+
+    # Create a unique filename using the job_id.
+    # We stop using time for uniqueness as requested.
+    filename = f"[{job_id}] Vimini Thoughts"
+
+    # Escape spaces for the Vim command
+    safe_filename = filename.replace(' ', '\\ ')
+
+    vim.command(f"file {safe_filename}")
+    vim.command("setlocal buftype=nofile")
+    vim.command("setlocal bufhidden=wipe")
+    vim.command("setlocal noswapfile")
+    vim.command("setlocal filetype=markdown")
+
+    return vim.current.buffer.number
 
 def append_to_buffer(buffer_number, text):
     """Helper to append text to a buffer without switching windows if possible."""
