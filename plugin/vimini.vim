@@ -446,8 +446,8 @@ let s:job_timer = -1
 function! ViminiInternalProcessJobQueue(timer)
   py3 << EOF
 try:
-    from vimini import code
-    code.process_queue()
+    from vimini import util
+    util.process_queue()
 except Exception:
     pass
 EOF
