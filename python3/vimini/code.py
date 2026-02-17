@@ -6,34 +6,144 @@ from vimini import util, context
 # Global data store to exchange data between python calls without using vim variables for large data.
 _VIMINI_DATA_STORE = {}
 
-# Async state management
-_CODE_JOB_QUEUE = queue.Queue()
-_CODE_JSON_AGGREGATOR = ""
-_CODE_PROJECT_ROOT = ""
-_CODE_VERBOSE = False
-_CODE_THOUGHTS_BUFFER_NUM = -1
-_CODE_JOB_ID = 0
+# Async Job Management
+_JOB_QUEUE = queue.Queue()
+_CURRENT_JOB_ID = 0
+_CALLBACKS = {}
+
+def start_async_job(client, kwargs, callbacks):
+    """
+    Starts an asynchronous job to call the Gemini API.
+
+    Args:
+        client: The genai.Client instance.
+        kwargs: The keyword arguments for generate_content_stream.
+        callbacks: A dict containing optional callbacks:
+                   'on_chunk': func(text)
+                   'on_thought': func(text)
+                   'on_finish': func()
+                   'on_error': func(error_message)
+    """
+    global _CURRENT_JOB_ID, _CALLBACKS
+
+    # Increment Job ID to invalidate previous threads' output
+    _CURRENT_JOB_ID += 1
+    job_id = _CURRENT_JOB_ID
+    _CALLBACKS = callbacks
+
+    # Clear any pending items from previous jobs
+    with _JOB_QUEUE.mutex:
+        _JOB_QUEUE.queue.clear()
+
+    thread = threading.Thread(
+        target=_job_worker,
+        args=(client, kwargs, job_id),
+        daemon=True
+    )
+    thread.start()
+
+    # Start the timer in Vim to poll the queue
+    vim.command("call ViminiInternalStartJobTimer()")
+
+def _job_worker(client, kwargs, job_id):
+    try:
+        response_stream = client.models.generate_content_stream(**kwargs)
+        for chunk in response_stream:
+            if not chunk.candidates:
+                continue
+            # Handle cases where content is blocked or empty
+            try:
+                candidate = chunk.candidates[0]
+                if not candidate.content or not candidate.content.parts:
+                    continue
+                for part in candidate.content.parts:
+                    if not part.text:
+                        continue
+
+                    is_thought = hasattr(part, 'thought') and part.thought
+                    msg_type = 'thought' if is_thought else 'chunk'
+                    _JOB_QUEUE.put((job_id, msg_type, part.text))
+            except Exception:
+                pass # Skip problematic chunks
+
+        _JOB_QUEUE.put((job_id, 'finish', None))
+    except Exception as e:
+        _JOB_QUEUE.put((job_id, 'error', str(e)))
+
+def process_queue():
+    """Called by Vim timer to process updates from the thread."""
+    while True:
+        try:
+            job_id, msg_type, data = _JOB_QUEUE.get_nowait()
+        except queue.Empty:
+            break
+
+        if job_id != _CURRENT_JOB_ID:
+            continue
+
+        if msg_type == 'chunk':
+            if 'on_chunk' in _CALLBACKS:
+                _CALLBACKS['on_chunk'](data)
+            util.display_message("Processing...")
+
+        elif msg_type == 'thought':
+            if 'on_thought' in _CALLBACKS:
+                _CALLBACKS['on_thought'](data)
+            util.display_message("Processing...")
+
+        elif msg_type == 'error':
+            util.display_message("")
+            vim.command("call ViminiInternalStopJobTimer()")
+            if 'on_error' in _CALLBACKS:
+                _CALLBACKS['on_error'](data)
+            else:
+                util.display_message(f"Error during API call: {data}", error=True)
+
+        elif msg_type == 'finish':
+            util.display_message("")
+            vim.command("call ViminiInternalStopJobTimer()")
+            if 'on_finish' in _CALLBACKS:
+                _CALLBACKS['on_finish']()
+            return # Process one finish per timer tick usually sufficient
+
+def append_to_buffer(buffer_number, text):
+    """Helper to append text to a buffer without switching windows if possible."""
+    if buffer_number == -1: return
+
+    buf = None
+    for b in vim.buffers:
+        if b.number == buffer_number:
+            buf = b
+            break
+    if not buf: return
+
+    try:
+        # Split text by newlines
+        lines = text.split('\n')
+
+        # Append to the last line
+        if len(buf) > 0:
+            buf[-1] += lines[0]
+        else:
+            buf[:] = [lines[0]]
+
+        # Append remaining lines
+        if len(lines) > 1:
+            buf.append(lines[1:])
+
+        # If the buffer is in the current window, scroll to bottom
+        if vim.current.buffer.number == buffer_number:
+            vim.command("normal! G")
+            # vim.command("redraw") # Redraw handled by display_message usually
+    except Exception:
+        pass
 
 def code(prompt, verbose=False, temperature=None):
     """
     Uploads all open files, sends them to the Gemini API with a prompt
     to generate code. Runs asynchronously using a thread and Vim timer.
     """
-    global _CODE_JSON_AGGREGATOR, _CODE_PROJECT_ROOT, _CODE_VERBOSE, _CODE_THOUGHTS_BUFFER_NUM, _CODE_JOB_ID
-
     util.log_info(f"code({prompt}, verbose={verbose}, temperature={temperature})")
-
-    # Increment Job ID to invalidate previous threads' output
-    _CODE_JOB_ID += 1
-    current_job_id = _CODE_JOB_ID
-
-    # Reset async state
-    while not _CODE_JOB_QUEUE.empty():
-        try: _CODE_JOB_QUEUE.get_nowait()
-        except queue.Empty: break
-    _CODE_JSON_AGGREGATOR = ""
-    _CODE_VERBOSE = verbose
-    _CODE_THOUGHTS_BUFFER_NUM = -1
 
     # --- 1. Initialization and Setup ---
     try:
@@ -44,7 +154,6 @@ def code(prompt, verbose=False, temperature=None):
         project_root = util.get_git_repo_root()
         if not project_root:
             project_root = vim.eval('getcwd()')
-        _CODE_PROJECT_ROOT = project_root
 
         # Upload context files using the helper function.
         uploaded_files = context.upload_context_files(client)
@@ -109,6 +218,7 @@ def code(prompt, verbose=False, temperature=None):
     ]
 
     # --- 3. Set up Thoughts Buffer (if verbose) ---
+    thoughts_buffer_num = -1
     if verbose:
         try:
             util.new_split()
@@ -116,7 +226,7 @@ def code(prompt, verbose=False, temperature=None):
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
             thoughts_buffer = vim.current.buffer
             thoughts_buffer[:] = ['']
-            _CODE_THOUGHTS_BUFFER_NUM = thoughts_buffer.number
+            thoughts_buffer_num = thoughts_buffer.number
             # We don't force switch back, letting user decide where to be.
         except Exception as e:
             util.display_message(f"Error creating thoughts buffer: {e}", error=True)
@@ -124,7 +234,23 @@ def code(prompt, verbose=False, temperature=None):
 
     util.display_message("Processing... (Async)")
 
-    # --- 4. Start Thread ---
+    # State for the closure
+    json_aggregator = ""
+    
+    def on_chunk(text):
+        nonlocal json_aggregator
+        json_aggregator += text
+        
+    def on_thought(text):
+        if verbose and thoughts_buffer_num != -1:
+            append_to_buffer(thoughts_buffer_num, text)
+            
+    def on_finish():
+        _finalize_code_generation(json_aggregator, project_root)
+        
+    def on_error(msg):
+        util.display_message(f"Error: {msg}", error=True)
+
     kwargs = util.create_generation_kwargs(
         contents=full_prompt,
         temperature=temperature,
@@ -133,103 +259,20 @@ def code(prompt, verbose=False, temperature=None):
         response_schema=multi_file_output_schema
     )
 
-    thread = threading.Thread(
-        target=_code_worker,
-        args=(client, kwargs, current_job_id),
-        daemon=True
-    )
-    thread.start()
+    start_async_job(client, kwargs, {
+        'on_chunk': on_chunk,
+        'on_thought': on_thought,
+        'on_finish': on_finish,
+        'on_error': on_error
+    })
 
-    # Start the timer in Vim to poll the queue
-    vim.command("call ViminiInternalStartCodeTimer()")
-
-def _code_worker(client, kwargs, job_id):
-    """Background thread to call API and stream content."""
-    try:
-        response_stream = client.models.generate_content_stream(**kwargs)
-        for chunk in response_stream:
-            if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
-                continue
-            for part in chunk.candidates[0].content.parts:
-                if not part.text:
-                    continue
-                is_thought = hasattr(part, 'thought') and part.thought
-                if is_thought:
-                    _CODE_JOB_QUEUE.put((job_id, 'thought', part.text))
-                else:
-                    _CODE_JOB_QUEUE.put((job_id, 'json', part.text))
-
-        _CODE_JOB_QUEUE.put((job_id, 'finished', None))
-    except Exception as e:
-        _CODE_JOB_QUEUE.put((job_id, 'error', str(e)))
-
-def process_code_queue():
-    """Called by Vim timer to process updates from the thread."""
-    global _CODE_JSON_AGGREGATOR
-
-    while True:
-        try:
-            item = _CODE_JOB_QUEUE.get_nowait()
-        except queue.Empty:
-            break
-
-        job_id, msg_type, data = item
-
-        # Ignore messages from previous jobs
-        if job_id != _CODE_JOB_ID:
-            continue
-
-        if msg_type == 'thought':
-            if _CODE_VERBOSE and _CODE_THOUGHTS_BUFFER_NUM != -1:
-                _append_to_thoughts_buffer(data)
-            util.display_message("Processing...")
-
-        elif msg_type == 'json':
-            _CODE_JSON_AGGREGATOR += data
-            util.display_message("Processing...")
-
-        elif msg_type == 'error':
-            util.display_message("")
-            util.display_message(f"Error during API call: {data}", error=True)
-            vim.command("call ViminiInternalStopCodeTimer()")
-            return
-
-        elif msg_type == 'finished':
-            util.display_message("")
-            vim.command("call ViminiInternalStopCodeTimer()")
-            _finalize_code_generation()
-            return
-
-def _append_to_thoughts_buffer(text):
-    buf = None
-    for b in vim.buffers:
-        if b.number == _CODE_THOUGHTS_BUFFER_NUM:
-            buf = b
-            break
-    if not buf: return
-
-    try:
-        last_line = buf[-1]
-        new_text = last_line + text
-        new_lines = new_text.split('\n')
-        buf[-1] = new_lines[0]
-        if len(new_lines) > 1:
-            buf.append(new_lines[1:])
-
-        # Scroll only if currently active window to avoid jumping
-        if vim.current.buffer.number == _CODE_THOUGHTS_BUFFER_NUM:
-            vim.command("normal! G")
-            vim.command("redraw")
-    except Exception:
-        pass
-
-def _finalize_code_generation():
+def _finalize_code_generation(json_aggregator, project_root):
     """Parses accumulated JSON and generates diff."""
     global _VIMINI_DATA_STORE
 
     # --- 5. Parse JSON Response ---
     try:
-        parsed_json = json.loads(_CODE_JSON_AGGREGATOR)
+        parsed_json = json.loads(json_aggregator)
         files_to_process = parsed_json.get('files', [])
         if not isinstance(files_to_process, list):
             raise ValueError("'files' key is not a list.")
@@ -238,7 +281,7 @@ def _finalize_code_generation():
         util.new_split()
         vim.command('file Vimini Raw Output')
         vim.command('setlocal buftype=nofile noswapfile')
-        vim.current.buffer[:] = _CODE_JSON_AGGREGATOR.split('\n')
+        vim.current.buffer[:] = json_aggregator.split('\n')
         return
 
     if not files_to_process:
@@ -254,9 +297,9 @@ def _finalize_code_generation():
 
         _VIMINI_DATA_STORE = {
             'files_to_apply': files_to_process,
-            'project_root': _CODE_PROJECT_ROOT
+            'project_root': project_root
         }
-        vim.command(f"let b:vimini_project_root = '{_CODE_PROJECT_ROOT}'")
+        vim.command(f"let b:vimini_project_root = '{project_root}'")
 
         combined_diff_output = []
         for file_op in files_to_process:
@@ -265,7 +308,7 @@ def _finalize_code_generation():
             file_type = file_op.get('file_type', 'text/plain')
             absolute_path = util.get_absolute_path_from_api_path(api_path)
             file_exists = os.path.exists(absolute_path)
-            relative_path = os.path.relpath(absolute_path, _CODE_PROJECT_ROOT)
+            relative_path = os.path.relpath(absolute_path, project_root)
 
             if file_type == 'text/x-diff':
                 if ai_generated_code.strip():

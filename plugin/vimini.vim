@@ -439,35 +439,35 @@ augroup vimini_autocomplete
   autocmd InsertLeave * call s:StopAutocompleteTimer()
 augroup END
 
-" --- Async ViminiCode Timers ---
+" --- Async Job Timers (Generic) ---
 
-let s:code_timer = -1
+let s:job_timer = -1
 
-function! ViminiInternalProcessCodeQueue(timer)
+function! ViminiInternalProcessJobQueue(timer)
   py3 << EOF
 try:
     from vimini import code
-    code.process_code_queue()
+    code.process_queue()
 except Exception:
     pass
 EOF
 endfunction
 
-function! ViminiInternalStartCodeTimer()
-  if s:code_timer != -1
-    call timer_stop(s:code_timer)
+function! ViminiInternalStartJobTimer()
+  if s:job_timer != -1
+    call timer_stop(s:job_timer)
   endif
-  let s:code_timer = timer_start(50, 'ViminiInternalProcessCodeQueue', {'repeat': -1})
+  let s:job_timer = timer_start(50, 'ViminiInternalProcessJobQueue', {'repeat': -1})
 endfunction
 
-function! ViminiInternalStopCodeTimer()
-  if s:code_timer != -1
-    call timer_stop(s:code_timer)
-    let s:code_timer = -1
+function! ViminiInternalStopJobTimer()
+  if s:job_timer != -1
+    call timer_stop(s:job_timer)
+    let s:job_timer = -1
   endif
 endfunction
 
-" --- End Async ViminiCode Timers ---
+" --- End Async Job Timers ---
 
 " Expose ripgrep search functionality
 function! s:ViminiRipGrep(q_args)
