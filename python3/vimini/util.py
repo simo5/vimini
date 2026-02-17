@@ -410,6 +410,8 @@ def _job_worker(client, kwargs, job_id):
 
 def process_queue():
     """Called by Vim timer to process updates from the thread."""
+    status_update = None
+
     while True:
         try:
             job_id, msg_type, data = _JOB_QUEUE.get_nowait()
@@ -421,43 +423,44 @@ def process_queue():
             # Job might have been removed or is stale
             continue
 
-        # Only show status updates for the latest job to avoid message flickering
-        is_latest_job = (job_id == _JOB_COUNTER)
         status_message = callbacks.get('status_message', "Processing...")
+
+        # Prepend Job ID
+        display_status = f"[{job_id}] {status_message}"
 
         if msg_type == 'chunk':
             if 'on_chunk' in callbacks:
                 callbacks['on_chunk'](data)
-            if is_latest_job:
-                display_message(status_message)
+                status_update = (display_status, False)
 
         elif msg_type == 'thought':
             if 'on_thought' in callbacks:
                 callbacks['on_thought'](data)
-            if is_latest_job:
-                display_message(status_message)
+                status_update = (display_status, False)
 
         elif msg_type == 'error':
-            if is_latest_job:
-                display_message("")
+            error_msg = f"[{job_id}] Error: {data}"
+            status_update = (f"[{job_id}] {error_msg}", True)
 
             if 'on_error' in callbacks:
                 callbacks['on_error'](data)
             else:
-                display_message(f"Error (Job {job_id}): {data}", error=True)
+                status_update = (f"[{job_id}] {error_msg}", True)
 
             if job_id in _ACTIVE_JOBS:
                 del _ACTIVE_JOBS[job_id]
 
         elif msg_type == 'finish':
-            if is_latest_job:
-                display_message("")
+            status_update = (f"[{job_id}] Finished.", False)
 
             if 'on_finish' in callbacks:
                 callbacks['on_finish']()
 
             if job_id in _ACTIVE_JOBS:
                 del _ACTIVE_JOBS[job_id]
+
+    if status_update:
+        display_message(status_update[0], error=status_update[1])
 
     # If no more active jobs, stop the timer
     if not _ACTIVE_JOBS:

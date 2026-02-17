@@ -107,18 +107,18 @@ def code(prompt, verbose=False, temperature=None):
 
     # State for the closure
     json_aggregator = ""
-    
+
     def on_chunk(text):
         nonlocal json_aggregator
         json_aggregator += text
-        
+
     def on_thought(text):
         if verbose and thoughts_buffer_num != -1:
             util.append_to_buffer(thoughts_buffer_num, text)
-            
+
     def on_finish():
         _finalize_code_generation(json_aggregator, project_root)
-        
+
     def on_error(msg):
         util.display_message(f"Error: {msg}", error=True)
 
