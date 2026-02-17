@@ -467,3 +467,19 @@ EOF
 endfunction
 
 command! -nargs=0 ViminiRipGrepApply call ViminiRipGrepApply()
+
+" Expose help functionality
+function! ViminiHelp(...)
+  let l:cmd = get(a:, 1, '')
+  py3 << EOF
+try:
+    from vimini import main
+    cmd = vim.eval('l:cmd')
+    main.help(cmd)
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! -nargs=? -complete=command ViminiHelp call ViminiHelp(<f-args>)

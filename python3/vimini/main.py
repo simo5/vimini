@@ -321,3 +321,105 @@ def commit(author=None, temperature=None, regenerate=False, refinement=None):
         util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
+
+def help(command_name=None):
+    """
+    Opens a read-only buffer with descriptions of available commands.
+    If command_name is provided, scrolls to it and highlights it.
+    """
+    util.log_info(f"help(command_name='{command_name}')")
+
+    help_content = [
+        "VIMINI HELP",
+        "===========",
+        "",
+        ":ViminiListModels",
+        "    Lists all available Gemini models in a new split window.",
+        "",
+        ":ViminiChat {prompt}",
+        "    Sends a prompt to the configured Gemini model and displays the response.",
+        "    If no prompt is provided, opens the chat buffer for interactive mode.",
+        "",
+        ":ViminiThinking [on|off]",
+        "    Toggles or sets the display of the AI's real-time thought process.",
+        "",
+        ":ViminiToggleLogging [on|off]",
+        "    Toggles or sets the logging feature to file.",
+        "",
+        ":ViminiCode {prompt}",
+        "    Generates code based on open buffers and context files.",
+        "    Output goes to 'Vimini Diff'. Use :ViminiApply to apply changes.",
+        "",
+        ":ViminiApply",
+        "    Applies changes from 'Vimini Diff' to actual files.",
+        "",
+        ":ViminiContextFiles",
+        "    Opens a file manager to manage files sent as context (g:context_files).",
+        "",
+        ":ViminiReview [-c <git_objects>] [--security] [--save] [{prompt}]",
+        "    Reviews code in current buffer or git objects.",
+        "    -c <ref>: Review changes in git ref.",
+        "    --security: Focus on security.",
+        "    --save: Save reviews to files.",
+        "",
+        ":ViminiDiff",
+        "    Shows 'git diff' output in a buffer.",
+        "",
+        ":ViminiCommit [-n] [-r]",
+        "    Generates a commit message and commits changes.",
+        "    -n: No co-author trailer.",
+        "    -r: Regenerate/Amend HEAD.",
+        "",
+        ":ViminiFiles",
+        "    Manages remote files uploaded to Gemini.",
+        "",
+        ":ViminiToggleAutocomplete [on|off]",
+        "    Toggles real-time ghost-text autocomplete.",
+        "",
+        ":ViminiRipGrep {regex} {prompt}",
+        "    Search with ripgrep and modify results with AI.",
+        "",
+        ":ViminiRipGrepApply",
+        "    Apply changes from ViminiRipGrep buffer.",
+        "",
+        ":ViminiHelp [command]",
+        "    Shows this help. Optionally jumps to [command].",
+    ]
+
+    # Find or create buffer
+    buf_name = "Vimini Help"
+    win_nr = vim.eval(f"bufwinnr('^{buf_name}$')")
+
+    if int(win_nr) > 0:
+        vim.command(f"{win_nr}wincmd w")
+    else:
+        util.new_split()
+        vim.command(f'file {buf_name}')
+        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+
+    # Update content
+    vim.command('setlocal modifiable')
+    vim.current.buffer[:] = help_content
+    vim.command('setlocal nomodifiable')
+    
+    # Highlight handling
+    vim.command("try | call clearmatches() | catch | endtry")
+    
+    if command_name:
+        target = command_name.lstrip(':')
+        # Find the line starting with :Target
+        found_line = -1
+        search_prefix = f":{target}"
+        
+        for i, line in enumerate(help_content):
+            if line.strip().startswith(search_prefix):
+                found_line = i + 1
+                break
+        
+        if found_line != -1:
+            vim.command(f"normal! {found_line}Gzz")
+            # Highlight the command name
+            pattern = search_prefix.replace("'", "''")
+            vim.command(f"call matchadd('Search', '{pattern}')")
+        else:
+             util.display_message(f"Command :{target} not found in help.", history=True)
