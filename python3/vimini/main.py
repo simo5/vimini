@@ -119,7 +119,8 @@ def commit(author=None, temperature=None, regenerate=False, refinement=None):
                     if (basename.startswith('.') or
                         basename.endswith('~') or
                         basename.endswith('.swp') or
-                        basename.endswith('.swo')):
+                        basename.endswith('.swo') or
+                        basename.endswith('.review.txt')):
                         continue
 
                     files_to_add.append(path)
@@ -401,21 +402,21 @@ def help(command_name=None):
     vim.command('setlocal modifiable')
     vim.current.buffer[:] = help_content
     vim.command('setlocal nomodifiable')
-    
+
     # Highlight handling
     vim.command("try | call clearmatches() | catch | endtry")
-    
+
     if command_name:
         target = command_name.lstrip(':')
         # Find the line starting with :Target
         found_line = -1
         search_prefix = f":{target}"
-        
+
         for i, line in enumerate(help_content):
             if line.strip().startswith(search_prefix):
                 found_line = i + 1
                 break
-        
+
         if found_line != -1:
             vim.command(f"normal! {found_line}Gzz")
             # Highlight the command name
