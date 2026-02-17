@@ -513,3 +513,43 @@ EOF
 endfunction
 
 command! -nargs=? -complete=command ViminiHelp call ViminiHelp(<f-args>)
+
+" --- Status Monitor ---
+
+function! ViminiStatus()
+  py3 << EOF
+try:
+    from vimini import main
+    main.status_command()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+command! ViminiStatus call ViminiStatus()
+
+let s:status_timer = -1
+
+function! ViminiInternalUpdateStatus(timer)
+  py3 << EOF
+try:
+    from vimini import util
+    util.update_status_buffer()
+except Exception:
+    pass
+EOF
+endfunction
+
+function! ViminiInternalStartStatusTimer()
+  if s:status_timer == -1
+    let s:status_timer = timer_start(1000, 'ViminiInternalUpdateStatus', {'repeat': -1})
+  endif
+endfunction
+
+function! ViminiInternalStopStatusTimer()
+  if s:status_timer != -1
+    call timer_stop(s:status_timer)
+    let s:status_timer = -1
+  endif
+endfunction

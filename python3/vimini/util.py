@@ -13,6 +13,8 @@ _REPO_NAME_CACHE = None # Cache for the git repository directory name.
 _REPO_ROOT_CACHE = None # Cache for the git repository root path.
 _LOGGER = None
 
+_STATUS_BUFFER_NAME = "Vimini Status"
+
 # --- Async Job Management ---
 _JOB_QUEUE = queue.Queue()
 _JOB_COUNTER = 0
@@ -535,3 +537,83 @@ def append_to_buffer(buffer_number, text):
             # vim.command("redraw") # Redraw handled by display_message usually
     except Exception:
         pass
+
+def show_status():
+    log_info("show_status()")
+    # Find buffer
+    buf = None
+    target_name = _STATUS_BUFFER_NAME
+    
+    # Iterate buffers to find by name
+    for b in vim.buffers:
+        # b.name is full path. We check basename.
+        if b.name and os.path.basename(b.name) == target_name:
+            buf = b
+            break
+            
+    if buf:
+        # Check if visible in current tab
+        win_nr = int(vim.eval(f"bufwinnr({buf.number})"))
+        if win_nr != -1:
+            vim.command(f"{win_nr}wincmd w")
+        else:
+            # If hidden or in another tab, we split in current tab
+            new_split()
+            vim.command(f"buffer {buf.number}")
+    else:
+        new_split()
+        safe_name = target_name.replace(' ', '\\ ')
+        vim.command(f"file {safe_name}")
+        vim.command("setlocal buftype=nofile")
+        vim.command("setlocal bufhidden=hide")
+        vim.command("setlocal noswapfile")
+        vim.command("setlocal filetype=text")
+        # Add autocmd to restart timer when window is re-entered
+        vim.command("autocmd BufWinEnter <buffer> call ViminiInternalStartStatusTimer()")
+        buf = vim.current.buffer
+
+    update_status_buffer()
+    vim.command("call ViminiInternalStartStatusTimer()")
+
+def update_status_buffer():
+    # Find buffer
+    buf = None
+    target_name = _STATUS_BUFFER_NAME
+    for b in vim.buffers:
+        if b.name and os.path.basename(b.name) == target_name:
+            buf = b
+            break
+            
+    if not buf:
+        vim.command("call ViminiInternalStopStatusTimer()")
+        return
+        
+    # Check visibility
+    win_nr = int(vim.eval(f"bufwinnr({buf.number})"))
+    if win_nr == -1:
+        # If not visible in current tab, do not update, but keep timer running
+        # so it updates when we switch back to the tab with status window.
+        return
+        
+    lines = [
+        f"{_STATUS_BUFFER_NAME}",
+        "===========================",
+        ""
+    ]
+    
+    if not _ACTIVE_JOBS:
+        lines.append("No active jobs.")
+    else:
+        for job_id, callbacks in _ACTIVE_JOBS.items():
+            status = callbacks.get('status_message', 'Running...')
+            lines.append(f"Job ID: {job_id}")
+            lines.append(f"Status: {status}")
+            lines.append("-" * 20)
+
+    # Update content safely
+    vim.command(f"call setbufvar({buf.number}, '&modifiable', 1)")
+    try:
+        # Replacing buffer content
+        buf[:] = lines
+    finally:
+        vim.command(f"call setbufvar({buf.number}, '&modifiable', 0)")

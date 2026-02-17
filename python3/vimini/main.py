@@ -384,6 +384,9 @@ def help(command_name=None):
         ":ViminiRipGrepApply",
         "    Apply changes from ViminiRipGrep buffer.",
         "",
+        ":ViminiStatus",
+        "    Shows a read-only window with all currently active jobs.",
+        "",
         ":ViminiHelp [command]",
         "    Shows this help. Optionally jumps to [command].",
     ]
@@ -425,3 +428,6 @@ def help(command_name=None):
             vim.command(f"call matchadd('Search', '{pattern}')")
         else:
              util.display_message(f"Command :{target} not found in help.", history=True)
+
+def status_command():
+    util.show_status()
