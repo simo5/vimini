@@ -43,55 +43,6 @@ def _construct_review_prompt(uploaded_files, prompt, content_source_description,
     )
     return prompt_text
 
-def _generate_review_sync(client, review_content, uploaded_files, prompt, content_source_description, security_focus, verbose, temperature, review_buffer, thoughts_buffer):
-    """
-    Generates the review synchronously (blocking), writing to buffers as it goes.
-    Used for the batch --save mode.
-    """
-    prompt_template = _construct_review_prompt(uploaded_files, prompt, content_source_description, security_focus)
-    prompt_text = prompt_template.replace("{{REVIEW_CONTENT}}", review_content)
-    full_prompt = [prompt_text, *uploaded_files]
-
-    util.display_message("Processing...")
-
-    kwargs = util.create_generation_kwargs(
-        contents=full_prompt,
-        temperature=temperature,
-        verbose=verbose
-    )
-
-    try:
-        response_stream = client.models.generate_content_stream(**kwargs)
-
-        for chunk in response_stream:
-            if not chunk.candidates:
-                continue
-            
-            candidate = chunk.candidates[0]
-            if not candidate.content or not candidate.content.parts:
-                continue
-
-            for part in candidate.content.parts:
-                if hasattr(part, 'thought_signature') and part.thought_signature:
-                    continue
-
-                if not part.text:
-                    continue
-
-                is_thought = hasattr(part, 'thought') and part.thought
-                if is_thought and not verbose:
-                    continue
-
-                target_buffer = thoughts_buffer if is_thought else review_buffer
-                if target_buffer:
-                     code.append_to_buffer(target_buffer.number, part.text)
-
-                util.display_message("Processing...")
-    except Exception as e:
-        util.display_message(f"Error generating review: {e}", error=True)
-
-    util.display_message("")
-
 def review(prompt, git_objects=None, security_focus=False, verbose=False, temperature=None, save=False):
     """
     Sends content to the Gemini API for a code review.
@@ -122,35 +73,31 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                 util.display_message(f"No commits found for range '{git_objects}'.", history=True)
                 return
 
-            # Create buffers once
-            thoughts_buffer = None
-            if verbose:
-                util.new_split()
-                vim.command('file Vimini Thoughts')
-                vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-                thoughts_buffer = vim.current.buffer
-            util.new_split()
-            vim.command('file Vimini Review')
-            vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-            review_buffer = vim.current.buffer
-
             total_commits = len(commit_list)
-            for i, commit_sha in enumerate(commit_list):
-                patch_num = i + 1
-                util.display_message(f"Reviewing commit {patch_num}/{total_commits}: {commit_sha[:7]}...")
+            current_review_accumulator = []
 
-                # Clear buffers
-                if thoughts_buffer:
-                    thoughts_buffer[:] = ['']
-                review_buffer[:] = ['']
+            def process_batch_commit(index):
+                nonlocal current_review_accumulator
+                if index >= total_commits:
+                    util.display_message("All reviews completed and saved.", history=True)
+                    return
 
-                # Get content
+                commit_sha = commit_list[index]
+                patch_num = index + 1
+                status_msg = f"Reviewing commit {patch_num}/{total_commits}: {commit_sha[:7]}... (Async)"
+                util.display_message(status_msg)
+
+                # Reset accumulator
+                current_review_accumulator = []
+
+                # Get content (Synchronous for now to setup the prompt)
                 cmd_show = ['git', '-C', repo_path, 'show', commit_sha]
                 result_show = subprocess.run(cmd_show, capture_output=True, text=True, check=False)
                 if result_show.returncode != 0:
                     error_message = (result_show.stderr or "git show failed.").strip()
                     util.display_message(f"Skipping {commit_sha[:7]}: {error_message}", error=True, history=True)
-                    continue
+                    process_batch_commit(index + 1)
+                    return
                 review_content_single = result_show.stdout
 
                 # Get context
@@ -163,33 +110,59 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                         context_files_to_upload = [os.path.join(repo_path, rel_path) for rel_path in changed_files_relative]
                         uploaded_files_single = context.upload_context_files(client, file_paths_to_include=context_files_to_upload) or []
 
-                # Generate Synchronously
-                _generate_review_sync(
-                    client, review_content_single, uploaded_files_single, prompt,
+                # Generate Prompt
+                prompt_template = _construct_review_prompt(
+                    uploaded_files_single, prompt,
                     f"the output of `git show {commit_sha[:7]}`",
-                    security_focus, verbose, temperature, review_buffer, thoughts_buffer
+                    security_focus
+                )
+                prompt_text = prompt_template.replace("{{REVIEW_CONTENT}}", review_content_single)
+                full_prompt = [prompt_text, *uploaded_files_single]
+
+                def on_chunk(text):
+                    current_review_accumulator.append(text)
+
+                def on_finish():
+                    # Save
+                    try:
+                        subject_cmd = ['git', '-C', repo_path, 'log', '-1', '--pretty=%s', commit_sha]
+                        subject_result = subprocess.run(subject_cmd, capture_output=True, text=True, check=False)
+                        subject = subject_result.stdout.strip() if subject_result.returncode == 0 else "commit"
+
+                        sanitized_subject = re.sub(r'[^a-zA-Z0-9]+', '-', subject).strip('-').lower()
+                        sanitized_subject = sanitized_subject[:50]
+
+                        filename = f"{patch_num:04d}-{sanitized_subject}.review.txt"
+                        filepath = os.path.join(repo_path, filename)
+
+                        content = "".join(current_review_accumulator)
+                        with open(filepath, "w", encoding='utf-8') as f:
+                            f.write(content)
+                        util.display_message(f"Saved review to {filename}")
+                    except Exception as e:
+                        util.display_message(f"Error saving {filename}: {e}", error=True)
+
+                    # Trigger next commit review
+                    process_batch_commit(index + 1)
+
+                def on_error(msg):
+                    util.display_message(f"Error reviewing {commit_sha[:7]}: {msg}", error=True)
+                    process_batch_commit(index + 1)
+
+                kwargs = util.create_generation_kwargs(
+                    contents=full_prompt,
+                    temperature=temperature,
+                    verbose=verbose
                 )
 
-                # Save
-                subject_cmd = ['git', '-C', repo_path, 'log', '-1', '--pretty=%s', commit_sha]
-                subject_result = subprocess.run(subject_cmd, capture_output=True, text=True, check=True)
-                subject = subject_result.stdout.strip()
+                code.start_async_job(client, kwargs, {
+                    'on_chunk': on_chunk,
+                    'on_finish': on_finish,
+                    'on_error': on_error,
+                    'status_message': status_msg
+                })
 
-                sanitized_subject = re.sub(r'[^a-zA-Z0-9]+', '-', subject).strip('-').lower()
-                sanitized_subject = sanitized_subject[:50]
-
-                filename = f"{patch_num:04d}-{sanitized_subject}.review.txt"
-                filepath = os.path.join(repo_path, filename)
-
-                content = "\n".join(review_buffer[:])
-                try:
-                    with open(filepath, "w", encoding='utf-8') as f:
-                        f.write(content)
-                    util.display_message(f"Saved review to {filename}", history=True)
-                except IOError as e:
-                    util.display_message(f"Error saving file {filename}: {e}", error=True, history=True)
-
-            util.display_message("All reviews completed and saved.", history=True)
+            process_batch_commit(0)
             return
 
         # --- INTERACTIVE MODE (ASYNC) ---
@@ -254,7 +227,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             thoughts_buffer[:] = ['']
 
         util.new_split()
-            vim.command('file Vimini Review')
+        vim.command('file Vimini Review')
         vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
         review_buffer = vim.current.buffer
         review_buffer[:] = ['']

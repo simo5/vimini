@@ -23,6 +23,7 @@ def start_async_job(client, kwargs, callbacks):
                    'on_thought': func(text)
                    'on_finish': func()
                    'on_error': func(error_message)
+                   'status_message': str (optional custom status message)
     """
     global _CURRENT_JOB_ID, _CALLBACKS
 
@@ -84,15 +85,17 @@ def process_queue():
         if job_id != _CURRENT_JOB_ID:
             continue
 
+        status_message = _CALLBACKS.get('status_message', "Processing...")
+
         if msg_type == 'chunk':
             if 'on_chunk' in _CALLBACKS:
                 _CALLBACKS['on_chunk'](data)
-            util.display_message("Processing...")
+            util.display_message(status_message)
 
         elif msg_type == 'thought':
             if 'on_thought' in _CALLBACKS:
                 _CALLBACKS['on_thought'](data)
-            util.display_message("Processing...")
+            util.display_message(status_message)
 
         elif msg_type == 'error':
             util.display_message("")
