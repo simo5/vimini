@@ -1,15 +1,15 @@
 import vim
-import os, json, subprocess, tempfile, threading, queue
+import os, json, subprocess, tempfile, threading, queue, time
 from google.genai import types
 from vimini import util, context
 
-# Global data store to exchange data between python calls without using vim variables for large data.
-_VIMINI_DATA_STORE = {}
+# Global data store keyed by buffer number to exchange data between python calls.
+_BUFFER_DATA_STORE = {}
 
 # Async Job Management
 _JOB_QUEUE = queue.Queue()
-_CURRENT_JOB_ID = 0
-_CALLBACKS = {}
+_JOB_COUNTER = 0
+_ACTIVE_JOBS = {}
 
 def start_async_job(client, kwargs, callbacks):
     """
@@ -25,16 +25,14 @@ def start_async_job(client, kwargs, callbacks):
                    'on_error': func(error_message)
                    'status_message': str (optional custom status message)
     """
-    global _CURRENT_JOB_ID, _CALLBACKS
+    global _JOB_COUNTER, _ACTIVE_JOBS
 
-    # Increment Job ID to invalidate previous threads' output
-    _CURRENT_JOB_ID += 1
-    job_id = _CURRENT_JOB_ID
-    _CALLBACKS = callbacks
+    # Increment Job Counter for unique ID
+    _JOB_COUNTER += 1
+    job_id = _JOB_COUNTER
+    _ACTIVE_JOBS[job_id] = callbacks
 
-    # Clear any pending items from previous jobs
-    with _JOB_QUEUE.mutex:
-        _JOB_QUEUE.queue.clear()
+    # Note: We do NOT clear _JOB_QUEUE here, to allow concurrent jobs.
 
     thread = threading.Thread(
         target=_job_worker,
@@ -82,35 +80,52 @@ def process_queue():
         except queue.Empty:
             break
 
-        if job_id != _CURRENT_JOB_ID:
+        callbacks = _ACTIVE_JOBS.get(job_id)
+        if not callbacks:
+            # Job might have been removed or is stale
             continue
 
-        status_message = _CALLBACKS.get('status_message', "Processing...")
+        # Only show status updates for the latest job to avoid message flickering
+        is_latest_job = (job_id == _JOB_COUNTER)
+        status_message = callbacks.get('status_message', "Processing...")
 
         if msg_type == 'chunk':
-            if 'on_chunk' in _CALLBACKS:
-                _CALLBACKS['on_chunk'](data)
-            util.display_message(status_message)
+            if 'on_chunk' in callbacks:
+                callbacks['on_chunk'](data)
+            if is_latest_job:
+                util.display_message(status_message)
 
         elif msg_type == 'thought':
-            if 'on_thought' in _CALLBACKS:
-                _CALLBACKS['on_thought'](data)
-            util.display_message(status_message)
+            if 'on_thought' in callbacks:
+                callbacks['on_thought'](data)
+            if is_latest_job:
+                util.display_message(status_message)
 
         elif msg_type == 'error':
-            util.display_message("")
-            vim.command("call ViminiInternalStopJobTimer()")
-            if 'on_error' in _CALLBACKS:
-                _CALLBACKS['on_error'](data)
+            if is_latest_job:
+                util.display_message("")
+            
+            if 'on_error' in callbacks:
+                callbacks['on_error'](data)
             else:
-                util.display_message(f"Error during API call: {data}", error=True)
+                util.display_message(f"Error (Job {job_id}): {data}", error=True)
+            
+            if job_id in _ACTIVE_JOBS:
+                del _ACTIVE_JOBS[job_id]
 
         elif msg_type == 'finish':
-            util.display_message("")
-            vim.command("call ViminiInternalStopJobTimer()")
-            if 'on_finish' in _CALLBACKS:
-                _CALLBACKS['on_finish']()
-            return # Process one finish per timer tick usually sufficient
+            if is_latest_job:
+                util.display_message("")
+            
+            if 'on_finish' in callbacks:
+                callbacks['on_finish']()
+            
+            if job_id in _ACTIVE_JOBS:
+                del _ACTIVE_JOBS[job_id]
+
+    # If no more active jobs, stop the timer
+    if not _ACTIVE_JOBS:
+        vim.command("call ViminiInternalStopJobTimer()")
 
 def append_to_buffer(buffer_number, text):
     """Helper to append text to a buffer without switching windows if possible."""
@@ -228,7 +243,10 @@ def code(prompt, verbose=False, temperature=None):
     if verbose:
         try:
             util.new_split()
-            vim.command('file Vimini Thoughts')
+            # Unique name for concurrent thoughts buffers
+            import time
+            ts = int(time.time() * 1000) % 10000
+            vim.command(f'file Vimini Thoughts {ts}')
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
             thoughts_buffer = vim.current.buffer
             thoughts_buffer[:] = ['']
@@ -274,7 +292,7 @@ def code(prompt, verbose=False, temperature=None):
 
 def _finalize_code_generation(json_aggregator, project_root):
     """Parses accumulated JSON and generates diff."""
-    global _VIMINI_DATA_STORE
+    global _BUFFER_DATA_STORE
 
     # --- 5. Parse JSON Response ---
     try:
@@ -297,11 +315,15 @@ def _finalize_code_generation(json_aggregator, project_root):
     # --- 6. Generate and Display Diff ---
     try:
         util.new_split()
-        vim.command('file Vimini Diff')
+        # Unique buffer name to allow concurrent diffs
+        import time
+        suffix = int(time.time() * 1000) % 100000
+        vim.command(f'file Vimini Diff {suffix}')
         vim.command('setlocal buftype=nofile filetype=diff noswapfile')
         diff_buffer = vim.current.buffer
 
-        _VIMINI_DATA_STORE = {
+        # Store data keyed by buffer number so concurrent jobs don't overwrite each other
+        _BUFFER_DATA_STORE[diff_buffer.number] = {
             'files_to_apply': files_to_process,
             'project_root': project_root
         }
@@ -419,21 +441,32 @@ def apply_code():
     disk, and reloads any affected open buffers. If an error occurs, the
     diff buffer is preserved for manual editing and re-application.
     """
-    global _VIMINI_DATA_STORE
+    global _BUFFER_DATA_STORE
     util.log_info("apply_code()")
     diff_buffer = None
     thoughts_buffer = None
+    
+    # Try to find a Vimini Diff buffer.
+    # Prefer the current buffer if it is a diff buffer
+    current_buf = vim.current.buffer
+    if current_buf.name and 'Vimini Diff' in os.path.basename(current_buf.name):
+        diff_buffer = current_buf
+    else:
+        # Otherwise search for the last one created (highest buffer number usually)
+        for buf in vim.buffers:
+            if buf.name and 'Vimini Diff' in os.path.basename(buf.name):
+                diff_buffer = buf
+
+    # Find a thoughts buffer to close
     for buf in vim.buffers:
-        if buf.name and buf.name.endswith('Vimini Diff'):
-            diff_buffer = buf
-        elif buf.name and buf.name.endswith('Vimini Thoughts'):
+        if buf.name and 'Vimini Thoughts' in os.path.basename(buf.name):
             thoughts_buffer = buf
 
     if not diff_buffer:
         util.display_message("`Vimini Diff` buffer not found. Was :ViminiCode run?", error=True)
         return
 
-    stored_data = _VIMINI_DATA_STORE if _VIMINI_DATA_STORE else None
+    stored_data = _BUFFER_DATA_STORE.get(diff_buffer.number)
 
     if stored_data:
         # Initial apply from AI response data.
@@ -496,7 +529,9 @@ def apply_code():
                 util.display_message("Errors occurred. Diff buffer is preserved for manual review and re-application.", error=True)
                 return
 
-            _VIMINI_DATA_STORE = {}
+            # Clean up stored data for this buffer
+            if diff_buffer.number in _BUFFER_DATA_STORE:
+                del _BUFFER_DATA_STORE[diff_buffer.number]
 
             # Success
             if modified_files:
@@ -508,7 +543,7 @@ def apply_code():
 
         except Exception as e:
             util.display_message(f"An unexpected error occurred during apply: {e}", error=True)
-            _VIMINI_DATA_STORE = {}
+            # Don't delete data on error so user can retry
         return
 
     # Re-apply from buffer content.
