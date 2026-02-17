@@ -155,12 +155,14 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                     verbose=verbose
                 )
 
+                job_name = f"Review: {commit_sha[:7]} {prompt}"
+
                 util.start_async_job(client, kwargs, {
                     'on_chunk': on_chunk,
                     'on_finish': on_finish,
                     'on_error': on_error,
                     'status_message': status_msg
-                })
+                }, job_name=job_name)
 
             process_batch_commit(0)
             return
@@ -218,7 +220,8 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             util.display_message("Nothing to review.", history=True)
             return
 
-        job_id = util.reserve_next_job_id()
+        job_name = f"Review: {git_objects if git_objects else 'current buffer'} {prompt}"
+        job_id = util.reserve_next_job_id(job_name)
 
         thoughts_buf_num = -1
         if verbose:

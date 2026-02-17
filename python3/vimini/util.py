@@ -19,6 +19,7 @@ _STATUS_BUFFER_NAME = "Vimini Status"
 _JOB_QUEUE = queue.Queue()
 _JOB_COUNTER = 0
 _ACTIVE_JOBS = {}
+_JOB_NAMES = {}
 
 def get_client():
     """
@@ -349,15 +350,16 @@ def set_logging(log_file=None):
         _LOGGER = logger
         display_message(f"Failed to initialize log file '{log_file}': {e}", error=True)
 
-def reserve_next_job_id():
+def reserve_next_job_id(job_name="Unknown"):
     """
     Reserves and returns the next available job ID.
     """
-    global _JOB_COUNTER
+    global _JOB_COUNTER, _JOB_NAMES
     _JOB_COUNTER += 1
+    _JOB_NAMES[_JOB_COUNTER] = job_name
     return _JOB_COUNTER
 
-def start_async_job(client, kwargs, callbacks, job_id=None):
+def start_async_job(client, kwargs, callbacks, job_id=None, job_name="Unknown"):
     """
     Starts an asynchronous job to call the Gemini API.
 
@@ -371,13 +373,13 @@ def start_async_job(client, kwargs, callbacks, job_id=None):
                    'on_error': func(error_message)
                    'status_message': str (optional custom status message)
         job_id (int, optional): The job ID to use. If None, a new one is reserved.
+        job_name (str, optional): The name of the job. Used if job_id is None.
     """
     global _JOB_COUNTER, _ACTIVE_JOBS
 
     if job_id is None:
         # Increment Job Counter for unique ID
-        _JOB_COUNTER += 1
-        job_id = _JOB_COUNTER
+        job_id = reserve_next_job_id(job_name)
 
     _ACTIVE_JOBS[job_id] = callbacks
 
@@ -462,6 +464,8 @@ def process_queue():
 
             if job_id in _ACTIVE_JOBS:
                 del _ACTIVE_JOBS[job_id]
+            if job_id in _JOB_NAMES:
+                del _JOB_NAMES[job_id]
 
         elif msg_type == 'finish':
             status_update = (f"[{job_id}] Finished.", False)
@@ -471,6 +475,8 @@ def process_queue():
 
             if job_id in _ACTIVE_JOBS:
                 del _ACTIVE_JOBS[job_id]
+            if job_id in _JOB_NAMES:
+                del _JOB_NAMES[job_id]
 
     if status_update:
         display_message(status_update[0], error=status_update[1])
@@ -606,7 +612,9 @@ def update_status_buffer():
     else:
         for job_id, callbacks in _ACTIVE_JOBS.items():
             status = callbacks.get('status_message', 'Running...')
+            job_name = _JOB_NAMES.get(job_id, "Unknown")
             lines.append(f"Job ID: {job_id}")
+            lines.append(f"Name: {job_name}")
             lines.append(f"Status: {status}")
             lines.append("-" * 20)
 

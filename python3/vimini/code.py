@@ -85,7 +85,8 @@ def code(prompt, verbose=False, temperature=None):
         *uploaded_files
     ]
 
-    job_id = util.reserve_next_job_id()
+    job_name = f"Code: {prompt}"
+    job_id = util.reserve_next_job_id(job_name)
 
     # --- 3. Set up Thoughts Buffer (if verbose) ---
     thoughts_buffer_num = -1
@@ -286,7 +287,7 @@ def apply_code():
     diff_buffer = None
     thoughts_buffer = None
     job_id = None
-    
+
     # Try to find a Vimini Diff buffer.
     # Prefer the current buffer if it is a diff buffer
     current_buf = vim.current.buffer
@@ -314,7 +315,7 @@ def apply_code():
             job_id = int(job_id_var)
     except:
         pass
-    
+
     # Fallback: extract from buffer name
     if job_id is None and diff_buffer.name:
         try:
