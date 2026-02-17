@@ -1,163 +1,10 @@
 import vim
-import os, json, subprocess, tempfile, threading, queue, time
+import os, json, subprocess, tempfile
 from google.genai import types
 from vimini import util, context
 
 # Global data store keyed by buffer number to exchange data between python calls.
 _BUFFER_DATA_STORE = {}
-
-# Async Job Management
-_JOB_QUEUE = queue.Queue()
-_JOB_COUNTER = 0
-_ACTIVE_JOBS = {}
-
-def start_async_job(client, kwargs, callbacks):
-    """
-    Starts an asynchronous job to call the Gemini API.
-
-    Args:
-        client: The genai.Client instance.
-        kwargs: The keyword arguments for generate_content_stream.
-        callbacks: A dict containing optional callbacks:
-                   'on_chunk': func(text)
-                   'on_thought': func(text)
-                   'on_finish': func()
-                   'on_error': func(error_message)
-                   'status_message': str (optional custom status message)
-    """
-    global _JOB_COUNTER, _ACTIVE_JOBS
-
-    # Increment Job Counter for unique ID
-    _JOB_COUNTER += 1
-    job_id = _JOB_COUNTER
-    _ACTIVE_JOBS[job_id] = callbacks
-
-    # Note: We do NOT clear _JOB_QUEUE here, to allow concurrent jobs.
-
-    thread = threading.Thread(
-        target=_job_worker,
-        args=(client, kwargs, job_id),
-        daemon=True
-    )
-    thread.start()
-
-    # Start the timer in Vim to poll the queue
-    vim.command("call ViminiInternalStartJobTimer()")
-
-def _job_worker(client, kwargs, job_id):
-    try:
-        response_stream = client.models.generate_content_stream(**kwargs)
-        for chunk in response_stream:
-            if not chunk.candidates:
-                continue
-            # Handle cases where content is blocked or empty
-            try:
-                candidate = chunk.candidates[0]
-                if not candidate.content or not candidate.content.parts:
-                    continue
-                for part in candidate.content.parts:
-                    if hasattr(part, 'thought_signature') and part.thought_signature:
-                        continue
-
-                    if not part.text:
-                        continue
-
-                    is_thought = hasattr(part, 'thought') and part.thought
-                    msg_type = 'thought' if is_thought else 'chunk'
-                    _JOB_QUEUE.put((job_id, msg_type, part.text))
-            except Exception:
-                pass # Skip problematic chunks
-
-        _JOB_QUEUE.put((job_id, 'finish', None))
-    except Exception as e:
-        _JOB_QUEUE.put((job_id, 'error', str(e)))
-
-def process_queue():
-    """Called by Vim timer to process updates from the thread."""
-    while True:
-        try:
-            job_id, msg_type, data = _JOB_QUEUE.get_nowait()
-        except queue.Empty:
-            break
-
-        callbacks = _ACTIVE_JOBS.get(job_id)
-        if not callbacks:
-            # Job might have been removed or is stale
-            continue
-
-        # Only show status updates for the latest job to avoid message flickering
-        is_latest_job = (job_id == _JOB_COUNTER)
-        status_message = callbacks.get('status_message', "Processing...")
-
-        if msg_type == 'chunk':
-            if 'on_chunk' in callbacks:
-                callbacks['on_chunk'](data)
-            if is_latest_job:
-                util.display_message(status_message)
-
-        elif msg_type == 'thought':
-            if 'on_thought' in callbacks:
-                callbacks['on_thought'](data)
-            if is_latest_job:
-                util.display_message(status_message)
-
-        elif msg_type == 'error':
-            if is_latest_job:
-                util.display_message("")
-            
-            if 'on_error' in callbacks:
-                callbacks['on_error'](data)
-            else:
-                util.display_message(f"Error (Job {job_id}): {data}", error=True)
-            
-            if job_id in _ACTIVE_JOBS:
-                del _ACTIVE_JOBS[job_id]
-
-        elif msg_type == 'finish':
-            if is_latest_job:
-                util.display_message("")
-            
-            if 'on_finish' in callbacks:
-                callbacks['on_finish']()
-            
-            if job_id in _ACTIVE_JOBS:
-                del _ACTIVE_JOBS[job_id]
-
-    # If no more active jobs, stop the timer
-    if not _ACTIVE_JOBS:
-        vim.command("call ViminiInternalStopJobTimer()")
-
-def append_to_buffer(buffer_number, text):
-    """Helper to append text to a buffer without switching windows if possible."""
-    if buffer_number == -1: return
-
-    buf = None
-    for b in vim.buffers:
-        if b.number == buffer_number:
-            buf = b
-            break
-    if not buf: return
-
-    try:
-        # Split text by newlines
-        lines = text.split('\n')
-
-        # Append to the last line
-        if len(buf) > 0:
-            buf[-1] += lines[0]
-        else:
-            buf[:] = [lines[0]]
-
-        # Append remaining lines
-        if len(lines) > 1:
-            buf.append(lines[1:])
-
-        # If the buffer is in the current window, scroll to bottom
-        if vim.current.buffer.number == buffer_number:
-            vim.command("normal! G")
-            # vim.command("redraw") # Redraw handled by display_message usually
-    except Exception:
-        pass
 
 def code(prompt, verbose=False, temperature=None):
     """
@@ -267,7 +114,7 @@ def code(prompt, verbose=False, temperature=None):
         
     def on_thought(text):
         if verbose and thoughts_buffer_num != -1:
-            append_to_buffer(thoughts_buffer_num, text)
+            util.append_to_buffer(thoughts_buffer_num, text)
             
     def on_finish():
         _finalize_code_generation(json_aggregator, project_root)
@@ -283,7 +130,7 @@ def code(prompt, verbose=False, temperature=None):
         response_schema=multi_file_output_schema
     )
 
-    start_async_job(client, kwargs, {
+    util.start_async_job(client, kwargs, {
         'on_chunk': on_chunk,
         'on_thought': on_thought,
         'on_finish': on_finish,

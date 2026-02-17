@@ -155,7 +155,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                     verbose=verbose
                 )
 
-                code.start_async_job(client, kwargs, {
+                util.start_async_job(client, kwargs, {
                     'on_chunk': on_chunk,
                     'on_finish': on_finish,
                     'on_error': on_error,
@@ -247,17 +247,17 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
         thoughts_buf_num = thoughts_buffer.number if thoughts_buffer else -1
 
         def on_chunk(text):
-            code.append_to_buffer(review_buf_num, text)
+            util.append_to_buffer(review_buf_num, text)
 
         def on_thought(text):
             if verbose and thoughts_buf_num != -1:
-                code.append_to_buffer(thoughts_buf_num, text)
+                util.append_to_buffer(thoughts_buf_num, text)
 
         def on_error(msg):
             util.display_message(f"Error: {msg}", error=True)
 
         util.display_message("Processing... (Async)")
-        code.start_async_job(client, kwargs, {
+        util.start_async_job(client, kwargs, {
             'on_chunk': on_chunk,
             'on_thought': on_thought,
             'on_error': on_error
