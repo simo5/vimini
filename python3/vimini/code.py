@@ -57,6 +57,9 @@ def _job_worker(client, kwargs, job_id):
                 if not candidate.content or not candidate.content.parts:
                     continue
                 for part in candidate.content.parts:
+                    if hasattr(part, 'thought_signature') and part.thought_signature:
+                        continue
+
                     if not part.text:
                         continue
 

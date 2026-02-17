@@ -66,7 +66,15 @@ def _generate_review_sync(client, review_content, uploaded_files, prompt, conten
         for chunk in response_stream:
             if not chunk.candidates:
                 continue
-            for part in chunk.candidates[0].content.parts:
+            
+            candidate = chunk.candidates[0]
+            if not candidate.content or not candidate.content.parts:
+                continue
+
+            for part in candidate.content.parts:
+                if hasattr(part, 'thought_signature') and part.thought_signature:
+                    continue
+
                 if not part.text:
                     continue
 
@@ -246,7 +254,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             thoughts_buffer[:] = ['']
 
         util.new_split()
-        vim.command('file Vimini Review')
+            vim.command('file Vimini Review')
         vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
         review_buffer = vim.current.buffer
         review_buffer[:] = ['']
