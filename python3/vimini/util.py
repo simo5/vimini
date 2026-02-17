@@ -543,14 +543,14 @@ def show_status():
     # Find buffer
     buf = None
     target_name = _STATUS_BUFFER_NAME
-    
+
     # Iterate buffers to find by name
     for b in vim.buffers:
         # b.name is full path. We check basename.
         if b.name and os.path.basename(b.name) == target_name:
             buf = b
             break
-            
+
     if buf:
         # Check if visible in current tab
         win_nr = int(vim.eval(f"bufwinnr({buf.number})"))
@@ -583,24 +583,24 @@ def update_status_buffer():
         if b.name and os.path.basename(b.name) == target_name:
             buf = b
             break
-            
+
     if not buf:
         vim.command("call ViminiInternalStopStatusTimer()")
         return
-        
+
     # Check visibility
     win_nr = int(vim.eval(f"bufwinnr({buf.number})"))
     if win_nr == -1:
         # If not visible in current tab, do not update, but keep timer running
         # so it updates when we switch back to the tab with status window.
         return
-        
+
     lines = [
         f"{_STATUS_BUFFER_NAME}",
         "===========================",
         ""
     ]
-    
+
     if not _ACTIVE_JOBS:
         lines.append("No active jobs.")
     else:

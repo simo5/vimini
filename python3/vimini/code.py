@@ -110,7 +110,7 @@ def code(prompt, verbose=False, temperature=None):
             util.append_to_buffer(thoughts_buffer_num, text)
 
     def on_finish():
-        _finalize_code_generation(json_aggregator, project_root)
+        _finalize_code_generation(json_aggregator, project_root, job_id)
 
     def on_error(msg):
         util.display_message(f"Error: {msg}", error=True)
@@ -130,7 +130,7 @@ def code(prompt, verbose=False, temperature=None):
         'on_error': on_error
     }, job_id=job_id)
 
-def _finalize_code_generation(json_aggregator, project_root):
+def _finalize_code_generation(json_aggregator, project_root, job_id):
     """Parses accumulated JSON and generates diff."""
     global _BUFFER_DATA_STORE
 
@@ -155,19 +155,19 @@ def _finalize_code_generation(json_aggregator, project_root):
     # --- 6. Generate and Display Diff ---
     try:
         util.new_split()
-        # Unique buffer name to allow concurrent diffs
-        import time
-        suffix = int(time.time() * 1000) % 100000
-        vim.command(f'file Vimini Diff {suffix}')
+        # Unique buffer name based on job_id instead of time suffix
+        vim.command(f'file [{job_id}] Vimini Diff')
         vim.command('setlocal buftype=nofile filetype=diff noswapfile')
         diff_buffer = vim.current.buffer
 
         # Store data keyed by buffer number so concurrent jobs don't overwrite each other
         _BUFFER_DATA_STORE[diff_buffer.number] = {
             'files_to_apply': files_to_process,
-            'project_root': project_root
+            'project_root': project_root,
+            'job_id': job_id
         }
         vim.command(f"let b:vimini_project_root = '{project_root}'")
+        vim.command(f"let b:vimini_job_id = '{job_id}'")
 
         combined_diff_output = []
         for file_op in files_to_process:
@@ -285,6 +285,7 @@ def apply_code():
     util.log_info("apply_code()")
     diff_buffer = None
     thoughts_buffer = None
+    job_id = None
     
     # Try to find a Vimini Diff buffer.
     # Prefer the current buffer if it is a diff buffer
@@ -293,18 +294,48 @@ def apply_code():
         diff_buffer = current_buf
     else:
         # Otherwise search for the last one created (highest buffer number usually)
+        candidates = []
         for buf in vim.buffers:
             if buf.name and 'Vimini Diff' in os.path.basename(buf.name):
-                diff_buffer = buf
-
-    # Find a thoughts buffer to close
-    for buf in vim.buffers:
-        if buf.name and 'Vimini Thoughts' in os.path.basename(buf.name):
-            thoughts_buffer = buf
+                candidates.append(buf)
+        if candidates:
+            candidates.sort(key=lambda b: b.number)
+            diff_buffer = candidates[-1]
 
     if not diff_buffer:
         util.display_message("`Vimini Diff` buffer not found. Was :ViminiCode run?", error=True)
         return
+
+    # Extract job_id to find associated thoughts buffer
+    # Try to get it from buffer variable first
+    try:
+        job_id_var = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_job_id', '')")
+        if job_id_var:
+            job_id = int(job_id_var)
+    except:
+        pass
+    
+    # Fallback: extract from buffer name
+    if job_id is None and diff_buffer.name:
+        try:
+            basename = os.path.basename(diff_buffer.name)
+            if 'Vimini Diff ' in basename:
+                # Assuming "[{job_id}] Vimini Diff"
+                parts = basename.split('[')
+                if len(parts) > 1:
+                    parts = parts[1].split(']')
+                    if len(parts) > 1 and parts[0].isdigit():
+                        job_id = int(parts[0])
+        except:
+            pass
+
+    # Find a thoughts buffer to close matching the job_id
+    if job_id is not None:
+        target_name = f"[{job_id}] Vimini Thoughts"
+        for buf in vim.buffers:
+            if buf.name and os.path.basename(buf.name) == target_name:
+                thoughts_buffer = buf
+                break
 
     stored_data = _BUFFER_DATA_STORE.get(diff_buffer.number)
 
