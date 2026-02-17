@@ -102,6 +102,7 @@ def _parse_modified_buffer(lines, file_ranges, context_separator):
     return changes
 
 def _apply_changes(changes, file_ranges, project_root):
+    modified_files = []
     for file_path, blocks in changes.items():
         if file_path not in file_ranges:
             continue
@@ -109,7 +110,7 @@ def _apply_changes(changes, file_ranges, project_root):
         ranges = file_ranges[file_path]
         if len(blocks) != len(ranges):
             util.display_message(f"Error for {file_path}: edited block count ({len(blocks)}) does not match original ({len(ranges)}).", error=True)
-            return
+            return modified_files
 
         full_path = os.path.join(project_root, file_path)
         try:
@@ -131,8 +132,11 @@ def _apply_changes(changes, file_ranges, project_root):
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
             with open(full_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(original_lines) + '\n')
+            modified_files.append(full_path)
         except Exception as e:
             util.display_message(f"Error writing to {file_path}: {e}", error=True)
+    
+    return modified_files
 
 def search(regex, path_to_search=".", context_lines=5):
     global _RIPGREP_DATA_STORE
@@ -176,7 +180,13 @@ def search(regex, path_to_search=".", context_lines=5):
         'project_root': project_root
     }
 
-    vim.command('vnew')
+    # Check if buffer already exists and delete it to avoid E95
+    for buf in vim.buffers:
+        if buf.name and buf.name.endswith('ViminiRipGrep'):
+            vim.command(f'bwipeout! {buf.number}')
+            break
+
+    util.new_split()
     vim.command('file ViminiRipGrep')
     vim.command('setlocal buftype=nofile noswapfile')
     vim.current.buffer[:] = buffer_content
@@ -245,13 +255,26 @@ def command(arg_string):
         response = client.models.generate_content(**generation_kwargs)
         util.display_message("")
 
-        new_content = response.text
+        new_content = ""
+        try:
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    for part in candidate.content.parts:
+                        if hasattr(part, 'text') and part.text:
+                            new_content += part.text
+        except Exception:
+            pass
+
+        if not new_content:
+            new_content = response.text
 
         win_nr = vim.eval(f"bufwinnr({rg_buffer.number})")
         if int(win_nr) > 0:
             vim.command(f"{win_nr}wincmd w")
         else:
-            vim.command(f'sbuffer {rg_buffer.number}')
+            util.new_split()
+            vim.command(f'buffer {rg_buffer.number}')
 
         rg_buffer[:] = new_content.split('\n')
         util.display_message("Ripgrep results updated by Gemini.", history=True)
@@ -281,7 +304,14 @@ def apply():
 
     buffer_content = rg_buffer[:]
     changes = _parse_modified_buffer(buffer_content, file_ranges, context_separator)
-    _apply_changes(changes, file_ranges, project_root)
+    modified_files = _apply_changes(changes, file_ranges, project_root)
+
+    for absolute_path in modified_files:
+        normalized_target_path = os.path.abspath(absolute_path)
+        for buf in vim.buffers:
+            if buf.name and os.path.abspath(buf.name) == normalized_target_path:
+                vim.command(f'checktime {buf.number}')
+                break
 
     _RIPGREP_DATA_STORE = {}
     vim.command(f'bdelete! {rg_buffer.number}')
