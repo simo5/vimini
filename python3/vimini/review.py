@@ -61,7 +61,13 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                 return
 
             objects_to_resolve = shlex.split(git_objects)
-            cmd = ['git', '-C', repo_path, 'rev-list', '--reverse'] + objects_to_resolve
+            
+            # Check if a range is specified. If not, we don't want to walk the whole history.
+            rev_list_args = []
+            if not any(".." in obj for obj in objects_to_resolve):
+                rev_list_args.append('--no-walk')
+
+            cmd = ['git', '-C', repo_path, 'rev-list', '--reverse'] + rev_list_args + objects_to_resolve
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
             if result.returncode != 0:
@@ -77,7 +83,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             # Determine Save Directory
             target_dir = repo_path
             path_config = save_path
-            
+
             # If path not provided via argument, check global variable
             if not path_config:
                 path_config = vim.eval("get(g:, 'vimini_review_path', '')")
