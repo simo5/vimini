@@ -116,7 +116,7 @@ def commit(author=None, temperature=None, regenerate=False, refinement=None):
                             i = orig_end + 1
 
                     basename = os.path.basename(path)
-                    # Exclude dotfiles, backup files (~), and swap files
+                    # Exclude dotfiles, backup files (~) and swap files
                     if (basename.startswith('.') or
                         basename.endswith('~') or
                         basename.endswith('.swp') or
@@ -358,11 +358,12 @@ def help(command_name=None):
         ":ViminiContextFiles",
         "    Opens a file manager to manage files sent as context (g:context_files).",
         "",
-        ":ViminiReview [-c <git_objects>] [--security] [--save] [{prompt}]",
+        ":ViminiReview [-c <git_objects>] [--security] [--save[=<path>]] [{prompt}]",
         "    Reviews code in current buffer or git objects.",
         "    -c <ref>: Review changes in git ref (can be a range for batch review).",
         "    --security: Focus on security vulnerabilities.",
         "    --save: Save reviews to text files (useful with batch review).",
+        "    --save=path: Save reviews to a specific directory (defaults to g:vimini_review_path).",
         "",
         ":ViminiDiff",
         "    Shows 'git diff' output in a buffer.",

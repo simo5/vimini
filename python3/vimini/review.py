@@ -43,11 +43,12 @@ def _construct_review_prompt(uploaded_files, prompt, content_source_description,
     )
     return prompt_text
 
-def review(prompt, git_objects=None, security_focus=False, verbose=False, temperature=None, save=False):
+def review(prompt, git_objects=None, security_focus=False, verbose=False, temperature=None, save=False, save_path=None):
     """
     Sends content to the Gemini API for a code review.
+    If 'save' is True and 'git_objects' are provided, saves reviews to 'save_path'.
     """
-    util.log_info(f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, temperature={temperature}, save={save})")
+    util.log_info(f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, temperature={temperature}, save={save}, save_path='{save_path}')")
     try:
         client = util.get_client()
         if not client:
@@ -72,6 +73,26 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             if not commit_list:
                 util.display_message(f"No commits found for range '{git_objects}'.", history=True)
                 return
+
+            # Determine Save Directory
+            target_dir = repo_path
+            path_config = save_path
+            
+            # If path not provided via argument, check global variable
+            if not path_config:
+                path_config = vim.eval("get(g:, 'vimini_review_path', '')")
+
+            if path_config:
+                expanded = os.path.expanduser(os.path.expandvars(path_config))
+                # os.path.join handles absolute paths in the second argument by discarding the first
+                target_dir = os.path.join(repo_path, expanded)
+
+                if not os.path.exists(target_dir):
+                    try:
+                        os.makedirs(target_dir, exist_ok=True)
+                    except Exception as e:
+                        util.display_message(f"Error creating directory {target_dir}: {e}", error=True)
+                        return
 
             total_commits = len(commit_list)
             current_review_accumulator = []
@@ -133,7 +154,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                         sanitized_subject = sanitized_subject[:50]
 
                         filename = f"{patch_num:04d}-{sanitized_subject}.review.txt"
-                        filepath = os.path.join(repo_path, filename)
+                        filepath = os.path.join(target_dir, filename)
 
                         content = "".join(current_review_accumulator)
                         with open(filepath, "w", encoding='utf-8') as f:

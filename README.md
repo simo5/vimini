@@ -1,4 +1,4 @@
-# Vimini: Google Gemini Integration for Vim
+Vimini: Google Gemini Integration for Vim
 
 Vimini is a Vim plugin that provides seamless integration with Google's
 Gemini (Generative AI) models, allowing you to interact with AI directly
@@ -246,7 +246,7 @@ When you are done, simply close the window (e.g., with `:q`). A popup will ask y
 :ViminiContextFiles
 ```
 
-### `:ViminiReview [-c <git_objects>] [--security] [--save] [{prompt}]`
+### `:ViminiReview [-c <git_objects>] [--security] [--save[=<path>]] [{prompt}]`
 
 Sends content to the Gemini model for a code review. This command has two main modes:
 
@@ -258,7 +258,7 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 **Additional Options:**
 
 *   `--security`: Narrows the scope of the review to focus exclusively on security vulnerabilities, insecure coding practices, and potential attack vectors.
-*   `--save`: Used with `-c`. This option reviews each commit in the given range individually and saves each review to a separate file in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
+*   `--save[=<path>]`: Used with `-c`. This option reviews each commit in the given range individually and saves each review to a separate file. If a path is provided (e.g., `--save=./reviews`), files are saved there. Otherwise, they are saved in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
 
 **Examples:**
 
@@ -277,6 +277,9 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 
 " Review the last 3 commits and save each review to a file
 :ViminiReview -c HEAD~3..HEAD --save
+
+" Review the last 3 commits and save each review to a specific directory
+:ViminiReview -c HEAD~3..HEAD --save=./reviews
 ```
 
 ### Autocomplete

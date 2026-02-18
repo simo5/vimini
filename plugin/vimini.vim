@@ -38,6 +38,9 @@ let g:vimini_log_file = get(g:, 'vimini_log_file', expand('~/.var/vimini/vimini.
 " Configuration: Logging on/off
 let g:vimini_logging = get(g:, 'vimini_logging', 'off')
 
+" Configuration: Default path for saved reviews
+let g:vimini_review_path = get(g:, 'vimini_review_path', '')
+
 let s:plugin_root_dir = fnamemodify(resolve(expand('<sfile>:p')), ':h')
 
 py3 << EOF
@@ -192,7 +195,7 @@ endfunction
 
 command! -nargs=0 ViminiApply call ViminiApply()
 
-function! ViminiReview(q_args)
+function! ViminiReview(args)
   " Reviews git diffs. Git objects can be specified with "-c <refs>".
   " A security-focused review can be requested with "--security".
   " The rest of the arguments are treated as a prompt.
@@ -200,7 +203,21 @@ function! ViminiReview(q_args)
   let l:prompt_arg = ''
   let l:security_focus = 0
   let l:save_review = 0
-  let l:args = split(a:q_args)
+  let l:save_path = ''
+  let l:args = a:args
+
+  " Handle --save=path
+  let l:idx = 0
+  while l:idx < len(l:args)
+    if l:args[l:idx] =~# '^--save='
+      let l:save_path = substitute(l:args[l:idx], '^--save=', '', '')
+      call remove(l:args, l:idx)
+      " Specifying a path implies saving
+      let l:save_review = 1
+      continue
+    endif
+    let l:idx += 1
+  endwhile
 
   let l:c_idx = index(l:args, '-c')
 
@@ -235,16 +252,17 @@ try:
     git_objects = vim.eval('l:git_objects_arg')
     security_focus = bool(int(vim.eval('l:security_focus')))
     save_review = bool(int(vim.eval('l:save_review')))
+    save_path = vim.eval('l:save_path')
     verbose = vim.eval('g:vimini_thinking') == 'on'
     temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, temperature=temperature, save=save_review)
+    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, temperature=temperature, save=save_review, save_path=save_path)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
 
-command! -nargs=* ViminiReview call ViminiReview(<q-args>)
+command! -nargs=* ViminiReview call ViminiReview([<f-args>])
 
 " Expose a function to show git diff
 function! ViminiDiff()
