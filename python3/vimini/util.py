@@ -598,6 +598,34 @@ def append_to_buffer(buffer_number, text):
     except Exception:
         pass
 
+def append_job_summary(buffer_num, job_id, prompt, context_files):
+    """
+    Displays a nicely formatted summary in the specified buffer.
+
+    Args:
+        buffer_num (int): The buffer number to append to.
+        job_id (str): The job ID.
+        prompt (str): The user prompt.
+        context_files (list): List of context file names.
+    """
+    summary = [
+        f"# Request Summary (Job {job_id})",
+        "",
+        "## User Prompt",
+        prompt,
+        ""
+    ]
+
+    if context_files:
+        summary.append("## Context Files")
+        summary.extend([f"- {name}" for name in context_files])
+        summary.append("")
+
+    summary.append("---")
+    summary.append("")
+
+    append_to_buffer(buffer_num, "\n".join(summary))
+
 def show_status():
     log_info("show_status()")
     # Find buffer

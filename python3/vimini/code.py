@@ -5,6 +5,8 @@ from vimini import util, context
 
 # Global data store keyed by buffer number to exchange data between python calls.
 _BUFFER_DATA_STORE = {}
+# Separator line to distinguish between thoughts/summary and the actual diff
+_DIFF_SEPARATOR = "========== VIMINI DIFF START =========="
 
 def code(prompt, verbose=False, temperature=None):
     """
@@ -88,14 +90,24 @@ def code(prompt, verbose=False, temperature=None):
     job_name = f"Code: {prompt}"
     job_id = util.reserve_next_job_id(job_name)
 
-    # --- 3. Set up Thoughts Buffer (if verbose) ---
-    thoughts_buffer_num = -1
-    if verbose:
-        try:
-            thoughts_buffer_num = util.create_thoughts_buffer(job_id)
-        except Exception as e:
-            util.display_message(f"Error creating thoughts buffer: {e}", error=True)
-            return
+    # --- 3. Create Code Buffer ---
+    # Create the buffer immediately to store thoughts or request summary.
+    util.new_split()
+    safe_name = f"[{job_id}] Vimini Code".replace(" ", "\\ ")
+    vim.command(f"file {safe_name}")
+    vim.command("setlocal buftype=nofile")
+    vim.command("setlocal bufhidden=wipe")
+    vim.command("setlocal noswapfile")
+    vim.command("setlocal filetype=markdown")
+
+    code_buffer = vim.current.buffer
+    code_buffer_num = code_buffer.number
+
+    # Store buffer-local variables
+    vim.command(f"let b:vimini_project_root = '{project_root}'")
+    vim.command(f"let b:vimini_job_id = '{job_id}'")
+
+    util.append_job_summary(code_buffer_num, job_id, prompt, context_file_names)
 
     util.display_message("Processing... (Async)")
 
@@ -107,13 +119,14 @@ def code(prompt, verbose=False, temperature=None):
         json_aggregator += text
 
     def on_thought(text):
-        if verbose and thoughts_buffer_num != -1:
-            util.append_to_buffer(thoughts_buffer_num, text)
+        if verbose:
+            util.append_to_buffer(code_buffer_num, text)
 
     def on_finish():
-        return _finalize_code_generation(json_aggregator, project_root, job_id)
+        return _finalize_code_generation(json_aggregator, project_root, job_id, code_buffer_num)
 
     def on_error(msg):
+        util.append_to_buffer(code_buffer_num, f"\nError: {msg}")
         return f"Error: {msg}"
 
     kwargs = util.create_generation_kwargs(
@@ -125,72 +138,62 @@ def code(prompt, verbose=False, temperature=None):
     )
 
     util.start_async_job(client, kwargs, {
-        'on_chunk': on_chunk,
-        'on_thought': on_thought,
-        'on_finish': on_finish,
-        'on_error': on_error
+        "on_chunk": on_chunk,
+        "on_thought": on_thought,
+        "on_finish": on_finish,
+        "on_error": on_error
     }, job_id=job_id)
 
-def _finalize_code_generation(json_aggregator, project_root, job_id):
+def _finalize_code_generation(json_aggregator, project_root, job_id, buffer_num):
     """Parses accumulated JSON and generates diff."""
     global _BUFFER_DATA_STORE
 
     # --- 5. Parse JSON Response ---
     try:
         parsed_json = json.loads(json_aggregator)
-        files_to_process = parsed_json.get('files', [])
+        files_to_process = parsed_json.get("files", [])
         if not isinstance(files_to_process, list):
             raise ValueError("'files' key is not a list.")
     except (json.JSONDecodeError, ValueError) as e:
-        util.new_split()
-        vim.command('file Vimini Raw Output')
-        vim.command('setlocal buftype=nofile noswapfile')
-        vim.current.buffer[:] = json_aggregator.split('\n')
+        util.append_to_buffer(buffer_num, f"\nError parsing JSON: {e}\n\nRaw JSON:\n{json_aggregator}")
         return f"AI did not return valid JSON for files: {e}"
 
     if not files_to_process:
+        util.append_to_buffer(buffer_num, "\nAI returned no file changes.")
         return "AI returned no file changes."
+
+    # Update Data Store
+    _BUFFER_DATA_STORE[buffer_num] = {
+        "files_to_apply": files_to_process,
+        "project_root": project_root,
+        "job_id": job_id
+    }
 
     # --- 6. Generate and Display Diff ---
     try:
-        util.new_split()
-        # Unique buffer name based on job_id instead of time suffix
-        vim.command(f'file [{job_id}] Vimini Diff')
-        vim.command('setlocal buftype=nofile filetype=diff noswapfile')
-        diff_buffer = vim.current.buffer
-
-        # Store data keyed by buffer number so concurrent jobs don't overwrite each other
-        _BUFFER_DATA_STORE[diff_buffer.number] = {
-            'files_to_apply': files_to_process,
-            'project_root': project_root,
-            'job_id': job_id
-        }
-        vim.command(f"let b:vimini_project_root = '{project_root}'")
-        vim.command(f"let b:vimini_job_id = '{job_id}'")
-
         combined_diff_output = []
         for file_op in files_to_process:
-            api_path = file_op['file_path']
-            ai_generated_code = file_op['file_content']
-            file_type = file_op.get('file_type', 'text/plain')
+            api_path = file_op["file_path"]
+            ai_generated_code = file_op["file_content"]
+            file_type = file_op.get("file_type", "text/plain")
             absolute_path = util.get_absolute_path_from_api_path(api_path)
             file_exists = os.path.exists(absolute_path)
             relative_path = os.path.relpath(absolute_path, project_root)
 
-            if file_type == 'text/x-diff':
+            if file_type == "text/x-diff":
                 if ai_generated_code.strip():
-                    combined_diff_output.extend(ai_generated_code.split('\n'))
+                    combined_diff_output.extend(ai_generated_code.split("\n"))
             else: # 'text/plain' or unspecified
                 original_content = ""
                 if file_exists:
                     try:
-                        with open(absolute_path, 'r', encoding='utf-8') as f:
+                        with open(absolute_path, "r", encoding="utf-8") as f:
                             original_content = f.read()
                     except Exception as e:
                         continue
 
-                with tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_orig, \
-                     tempfile.NamedTemporaryFile(mode='w+', delete=False, encoding='utf-8') as f_ai:
+                with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_orig, \
+                     tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_ai:
                     f_orig.write(original_content)
                     f_ai.write(ai_generated_code)
                     orig_filepath = f_orig.name
@@ -198,12 +201,12 @@ def _finalize_code_generation(json_aggregator, project_root, job_id):
 
                 try:
                     source_path = orig_filepath if file_exists else "/dev/null"
-                    cmd = ['diff', '-u', source_path, ai_filepath]
+                    cmd = ["diff", "-u", source_path, ai_filepath]
                     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
                     if result.returncode > 1:
                         continue # diff error
 
-                    diff_lines = result.stdout.strip().split('\n')
+                    diff_lines = result.stdout.strip().split("\n")
                     if len(diff_lines) <= 2 and not original_content and not ai_generated_code:
                         continue # Empty diff
 
@@ -219,13 +222,21 @@ def _finalize_code_generation(json_aggregator, project_root, job_id):
                     if os.path.exists(ai_filepath): os.remove(ai_filepath)
 
         if not combined_diff_output:
-            vim.command(f"bdelete! {diff_buffer.number}")
+            util.append_to_buffer(buffer_num, "\nAI content is identical to the original files or returned empty diff.")
             return "AI content is identical to the original files or returned empty diff."
 
-        diff_buffer[:] = combined_diff_output
-        vim.command('normal! 1G')
+        # Append Separator and Diff
+        separator_block = f"\n{_DIFF_SEPARATOR}\n"
+        diff_text = "\n".join(combined_diff_output)
+        util.append_to_buffer(buffer_num, separator_block + diff_text)
+
+        # Switch filetype to diff for syntax highlighting
+        # We use setbufvar to avoid switching windows
+        vim.command(f"call setbufvar({buffer_num}, '&filetype', 'diff')")
+
         return "Diff generated."
     except Exception as e:
+        util.append_to_buffer(buffer_num, f"\nError generating diff: {e}")
         return f"Error generating or displaying diff: {e}"
 
 def show_diff():
@@ -275,23 +286,22 @@ def show_diff():
 
 def apply_code(job_id=None):
     """
-    Finds the 'Vimini Diff' buffer, writes all specified file changes to
+    Finds the 'Vimini Code' buffer, writes all specified file changes to
     disk, and reloads any affected open buffers. If an error occurs, the
     diff buffer is preserved for manual editing and re-application.
     """
     global _BUFFER_DATA_STORE
     util.log_info(f"apply_code(job_id={job_id})")
     diff_buffer = None
-    thoughts_buffer = None
 
-    # 1. Find all potential Vimini Diff buffers
+    # 1. Find all potential Vimini Code buffers
     candidates = []
     for buf in vim.buffers:
-        if buf.name and 'Vimini Diff' in os.path.basename(buf.name):
+        if buf.name and 'Vimini Code' in os.path.basename(buf.name):
             candidates.append(buf)
 
     if not candidates:
-        util.display_message("`Vimini Diff` buffer not found. Was :ViminiCode run?", error=True)
+        util.display_message("`Vimini Code` buffer not found. Was :ViminiCode run?", error=True)
         return
 
     # 2. Filter by job_id if provided, or handle selection logic
@@ -307,13 +317,13 @@ def apply_code(job_id=None):
             except:
                 pass
 
-            # Try matching by filename pattern "[{job_id}] Vimini Diff"
+            # Try matching by filename pattern "[{job_id}] Vimini Code"
             basename = os.path.basename(buf.name)
             if f"[{job_id}]" in basename:
                  target_candidates.append(buf)
 
         if not target_candidates:
-            util.display_message(f"No Vimini Diff buffer found for Job ID {job_id}.", error=True)
+            util.display_message(f"No Vimini Code buffer found for Job ID {job_id}.", error=True)
             return
 
         # If for some reason multiple buffers match the same ID, take the last one
@@ -325,7 +335,7 @@ def apply_code(job_id=None):
             diff_buffer = vim.current.buffer
         elif len(candidates) > 1:
             # Multiple buffers exist: Error and list them
-            msg = "Multiple Vimini Diff buffers found. Please specify which job to apply using -j <job_id>.\nAvailable Jobs:\n"
+            msg = "Multiple Vimini Code buffers found. Please specify which job to apply using -j <job_id>.\nAvailable Jobs:\n"
             for buf in candidates:
                 bid = "Unknown"
                 try:
@@ -345,117 +355,38 @@ def apply_code(job_id=None):
             # Only one buffer exists
             diff_buffer = candidates[0]
 
-        # Try to infer job_id for thoughts buffer cleanup
-        try:
-            bid = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_job_id', '')")
-            if bid: job_id = int(bid)
-        except: pass
-        if job_id is None:
-             m = re.search(r'\[(\d+)\]', os.path.basename(diff_buffer.name))
-             if m: job_id = int(m.group(1))
-
-    # 3. Find a thoughts buffer to close matching the job_id
-    if job_id is not None:
-        target_name = f"[{job_id}] Vimini Thoughts"
-        for buf in vim.buffers:
-            if buf.name and os.path.basename(buf.name) == target_name:
-                thoughts_buffer = buf
-                break
-
-    stored_data = _BUFFER_DATA_STORE.get(diff_buffer.number)
-
-    if stored_data:
-        # Initial apply from AI response data.
-        try:
-            files_to_apply = stored_data['files_to_apply']
-            project_root = stored_data['project_root']
-            modified_files = []
-            has_errors = False
-
-            for file_op in files_to_apply:
-                api_path = file_op['file_path']
-                content = file_op['file_content']
-                file_type = file_op.get('file_type', 'text/plain')
-                absolute_path = util.get_absolute_path_from_api_path(api_path)
-
-                try:
-                    dir_name = os.path.dirname(absolute_path)
-                    if dir_name:
-                        os.makedirs(dir_name, exist_ok=True)
-
-                    if file_type == 'text/x-diff':
-                        result = subprocess.run(
-                            ['patch', '-p1', '-N', '-r', '-'],
-                            input=content, text=True, check=False,
-                            capture_output=True, cwd=project_root
-                        )
-                        if result.returncode != 0:
-                            relative_path_for_display = os.path.relpath(absolute_path, project_root)
-                            err_msg = f"patch failed for {relative_path_for_display}.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
-                            util.display_message(err_msg, error=True)
-                            has_errors = True
-                            continue
-                    else:  # 'text/plain' or unspecified
-                        with open(absolute_path, 'w', encoding='utf-8') as f:
-                            f.write(content)
-
-                    relative_path_for_display = os.path.relpath(absolute_path, project_root)
-                    modified_files.append(relative_path_for_display)
-
-                    # Reload buffer if file is open
-                    normalized_target_path = os.path.abspath(absolute_path)
-                    for buf in vim.buffers:
-                        if buf.name and os.path.abspath(buf.name) == normalized_target_path:
-                            win_nr = vim.eval(f'bufwinnr({buf.number})')
-                            if int(win_nr) > 0:
-                                vim.command(f"{win_nr}wincmd w")
-                                vim.command('e!')
-                                vim.command('wincmd p')
-                            break
-                except FileNotFoundError:
-                    util.display_message("Error: `patch` command not found. Is it in your PATH?", error=True)
-                    has_errors = True
-                    break # Fatal error
-                except Exception as e:
-                    relative_path_for_display = os.path.relpath(absolute_path, project_root)
-                    util.display_message(f"Error processing {relative_path_for_display}: {e}", error=True)
-                    has_errors = True
-
-            if has_errors:
-                util.display_message("Errors occurred. Diff buffer is preserved for manual review and re-application.", error=True)
-                return
-
-            # Clean up stored data for this buffer
-            if diff_buffer.number in _BUFFER_DATA_STORE:
-                del _BUFFER_DATA_STORE[diff_buffer.number]
-
-            # Success
-            if modified_files:
-                util.display_message(f"Applied changes to: {', '.join(modified_files)}", history=True)
-
-            vim.command(f"bdelete! {diff_buffer.number}")
-            if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
-                vim.command(f"bdelete! {thoughts_buffer.number}")
-
-        except Exception as e:
-            util.display_message(f"An unexpected error occurred during apply: {e}", error=True)
-            # Don't delete data on error so user can retry
-        return
-
-    # Re-apply from buffer content.
+    # 4. Extract diff content using separator
     project_root = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_project_root', '')")
     if not project_root:
-        project_root = util.get_git_repo_root() or vim.eval('getcwd()')
+        project_root = util.get_git_repo_root() or vim.eval("getcwd()")
 
-    diff_content = "\n".join(diff_buffer[:])
+    separator_index = -1
+    for i, line in enumerate(diff_buffer):
+        if _DIFF_SEPARATOR in line:
+            separator_index = i
+            break
+
+    if separator_index != -1:
+        diff_content = "\n".join(diff_buffer[separator_index + 1:])
+    else:
+        err_msg = "DIFF section not found, did you remove the separator?"
+        util.display_message(err_msg, error=True)
+        return  # Preserve buffer
+
     if not diff_content.strip():
         util.display_message("Diff is empty. Nothing to apply.", history=True)
         vim.command(f"bdelete! {diff_buffer.number}")
+        if diff_buffer.number in _BUFFER_DATA_STORE:
+            del _BUFFER_DATA_STORE[diff_buffer.number]
         return
 
     try:
+        # Use patch command to apply the diff
+        # -p1 strips the first path component (a/ and b/)
+        # -N ignores patches that seem already applied
+        # -r - rejects to stdout (avoids .rej files)
         result = subprocess.run(
-            ['patch', '-p1', '-N', '-r', '-'],
+            ["patch", "-p1", "-N", "-r", "-"],
             input=diff_content, text=True, check=False,
             capture_output=True, cwd=project_root
         )
@@ -465,33 +396,45 @@ def apply_code(job_id=None):
             util.display_message(err_msg, error=True)
             return  # Preserve buffer
 
-        # Success on re-apply
+        # Success
         util.display_message("Successfully applied modified diff.", history=True)
 
-        modified_files = []
-        for line in diff_content.split('\n'):
-            if line.startswith('--- a/'):
-                path = line[len('--- a/'):].strip()
-                if path != '/dev/null':
-                    modified_files.append(path)
+        # Parse diff to identify modified files for reloading
+        modified_files = set()
+        for line in diff_content.split("\n"):
+            if line.startswith("--- a/"):
+                path = line[len("--- a/"):].strip()
+                if path != "/dev/null":
+                    modified_files.add(path)
+            elif line.startswith("+++ b/"):
+                path = line[len("+++ b/"):].strip()
+                if path != "/dev/null":
+                    modified_files.add(path)
 
-        for relative_path in set(modified_files):
+        for relative_path in modified_files:
             absolute_path = os.path.join(project_root, relative_path)
             normalized_target_path = os.path.abspath(absolute_path)
             for buf in vim.buffers:
                 if buf.name and os.path.abspath(buf.name) == normalized_target_path:
-                    win_nr = vim.eval(f'bufwinnr({buf.number})')
+                    # Reload buffer if visible
+                    win_nr = vim.eval(f"bufwinnr({buf.number})")
                     if int(win_nr) > 0:
                         vim.command(f"{win_nr}wincmd w")
-                        vim.command('e!')
-                        vim.command('wincmd p')
+                        vim.command("e!")
+                        vim.command("wincmd p")
+                    else:
+                        # Mark buffer to be reloaded when entered
+                        vim.command(f"checktime {buf.number}")
                     break
 
+        # Remove from data store
+        if diff_buffer.number in _BUFFER_DATA_STORE:
+            del _BUFFER_DATA_STORE[diff_buffer.number]
+
+        # Cleanup
         vim.command(f"bdelete! {diff_buffer.number}")
-        if thoughts_buffer and thoughts_buffer.number in [b.number for b in vim.buffers]:
-            vim.command(f"bdelete! {thoughts_buffer.number}")
 
     except FileNotFoundError:
         util.display_message("Error: `patch` command not found. Is it in your PATH?", error=True)
     except Exception as e:
-        util.display_message(f"Error applying modified diff: {e}", error=True)
+        util.display_message(f"Error applying diff: {e}", error=True)
