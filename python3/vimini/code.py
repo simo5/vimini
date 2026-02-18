@@ -1,5 +1,5 @@
 import vim
-import os, json, subprocess, tempfile
+import os, json, subprocess, tempfile, re
 from google.genai import types
 from vimini import util, context
 
@@ -260,74 +260,101 @@ def show_diff():
 
         # Display the diff in a new split window.
         util.new_split()
-        vim.command('file Git Diff')
+        vim.command("file Git Diff")
         # Setting filetype to 'diff' helps with syntax highlighting
-        vim.command('setlocal buftype=nofile filetype=diff noswapfile')
+        vim.command("setlocal buftype=nofile filetype=diff noswapfile")
 
         # The output from git contains ANSI escape codes for color.
         # We place this raw output into the buffer.
-        vim.current.buffer[:] = result.stdout.split('\n')
+        vim.current.buffer[:] = result.stdout.split("\n")
 
     except FileNotFoundError:
         util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
-def apply_code():
+def apply_code(job_id=None):
     """
     Finds the 'Vimini Diff' buffer, writes all specified file changes to
     disk, and reloads any affected open buffers. If an error occurs, the
     diff buffer is preserved for manual editing and re-application.
     """
     global _BUFFER_DATA_STORE
-    util.log_info("apply_code()")
+    util.log_info(f"apply_code(job_id={job_id})")
     diff_buffer = None
     thoughts_buffer = None
-    job_id = None
 
-    # Try to find a Vimini Diff buffer.
-    # Prefer the current buffer if it is a diff buffer
-    current_buf = vim.current.buffer
-    if current_buf.name and 'Vimini Diff' in os.path.basename(current_buf.name):
-        diff_buffer = current_buf
-    else:
-        # Otherwise search for the last one created (highest buffer number usually)
-        candidates = []
-        for buf in vim.buffers:
-            if buf.name and 'Vimini Diff' in os.path.basename(buf.name):
-                candidates.append(buf)
-        if candidates:
-            candidates.sort(key=lambda b: b.number)
-            diff_buffer = candidates[-1]
+    # 1. Find all potential Vimini Diff buffers
+    candidates = []
+    for buf in vim.buffers:
+        if buf.name and 'Vimini Diff' in os.path.basename(buf.name):
+            candidates.append(buf)
 
-    if not diff_buffer:
+    if not candidates:
         util.display_message("`Vimini Diff` buffer not found. Was :ViminiCode run?", error=True)
         return
 
-    # Extract job_id to find associated thoughts buffer
-    # Try to get it from buffer variable first
-    try:
-        job_id_var = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_job_id', '')")
-        if job_id_var:
-            job_id = int(job_id_var)
-    except:
-        pass
+    # 2. Filter by job_id if provided, or handle selection logic
+    if job_id is not None:
+        target_candidates = []
+        for buf in candidates:
+            # Try matching by internal buffer variable
+            try:
+                bid = vim.eval(f"getbufvar({buf.number}, 'vimini_job_id', '')")
+                if bid and int(bid) == job_id:
+                    target_candidates.append(buf)
+                    continue
+            except:
+                pass
 
-    # Fallback: extract from buffer name
-    if job_id is None and diff_buffer.name:
+            # Try matching by filename pattern "[{job_id}] Vimini Diff"
+            basename = os.path.basename(buf.name)
+            if f"[{job_id}]" in basename:
+                 target_candidates.append(buf)
+
+        if not target_candidates:
+            util.display_message(f"No Vimini Diff buffer found for Job ID {job_id}.", error=True)
+            return
+
+        # If for some reason multiple buffers match the same ID, take the last one
+        diff_buffer = target_candidates[-1]
+
+    else:
+        # No job ID provided.
+        if vim.current.buffer in candidates:
+            diff_buffer = vim.current.buffer
+        elif len(candidates) > 1:
+            # Multiple buffers exist: Error and list them
+            msg = "Multiple Vimini Diff buffers found. Please specify which job to apply using -j <job_id>.\nAvailable Jobs:\n"
+            for buf in candidates:
+                bid = "Unknown"
+                try:
+                    bid = vim.eval(f"getbufvar({buf.number}, 'vimini_job_id', '')")
+                except: pass
+
+                if not bid or bid == "Unknown":
+                     m = re.search(r'\[(\d+)\]', os.path.basename(buf.name))
+                     if m: bid = m.group(1)
+
+                msg += f"- Job {bid} (Buffer {buf.number})\n"
+
+            util.display_message(msg.strip(), error=True)
+            return
+
+        else:
+            # Only one buffer exists
+            diff_buffer = candidates[0]
+
+        # Try to infer job_id for thoughts buffer cleanup
         try:
-            basename = os.path.basename(diff_buffer.name)
-            if 'Vimini Diff ' in basename:
-                # Assuming "[{job_id}] Vimini Diff"
-                parts = basename.split('[')
-                if len(parts) > 1:
-                    parts = parts[1].split(']')
-                    if len(parts) > 1 and parts[0].isdigit():
-                        job_id = int(parts[0])
-        except:
-            pass
+            bid = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_job_id', '')")
+            if bid: job_id = int(bid)
+        except: pass
+        if job_id is None:
+             m = re.search(r'\[(\d+)\]', os.path.basename(diff_buffer.name))
+             if m: job_id = int(m.group(1))
 
-    # Find a thoughts buffer to close matching the job_id
+    # 3. Find a thoughts buffer to close matching the job_id
     if job_id is not None:
         target_name = f"[{job_id}] Vimini Thoughts"
         for buf in vim.buffers:

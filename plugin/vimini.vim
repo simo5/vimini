@@ -182,18 +182,26 @@ endfunction
 command! -nargs=* ViminiCode call ViminiCode(string(<q-args>))
 
 " Expose a function to apply the generated code
-function! ViminiApply()
+function! ViminiApply(...)
+  let l:job_id = v:null
+
+  if a:0 > 0
+    let l:job_id = a:1
+  endif
+
   py3 << EOF
 try:
     from vimini import main
-    main.apply_code()
+    job_id_arg = vim.eval('l:job_id')
+    job_id = int(job_id_arg) if job_id_arg is not None else None
+    main.apply_code(job_id=job_id)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
 
-command! -nargs=0 ViminiApply call ViminiApply()
+command! -nargs=* ViminiApply call ViminiApply(<f-args>)
 
 function! ViminiReview(args)
   " Reviews git diffs. Git objects can be specified with "-c <refs>".
