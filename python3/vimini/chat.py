@@ -101,10 +101,10 @@ def chat(prompt=None):
             _write_to_buffer(chat_session['buf_num'], ["", "Terminated"])
 
         def on_error(msg):
-            util.display_message(f"Chat Error: {msg}", error=True)
             _write_to_buffer(chat_session['buf_num'], [f"\n[Error: {msg}]"])
             chat_session['session'] = None
             chat_session['running'] = False
+            return f"Chat Error: {msg}"
 
         # Target function that trigers only on new updates
         def target(prev, **kwargs):

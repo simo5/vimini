@@ -111,10 +111,10 @@ def code(prompt, verbose=False, temperature=None):
             util.append_to_buffer(thoughts_buffer_num, text)
 
     def on_finish():
-        _finalize_code_generation(json_aggregator, project_root, job_id)
+        return _finalize_code_generation(json_aggregator, project_root, job_id)
 
     def on_error(msg):
-        util.display_message(f"Error: {msg}", error=True)
+        return f"Error: {msg}"
 
     kwargs = util.create_generation_kwargs(
         contents=full_prompt,
@@ -142,16 +142,14 @@ def _finalize_code_generation(json_aggregator, project_root, job_id):
         if not isinstance(files_to_process, list):
             raise ValueError("'files' key is not a list.")
     except (json.JSONDecodeError, ValueError) as e:
-        util.display_message(f"AI did not return valid JSON for files: {e}", error=True)
         util.new_split()
         vim.command('file Vimini Raw Output')
         vim.command('setlocal buftype=nofile noswapfile')
         vim.current.buffer[:] = json_aggregator.split('\n')
-        return
+        return f"AI did not return valid JSON for files: {e}"
 
     if not files_to_process:
-        util.display_message("AI returned no file changes.", history=True)
-        return
+        return "AI returned no file changes."
 
     # --- 6. Generate and Display Diff ---
     try:
@@ -221,15 +219,14 @@ def _finalize_code_generation(json_aggregator, project_root, job_id):
                     if os.path.exists(ai_filepath): os.remove(ai_filepath)
 
         if not combined_diff_output:
-            util.display_message("AI content is identical to the original files or returned empty diff.", history=True)
             vim.command(f"bdelete! {diff_buffer.number}")
-            return
+            return "AI content is identical to the original files or returned empty diff."
 
         diff_buffer[:] = combined_diff_output
         vim.command('normal! 1G')
+        return "Diff generated."
     except Exception as e:
-        util.display_message(f"Error generating or displaying diff: {e}", error=True)
-        return
+        return f"Error generating or displaying diff: {e}"
 
 def show_diff():
     """

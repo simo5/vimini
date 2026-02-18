@@ -151,6 +151,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
 
                 def on_finish():
                     # Save
+                    status_msg = ""
                     try:
                         subject_cmd = ['git', '-C', repo_path, 'log', '-1', '--pretty=%s', commit_sha]
                         subject_result = subprocess.run(subject_cmd, capture_output=True, text=True, check=False)
@@ -165,16 +166,17 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                         content = "".join(current_review_accumulator)
                         with open(filepath, "w", encoding='utf-8') as f:
                             f.write(content)
-                        util.display_message(f"Saved review to {filename}")
+                        status_msg = f"Saved review to {filename}"
                     except Exception as e:
-                        util.display_message(f"Error saving {filename}: {e}", error=True)
+                        status_msg = f"Error saving {filename}: {e}"
 
                     # Trigger next commit review
                     process_batch_commit(index + 1)
+                    return status_msg
 
                 def on_error(msg):
-                    util.display_message(f"Error reviewing {commit_sha[:7]}: {msg}", error=True)
                     process_batch_commit(index + 1)
+                    return f"Error reviewing {commit_sha[:7]}: {msg}"
 
                 kwargs = util.create_generation_kwargs(
                     contents=full_prompt,
@@ -284,7 +286,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                 util.append_to_buffer(thoughts_buf_num, text)
 
         def on_error(msg):
-            util.display_message(f"Error: {msg}", error=True)
+            return f"Error: {msg}"
 
         util.display_message("Processing... (Async)")
         util.start_async_job(client, kwargs, {

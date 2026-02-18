@@ -484,25 +484,34 @@ def process_queue():
 
         # Prepend Job ID
         display_status = f"[{job_id}] {status_message}"
+        callback_status = None
 
         if msg_type == 'chunk':
             if 'on_chunk' in callbacks:
-                callbacks['on_chunk'](data)
+                callback_status = callbacks['on_chunk'](data)
+
+            if callback_status and isinstance(callback_status, str):
+                status_update = (f"[{job_id}] {callback_status}", False)
+            else:
                 status_update = (display_status, False)
 
         elif msg_type == 'thought':
             if 'on_thought' in callbacks:
-                callbacks['on_thought'](data)
+                callback_status = callbacks['on_thought'](data)
+
+            if callback_status and isinstance(callback_status, str):
+                status_update = (f"[{job_id}] {callback_status}", False)
+            else:
                 status_update = (display_status, False)
 
         elif msg_type == 'error':
-            error_msg = f"[{job_id}] Error: {data}"
-            status_update = (f"[{job_id}] {error_msg}", True)
-
             if 'on_error' in callbacks:
-                callbacks['on_error'](data)
+                callback_status = callbacks['on_error'](data)
+
+            if callback_status and isinstance(callback_status, str):
+                status_update = (f"[{job_id}] {callback_status}", True)
             else:
-                status_update = (f"[{job_id}] {error_msg}", True)
+                status_update = (f"[{job_id}] Error: {data}", True)
 
             if job_id in _ACTIVE_JOBS:
                 del _ACTIVE_JOBS[job_id]
@@ -513,7 +522,10 @@ def process_queue():
             status_update = (f"[{job_id}] Finished.", False)
 
             if 'on_finish' in callbacks:
-                callbacks['on_finish']()
+                callback_status = callbacks['on_finish']()
+
+            if callback_status and isinstance(callback_status, str):
+                status_update = (f"[{job_id}] {callback_status}", False)
 
             if job_id in _ACTIVE_JOBS:
                 del _ACTIVE_JOBS[job_id]

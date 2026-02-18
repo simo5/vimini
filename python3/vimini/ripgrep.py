@@ -268,10 +268,10 @@ def command(arg_string):
         util.append_to_buffer(rg_buffer_num, text)
 
     def on_error(msg):
-        util.display_message(f"Error during Gemini call: {msg}", error=True)
+        return f"Error during Gemini call: {msg}"
 
     def on_finish():
-        util.display_message("Ripgrep results updated by Gemini.", history=True)
+        return "Ripgrep results updated by Gemini."
 
     generation_kwargs = util.create_generation_kwargs(
         contents=[full_prompt]
