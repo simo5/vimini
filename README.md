@@ -317,7 +317,7 @@ Vim.
 :ViminiDiff
 ```
 
-#### `:ViminiCommit [-n] [-r]`
+#### `:ViminiCommit [-n] [-r] [instructions]`
 
 Automates the commit process using AI. This command has two main modes:
 
@@ -337,6 +337,8 @@ When run with the `-r` flag, it regenerates the commit message for the last comm
 3.  It displays the message for confirmation (`y/n`).
 4.  If confirmed, it amends the `HEAD` commit with the new message. This is useful for quickly rewriting a commit message you just made.
 
+You can also provide optional `[instructions]` at the end of the command to guide the AI's message generation (e.g., "Mention issue #123" or "Keep it very brief").
+
 **Options:**
 
 *   **`-n`**: Omit the `Co-authored-by` trailer for a specific commit. By default, a trailer is appended and can be configured with `g:vimini_commit_author`.
@@ -347,11 +349,17 @@ When run with the `-r` flag, it regenerates the commit message for the last comm
 " Stage changes and generate a commit message for a new commit
 :ViminiCommit
 
+" Provide instructions for the commit message
+:ViminiCommit Include details about the bug fix
+
 " Do the same, but without the co-author trailer
 :ViminiCommit -n
 
 " Regenerate the message for the HEAD commit and amend it
 :ViminiCommit -r
+
+" Regenerate with instructions
+:ViminiCommit -r Make it shorter
 ```
 
 ### Ripgrep Integration (Highly Experimental)
@@ -398,6 +406,23 @@ The command opens a `Vimini Files` buffer that lists all your uploaded files.
 
 ```vim
 :ViminiFiles
+```
+
+### `:ViminiStatus`
+
+Opens a read-only buffer showing the status of currently running asynchronous jobs (e.g., code generation, chat, review). This is useful for monitoring long-running tasks.
+
+```vim
+:ViminiStatus
+```
+
+### `:ViminiHelp [command]`
+
+Opens a help buffer listing all available Vimini commands and their descriptions. You can optionally provide a command name to jump directly to its help entry.
+
+```vim
+:ViminiHelp
+:ViminiHelp ViminiCode
 ```
 
 ## Sheperd's note
