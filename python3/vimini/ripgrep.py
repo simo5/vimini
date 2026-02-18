@@ -6,7 +6,7 @@ import subprocess
 from . import util
 
 # To store state between search and apply
-_RIPGREP_DATA_STORE = {}
+RIPGREP_CONFIG_STORE = {}
 
 def dedup_slashes(line):
     return re.sub(r'//+', '/', line)
@@ -139,7 +139,7 @@ def _apply_changes(changes, file_ranges, project_root):
     return modified_files
 
 def search(regex, path_to_search=".", context_lines=5):
-    global _RIPGREP_DATA_STORE
+    global RIPGREP_CONFIG_STORE
     context_separator = "-- DO NOT DELETE THIS SEPARATOR --"
     try:
         cmd = [
@@ -174,7 +174,7 @@ def search(regex, path_to_search=".", context_lines=5):
 
     project_root = util.get_git_repo_root() or os.getcwd()
 
-    _RIPGREP_DATA_STORE = {
+    RIPGREP_CONFIG_STORE = {
         'file_ranges': file_ranges,
         'context_separator': context_separator,
         'project_root': project_root
@@ -229,61 +229,63 @@ def command(arg_string):
         util.display_message("Ripgrep results are empty, nothing to send to Gemini.", history=True)
         return
 
-    try:
-        client = util.get_client()
-        if not client:
-            return
+    client = util.get_client()
+    if not client:
+        return
 
-        full_prompt = (
-            "You are an expert code editor. You are given a buffer containing code snippets "
-            "from a ripgrep search. Your task is to apply the user's request to this buffer.\n\n"
-            "The buffer is structured with file paths as headers, followed by code snippets. "
-            "There is a separator (`-- DO NOT DELETE THIS SEPARATOR --`) between results from different files. "
-            "You MUST preserve this exact structure in your output.\n\n"
-            "Only output the modified buffer content. Do not add any preamble, explanations, or markdown code fences.\n\n"
-            f'USER REQUEST: "{prompt}"\n\n'
-            "--- BUFFER CONTENT TO MODIFY ---\n"
-            f"{buffer_content}\n"
-            "--- END BUFFER CONTENT ---"
-        )
+    full_prompt = (
+        "You are an expert code editor. You are given a buffer containing code snippets "
+        "from a ripgrep search. Your task is to apply the user's request to this buffer.\n\n"
+        "The buffer is structured with file paths as headers, followed by code snippets. "
+        "There is a separator (`-- DO NOT DELETE THIS SEPARATOR --`) between results from different files. "
+        "You MUST preserve this exact structure in your output.\n\n"
+        "Only output the modified buffer content. Do not add any preamble, explanations, or markdown code fences.\n\n"
+        f'USER REQUEST: "{prompt}"\n\n'
+        "--- BUFFER CONTENT TO MODIFY ---\n"
+        f"{buffer_content}\n"
+        "--- END BUFFER CONTENT ---"
+    )
 
-        util.display_message("Calling Gemini to modify results...")
+    util.display_message("Calling Gemini to modify results... (Async)")
 
-        generation_kwargs = util.create_generation_kwargs(
-            contents=[full_prompt]
-        )
-        response = client.models.generate_content(**generation_kwargs)
-        util.display_message("")
+    job_id = util.reserve_next_job_id(f"Ripgrep: {regex}")
+    rg_buffer_num = rg_buffer.number
+    
+    # State closure for the async callback
+    is_first_chunk = True
 
-        new_content = ""
-        try:
-            if hasattr(response, 'candidates') and response.candidates:
-                candidate = response.candidates[0]
-                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                    for part in candidate.content.parts:
-                        if hasattr(part, 'text') and part.text:
-                            new_content += part.text
-        except Exception:
-            pass
+    def on_chunk(text):
+        nonlocal is_first_chunk
+        if is_first_chunk:
+            # Find the buffer again to ensure we have the object
+            # and clear it before writing the first chunk of new content.
+            for b in vim.buffers:
+                if b.number == rg_buffer_num:
+                    b[:] = []
+                    break
+            is_first_chunk = False
+        
+        util.append_to_buffer(rg_buffer_num, text)
 
-        if not new_content:
-            new_content = response.text
+    def on_error(msg):
+        util.display_message(f"Error during Gemini call: {msg}", error=True)
 
-        win_nr = vim.eval(f"bufwinnr({rg_buffer.number})")
-        if int(win_nr) > 0:
-            vim.command(f"{win_nr}wincmd w")
-        else:
-            util.new_split()
-            vim.command(f'buffer {rg_buffer.number}')
-
-        rg_buffer[:] = new_content.split('\n')
+    def on_finish():
         util.display_message("Ripgrep results updated by Gemini.", history=True)
 
-    except Exception as e:
-        util.display_message(f"Error during Gemini call: {e}", error=True)
+    generation_kwargs = util.create_generation_kwargs(
+        contents=[full_prompt]
+    )
+    
+    util.start_async_job(client, generation_kwargs, {
+        'on_chunk': on_chunk,
+        'on_error': on_error,
+        'on_finish': on_finish,
+        'status_message': "Modifying Ripgrep results..."
+    }, job_id=job_id)
 
 def apply():
-    global _RIPGREP_DATA_STORE
+    global RIPGREP_CONFIG_STORE
 
     rg_buffer = None
     for buf in vim.buffers:
@@ -294,13 +296,13 @@ def apply():
         util.display_message("ViminiRipGrep buffer not found.", error=True)
         return
 
-    if not _RIPGREP_DATA_STORE:
+    if not RIPGREP_CONFIG_STORE:
         util.display_message("No ripgrep session data. Please run ViminiRipGrep first.", error=True)
         return
 
-    file_ranges = _RIPGREP_DATA_STORE['file_ranges']
-    context_separator = _RIPGREP_DATA_STORE['context_separator']
-    project_root = _RIPGREP_DATA_STORE.get('project_root', os.getcwd())
+    file_ranges = RIPGREP_CONFIG_STORE['file_ranges']
+    context_separator = RIPGREP_CONFIG_STORE['context_separator']
+    project_root = RIPGREP_CONFIG_STORE.get('project_root', os.getcwd())
 
     buffer_content = rg_buffer[:]
     changes = _parse_modified_buffer(buffer_content, file_ranges, context_separator)
@@ -313,6 +315,6 @@ def apply():
                 vim.command(f'checktime {buf.number}')
                 break
 
-    _RIPGREP_DATA_STORE = {}
+    RIPGREP_CONFIG_STORE = {}
     vim.command(f'bdelete! {rg_buffer.number}')
     util.display_message("Changes applied.", history=True)
