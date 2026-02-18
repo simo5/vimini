@@ -20,6 +20,7 @@ _JOB_QUEUE = queue.Queue()
 _JOB_COUNTER = 0
 _ACTIVE_JOBS = {}
 _JOB_NAMES = {}
+_JOB_CLIENTS = {}
 
 def get_client():
     """
@@ -350,16 +351,18 @@ def set_logging(log_file=None):
         _LOGGER = logger
         display_message(f"Failed to initialize log file '{log_file}': {e}", error=True)
 
-def reserve_next_job_id(job_name="Unknown"):
+def reserve_next_job_id(job_name="Unknown", client=None):
     """
     Reserves and returns the next available job ID.
     """
-    global _JOB_COUNTER, _JOB_NAMES
+    global _JOB_COUNTER, _JOB_NAMES, _JOB_CLIENTS
     _JOB_COUNTER += 1
     _JOB_NAMES[_JOB_COUNTER] = job_name
+    if client:
+        _JOB_CLIENTS[_JOB_COUNTER] = client
     return _JOB_COUNTER
 
-def start_async_job(client, kwargs, callbacks, job_id=None, job_name="Unknown"):
+def start_async_job(client, kwargs, callbacks, job_id=None, job_name="Unknown", target_func=None):
     """
     Starts an asynchronous job to call the Gemini API.
 
@@ -374,12 +377,22 @@ def start_async_job(client, kwargs, callbacks, job_id=None, job_name="Unknown"):
                    'status_message': str (optional custom status message)
         job_id (int, optional): The job ID to use. If None, a new one is reserved.
         job_name (str, optional): The name of the job. Used if job_id is None.
+        target_func (callable, optional): A specific callable to run instead of
+                                          client.models.generate_content_stream.
     """
-    global _JOB_COUNTER, _ACTIVE_JOBS
+    global _JOB_COUNTER, _ACTIVE_JOBS, _JOB_CLIENTS
 
     if job_id is None:
         # Increment Job Counter for unique ID
-        job_id = reserve_next_job_id(job_name)
+        job_id = reserve_next_job_id(job_name, client)
+    elif client is None:
+        client = _JOB_CLIENTS.get(job_id)
+        if job_name != "Unknown":
+            _JOB_NAMES[job_id] = job_name
+
+    # If client is still None, attempt to get global default client
+    if client is None:
+        client = get_client()
 
     _ACTIVE_JOBS[job_id] = callbacks
 
@@ -387,7 +400,7 @@ def start_async_job(client, kwargs, callbacks, job_id=None, job_name="Unknown"):
 
     thread = threading.Thread(
         target=_job_worker,
-        args=(client, kwargs, job_id),
+        args=(client, kwargs, job_id, target_func),
         daemon=True
     )
     thread.start()
@@ -395,14 +408,21 @@ def start_async_job(client, kwargs, callbacks, job_id=None, job_name="Unknown"):
     # Start the timer in Vim to poll the queue
     vim.command("call ViminiInternalStartJobTimer()")
 
-def _job_worker(client, kwargs, job_id):
-    try:
-        response_stream = client.models.generate_content_stream(**kwargs)
-        for chunk in response_stream:
-            if not chunk.candidates:
-                continue
-            # Handle cases where content is blocked or empty
-            try:
+def continue_async_job(job_id, prompt, callbacks):
+    """
+    Continues an existing async job by sending additional prompts reusing the same client.
+    """
+    kwargs = create_generation_kwargs(contents=prompt)
+    start_async_job(None, kwargs, callbacks, job_id=job_id, job_name=f"Continue: {prompt[:30]}...")
+
+def _handle_response_stream(job_id, response_stream):
+    for chunk in response_stream:
+        if hasattr(chunk, 'candidates') and not chunk.candidates:
+            continue
+        # Handle cases where content is blocked or empty
+        try:
+            # Standard GenerateContentResponse parsing
+            if hasattr(chunk, 'candidates'):
                 candidate = chunk.candidates[0]
                 if not candidate.content or not candidate.content.parts:
                     continue
@@ -416,10 +436,32 @@ def _job_worker(client, kwargs, job_id):
                     is_thought = hasattr(part, 'thought') and part.thought
                     msg_type = 'thought' if is_thought else 'chunk'
                     _JOB_QUEUE.put((job_id, msg_type, part.text))
-            except Exception:
-                pass # Skip problematic chunks
+            elif hasattr(chunk, 'text'):
+                 # Fallback for simple text chunks if structure varies
+                 _JOB_QUEUE.put((job_id, 'chunk', chunk.text))
+
+        except Exception:
+            pass # Skip problematic chunks
+
+def _job_worker(client, kwargs, job_id, target_func=None):
+    try:
+        if target_func:
+            count = 0
+            while True:
+                (next_count, response) = target_func(count, **kwargs)
+                if next_count == 0:
+                    _JOB_QUEUE.put((job_id, 'error', response))
+                    break
+                count = next_count
+                if response:
+                    _handle_response_stream(job_id, response)
+                time.sleep(0.2)
+        else:
+            response_stream = client.models.generate_content_stream(**kwargs)
+            _handle_response_stream(job_id, response_stream)
 
         _JOB_QUEUE.put((job_id, 'finish', None))
+
     except Exception as e:
         _JOB_QUEUE.put((job_id, 'error', str(e)))
 
