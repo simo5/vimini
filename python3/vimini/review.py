@@ -61,7 +61,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                 return
 
             objects_to_resolve = shlex.split(git_objects)
-            
+
             # Check if a range is specified. If not, we don't want to walk the whole history.
             rev_list_args = []
             if not any(".." in obj for obj in objects_to_resolve):
@@ -231,14 +231,6 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                     context_files_to_upload = [os.path.join(repo_path, rel_path) for rel_path in changed_files_relative]
                     uploaded_files = context.upload_context_files(client, file_paths_to_include=context_files_to_upload) or []
 
-            util.display_message("")
-            util.new_split()
-            display_objects = (git_objects[:40] + '..') if len(git_objects) > 40 else git_objects
-            vim.command(f'file Vimini Git Review Target: {display_objects}')
-            vim.command('setlocal buftype=nofile filetype=diff noswapfile')
-            vim.current.buffer[:] = review_content.split('\n')
-            vim.command('normal! 1G')
-
             content_source_description = f"the output of `git show {git_objects}`"
         else:
             review_content = "\n".join(vim.current.buffer[:])
@@ -252,18 +244,27 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
         job_name = f"Review: {git_objects if git_objects else 'current buffer'} {prompt}"
         job_id = util.reserve_next_job_id(job_name)
 
-        thoughts_buf_num = -1
-        if verbose:
-            try:
-                thoughts_buf_num = util.create_thoughts_buffer(job_id)
-            except Exception as e:
-                util.display_message(f"Error creating thoughts buffer: {e}", error=True)
-
         util.new_split()
-        vim.command('file Vimini Review')
-        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+        safe_name = f"[{job_id}] Vimini Review".replace(" ", "\\ ")
+        vim.command(f"file {safe_name}")
+        vim.command('setlocal buftype=nofile')
+        vim.command('setlocal bufhidden=wipe')
+        vim.command('setlocal noswapfile')
+        vim.command('setlocal filetype=markdown')
+
         review_buffer = vim.current.buffer
-        review_buffer[:] = ['']
+        review_buf_num = review_buffer.number
+
+        vim.command(f"let b:vimini_job_id = '{job_id}'")
+
+        context_file_names = sorted([f.display_name for f in uploaded_files])
+        util.append_job_summary(review_buf_num, job_id, prompt, context_file_names)
+
+        # Insert Git Diff Target if applicable
+        if git_objects and review_content:
+             separator_start = "========== GIT DIFF TARGET START =========="
+             separator_end = "========== GIT DIFF TARGET END =========="
+             util.append_to_buffer(review_buf_num, f"\n{separator_start}\n{review_content}\n{separator_end}\n")
 
         # Prepare Async Job
         prompt_template = _construct_review_prompt(uploaded_files, prompt, content_source_description, security_focus)
@@ -276,14 +277,19 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             verbose=verbose
         )
 
-        review_buf_num = review_buffer.number
+        is_first_chunk = True
 
         def on_chunk(text):
+            nonlocal is_first_chunk
+            if is_first_chunk:
+                # Put a new terminator line that indicates where the actual review starts
+                util.append_to_buffer(review_buf_num, "\n========== REVIEW START ==========\n")
+                is_first_chunk = False
             util.append_to_buffer(review_buf_num, text)
 
         def on_thought(text):
-            if verbose and thoughts_buf_num != -1:
-                util.append_to_buffer(thoughts_buf_num, text)
+            if verbose:
+                util.append_to_buffer(review_buf_num, text)
 
         def on_error(msg):
             return f"Error: {msg}"
