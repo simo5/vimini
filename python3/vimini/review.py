@@ -245,7 +245,8 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
         job_id = util.reserve_next_job_id(job_name)
 
         util.new_split()
-        safe_name = f"[{job_id}] Vimini Review".replace(" ", "\\ ")
+        base_buffer_name = f"[{job_id}] Vimini Review"
+        safe_name = f"{base_buffer_name} [->G?]".replace(" ", "\\ ")
         vim.command(f"file {safe_name}")
         vim.command('setlocal buftype=nofile')
         vim.command('setlocal bufhidden=wipe')
@@ -277,10 +278,22 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             verbose=verbose
         )
 
+        started_receiving = False
+
+        def update_status_receiving():
+            nonlocal started_receiving
+            if not started_receiving:
+                started_receiving = True
+                try:
+                    review_buffer.name = f"{base_buffer_name} [<-G]"
+                except Exception:
+                    pass
+
         is_first_chunk = True
 
         def on_chunk(text):
             nonlocal is_first_chunk
+            update_status_receiving()
             if is_first_chunk:
                 # Put a new terminator line that indicates where the actual review starts
                 util.append_to_buffer(review_buf_num, "\n========== REVIEW START ==========\n")
@@ -288,8 +301,16 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             util.append_to_buffer(review_buf_num, text)
 
         def on_thought(text):
+            update_status_receiving()
             if verbose:
                 util.append_to_buffer(review_buf_num, text)
+
+        def on_finish():
+            try:
+                review_buffer.name = base_buffer_name
+            except Exception:
+                pass
+            return "Review completed."
 
         def on_error(msg):
             return f"Error: {msg}"
@@ -298,6 +319,7 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
         util.start_async_job(client, kwargs, {
             'on_chunk': on_chunk,
             'on_thought': on_thought,
+            'on_finish': on_finish,
             'on_error': on_error
         }, job_id=job_id)
 

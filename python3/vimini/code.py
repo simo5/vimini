@@ -93,7 +93,8 @@ def code(prompt, verbose=False, temperature=None):
     # --- 3. Create Code Buffer ---
     # Create the buffer immediately to store thoughts or request summary.
     util.new_split()
-    safe_name = f"[{job_id}] Vimini Code".replace(" ", "\\ ")
+    base_buffer_name = f"[{job_id}] Vimini Code"
+    safe_name = f"{base_buffer_name} [->G?]".replace(" ", "\\ ")
     vim.command(f"file {safe_name}")
     vim.command("setlocal buftype=nofile")
     vim.command("setlocal bufhidden=wipe")
@@ -113,16 +114,32 @@ def code(prompt, verbose=False, temperature=None):
 
     # State for the closure
     json_aggregator = ""
+    started_receiving = False
+
+    def update_status_receiving():
+        nonlocal started_receiving
+        if not started_receiving:
+            started_receiving = True
+            try:
+                code_buffer.name = f"{base_buffer_name} [<-G]"
+            except Exception:
+                pass
 
     def on_chunk(text):
         nonlocal json_aggregator
+        update_status_receiving()
         json_aggregator += text
 
     def on_thought(text):
+        update_status_receiving()
         if verbose:
             util.append_to_buffer(code_buffer_num, text)
 
     def on_finish():
+        try:
+            code_buffer.name = base_buffer_name
+        except Exception:
+            pass
         return _finalize_code_generation(json_aggregator, project_root, job_id, code_buffer_num)
 
     def on_error(msg):
