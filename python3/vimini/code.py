@@ -55,7 +55,15 @@ def code(prompt, verbose=False, temperature=None):
     )
 
     original_buffer = vim.current.buffer
-    main_file_name = os.path.relpath(original_buffer.name, project_root) if original_buffer.name and os.path.isabs(original_buffer.name) else (original_buffer.name or f"Buffer {original_buffer.number}")
+
+    if original_buffer.name:
+        main_file_name = os.path.relpath(original_buffer.name, project_root) if os.path.isabs(original_buffer.name) else original_buffer.name
+        task_instruction = f"Your primary task is to modify the file named '{main_file_name}'."
+    else:
+        task_instruction = "Your primary task is to address the concern in the active buffer (if any).\n"
+        buffer_content = "\n".join(original_buffer[:])
+        if buffer_content.strip():
+            task_instruction += f"\n\nAdditional context from the current active buffer:\n{buffer_content}\n"
 
     context_file_names = sorted([f.display_name for f in uploaded_files])
     file_list_str = "\n".join(f"- {name}" for name in context_file_names)
@@ -71,8 +79,7 @@ def code(prompt, verbose=False, temperature=None):
         (
             f"{prompt}\n\n"
             "Based on the user's request, please generate the code. "
-            f"Your primary task is to modify the file named '{main_file_name}'. "
-            "The other files have been provided for context.\n\n"
+            f"{task_instruction}\n\n"
             f"{context_files_section}"
             "IMPORTANT:\n"
             "1. Your response must be a single JSON object with a 'files' key.\n"
@@ -192,14 +199,48 @@ def _finalize_code_generation(json_aggregator, project_root, job_id, buffer_num)
         for file_op in files_to_process:
             api_path = file_op["file_path"]
             ai_generated_code = file_op["file_content"]
+
+            # Ensure file ends with newline
+            if ai_generated_code and not ai_generated_code.endswith('\n'):
+                ai_generated_code += '\n'
+
             file_type = file_op.get("file_type", "text/plain")
             absolute_path = util.get_absolute_path_from_api_path(api_path)
             file_exists = os.path.exists(absolute_path)
             relative_path = os.path.relpath(absolute_path, project_root)
 
             if file_type == "text/x-diff":
-                if ai_generated_code.strip():
-                    combined_diff_output.extend(ai_generated_code.split("\n"))
+                # Do not strip trailing empty lines indiscriminately, but clean up the string ends.
+                # .strip('\n') removes leading/trailing newlines but preserves context spaces.
+                lines = ai_generated_code.strip('\n').split("\n")
+                if lines:
+                    # Validate that the first line is a diff command
+                    if not lines[0].startswith("diff"):
+                        lines.insert(0, f"diff --git a/{relative_path} b/{relative_path}")
+
+                    # Validate that individual --- +++ lines are suitable for patch -p1
+                    fixed_lines = []
+                    for line in lines:
+                        if line.startswith("--- "):
+                            path = line[4:].strip()
+                            # Trust /dev/null if explicitly mentioned
+                            if path == "/dev/null":
+                                fixed_lines.append(line)
+                            else:
+                                # Otherwise, rewrite based on metadata to ensure correctness
+                                if not file_exists:
+                                    fixed_lines.append("--- /dev/null")
+                                else:
+                                    fixed_lines.append(f"--- a/{relative_path}")
+                        elif line.startswith("+++ "):
+                            path = line[4:].strip()
+                            if path == "/dev/null":
+                                fixed_lines.append(line)
+                            else:
+                                fixed_lines.append(f"+++ b/{relative_path}")
+                        else:
+                            fixed_lines.append(line)
+                    combined_diff_output.extend(fixed_lines)
             else: # 'text/plain' or unspecified
                 original_content = ""
                 if file_exists:
@@ -223,15 +264,19 @@ def _finalize_code_generation(json_aggregator, project_root, job_id, buffer_num)
                     if result.returncode > 1:
                         continue # diff error
 
-                    diff_lines = result.stdout.strip().split("\n")
+                    diff_lines = result.stdout.split("\n")
                     if len(diff_lines) <= 2 and not original_content and not ai_generated_code:
                         continue # Empty diff
 
                     combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
                     if not file_exists:
                         combined_diff_output.append("new file mode 100644")
-                    combined_diff_output.append(f"--- a/{relative_path}")
-                    combined_diff_output.append(f"+++ b/{relative_path}")
+                        combined_diff_output.append(f"--- /dev/null")
+                        combined_diff_output.append(f"+++ b/{relative_path}")
+                    else:
+                        combined_diff_output.append(f"--- a/{relative_path}")
+                        combined_diff_output.append(f"+++ b/{relative_path}")
+
                     combined_diff_output.extend(diff_lines[2:])
 
                 finally:
@@ -385,12 +430,15 @@ def apply_code(job_id=None):
 
     if separator_index != -1:
         diff_content = "\n".join(diff_buffer[separator_index + 1:])
+        # Ensure the patch content ends with a newline
+        if diff_content and not diff_content.endswith('\n'):
+            diff_content += '\n'
     else:
         err_msg = "DIFF section not found, did you remove the separator?"
         util.display_message(err_msg, error=True)
         return  # Preserve buffer
 
-    if not diff_content.strip():
+    if not diff_content:
         util.display_message("Diff is empty. Nothing to apply.", history=True)
         vim.command(f"bdelete! {diff_buffer.number}")
         if diff_buffer.number in _BUFFER_DATA_STORE:
@@ -430,6 +478,15 @@ def apply_code(job_id=None):
 
         for relative_path in modified_files:
             absolute_path = os.path.join(project_root, relative_path)
+
+            # Clean up .orig files potentially created by patch
+            orig_path = absolute_path + ".orig"
+            if os.path.exists(orig_path):
+                try:
+                    os.remove(orig_path)
+                except Exception:
+                    pass
+
             normalized_target_path = os.path.abspath(absolute_path)
             for buf in vim.buffers:
                 if buf.name and os.path.abspath(buf.name) == normalized_target_path:
