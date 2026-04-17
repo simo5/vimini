@@ -143,7 +143,7 @@ customizations.
     ```
 
 8.  **Context Files (`g:context_files`)**:
-    In addition to all files currently open in Vim buffers, you can specify a list of files to always include as context for AI commands like `:ViminiCode`. This is useful for providing the AI with important project files (like configurations, core utilities, or type definitions) without needing to have them open.
+    In addition to all files currently open in Vim buffers, you can specify a list of files to always include as context for AI commands like `:ViminiCode`. This is useful for providing the AI with important project files (like configurations, core utilities, or type definitions) without needing to have them open. Note: The total size of all uploaded context files combined is strictly limited to 1MB; if this limit is exceeded, the largest files will automatically be excluded.
     ```vim
     " Always include these files as context for code generation tasks
     let g:context_files = ['package.json', 'src/main.js', 'src/utils/api.js']
@@ -207,11 +207,11 @@ by `g:vimini_log_file`. This is primarily useful for debugging.
 
 ### `:ViminiCode {prompt}`
 
-Takes the content of all open buffers (and any files specified in `g:context_files`) as context, along with your
+Takes the content of all open buffers (and any files specified in `g:context_files`, up to a total of 1MB) as context, along with your
 `prompt`, and asks the Gemini model to generate code. The result is
-streamed into several new buffers:
-*   `Vimini Diff`: A diff view showing the proposed changes across one or more files.
-*   `Vimini Thoughts` (Optional): If `g:vimini_thinking` is `on`, this buffer shows the AI's internal monologue as it works.
+streamed into a new buffer named `[{job_id}] Vimini Code`. This buffer contains:
+*   The AI's internal thought process as it works (if `g:vimini_thinking` is `on`).
+*   A diff view showing the proposed changes across one or more files.
 
 This command is ideal for asking the AI to refactor, debug, or extend
 your current code.
@@ -223,11 +223,10 @@ your current code.
 After running `:ViminiCode`, you can use the following command to
 apply the changes:
 
-#### `:ViminiApply`
-*   `:ViminiApply`: Applies the AI-generated changes to the relevant files on disk and reloads them in Vim if they are open.
+#### `:ViminiApply [job_id]`
+*   `:ViminiApply [job_id]`: Applies the AI-generated changes to the relevant files on disk and reloads them in Vim if they are open. If you have multiple `Vimini Code` buffers open, you can specify the `job_id` to apply a specific one.
 
-This command will close the temporary `Vimini Diff` and
-`Vimini Thoughts` buffers.
+This command will close the temporary `Vimini Code` buffer.
 
 ### `:ViminiContextFiles`
 
