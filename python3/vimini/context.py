@@ -288,7 +288,7 @@ def _draw_context_files_listing(target_path, project_root, context_files_list):
         "| Vimini Context Files",
         "|------------------------------------------",
         "| <CR>: toggle/enter | l: list | q: close",
-        "| C: in context | >: directory",
+        "| A: add all | C: in context | >: directory",
         "",
         "> .."
     ]
@@ -360,6 +360,7 @@ def context_files_command():
         # 5. Set up key mappings and autocmd for close confirmation
         vim.command("nnoremap <buffer> <silent> <CR> :py3 from vimini.context import toggle_context_file; toggle_context_file()<CR>")
         vim.command("nnoremap <buffer> <silent> l :py3 from vimini.context import show_context_lists; show_context_lists()<CR>")
+        vim.command("nnoremap <buffer> <silent> A :py3 from vimini.context import add_all_regular_files; add_all_regular_files()<CR>")
         vim.command("nnoremap <buffer> <silent> q :q<CR>")
         vim.command("autocmd BufUnload <buffer> :py3 from vimini.context import confirm_context_files; confirm_context_files()")
         # Move cursor past header to the first file/directory entry.
@@ -368,6 +369,77 @@ def context_files_command():
 
     except Exception as e:
         util.display_message(f"Error managing context files: {e}", error=True)
+
+def add_all_regular_files():
+    """
+    Called by 'A' mapping in the ViminiContextFiles buffer.
+    Adds all regular files in the current directory to the context.
+    Does not recurse or attempt to add directories, symlinks, or anything that is not a normal file.
+    """
+    global _VIMINI_PENDING_CONTEXT_FILES
+    try:
+        buf = vim.current.buffer
+        win = vim.current.window
+        line_num, col = win.cursor
+
+        current_path = vim.eval("get(b:, 'vimini_context_path', '')")
+        project_root = vim.eval("get(b:, 'vimini_context_root', '')")
+        if not current_path or not project_root:
+            util.display_message("Error: Context buffer variables not set.", error=True)
+            return
+
+        context_files_list = _VIMINI_PENDING_CONTEXT_FILES
+        if not isinstance(context_files_list, list):
+            util.display_message("Error: Pending context files list is not available.", error=True)
+            return
+
+        added_count = 0
+        dirs_to_ignore = {'.git', '__pycache__', 'node_modules', '.venv', 'target'}
+
+        try:
+            for name in os.listdir(current_path):
+                if name in dirs_to_ignore:
+                    continue
+                full_path = os.path.join(current_path, name)
+                if os.path.isfile(full_path) and not os.path.islink(full_path):
+                    relative_path_for_storage = os.path.relpath(full_path, project_root)
+
+                    is_already_present = False
+                    for f in context_files_list:
+                        path_in_list = os.path.expanduser(f)
+                        if not os.path.isabs(path_in_list):
+                            path_in_list = os.path.join(project_root, path_in_list)
+                        if os.path.normpath(path_in_list) == os.path.normpath(full_path):
+                            is_already_present = True
+                            break
+
+                    if not is_already_present:
+                        context_files_list.append(relative_path_for_storage)
+                        added_count += 1
+        except OSError as e:
+            util.display_message(f"Error reading directory '{current_path}': {e}", error=True)
+            return
+
+        if added_count > 0:
+            _VIMINI_PENDING_CONTEXT_FILES = context_files_list
+            buffer_lines = _draw_context_files_listing(current_path, project_root, context_files_list)
+            if buffer_lines is not None:
+                vim.command('setlocal modifiable')
+                buf[:] = buffer_lines
+                vim.command('setlocal readonly')
+                vim.command("redraw")
+                # Restore cursor position if possible
+                try:
+                    win.cursor = (line_num, col)
+                except vim.error:
+                    pass
+            util.display_message(f"Added {added_count} files to context.", history=True)
+        else:
+            util.display_message("No new regular files found to add.", history=True)
+
+    except Exception as e:
+        err_msg = str(e).replace("'", "''")
+        vim.command(f"echoerr '[Vimini] Error adding regular files: {err_msg}'")
 
 def toggle_context_file():
     """
