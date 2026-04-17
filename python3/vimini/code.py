@@ -25,8 +25,25 @@ def code(prompt, verbose=False, temperature=None):
         if not project_root:
             project_root = vim.eval('getcwd()')
 
+        # Gather context files manually and resolve them relative to project_root
+        file_paths_to_include = []
+        for b in vim.buffers:
+            if b.name and os.path.exists(b.name):
+                file_paths_to_include.append(os.path.abspath(b.name))
+
+        try:
+            context_files_list = vim.eval("get(g:, 'context_files', [])")
+            if isinstance(context_files_list, list):
+                for f in context_files_list:
+                    if os.path.isabs(f):
+                        file_paths_to_include.append(os.path.abspath(f))
+                    else:
+                        file_paths_to_include.append(os.path.abspath(os.path.join(project_root, f)))
+        except Exception:
+            pass
+
         # Upload context files using the helper function.
-        uploaded_files = context.upload_context_files(client)
+        uploaded_files = context.upload_context_files(client, file_paths_to_include=file_paths_to_include)
         if uploaded_files is None:
             return  # The helper function has already displayed an error.
     except Exception as e:
