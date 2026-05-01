@@ -1,5 +1,6 @@
 import vim
 import json
+import os
 from vimini import util
 from google.genai import types
 
@@ -25,6 +26,20 @@ agent_tools = [
                         )
                     },
                     required=['command']
+                )
+            ),
+            types.FunctionDeclaration(
+                name='apply_patch',
+                description='Applies a unified diff patch to modify files. Ensure the patch paths are relative to the project root directory.',
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        'diff_content': types.Schema(
+                            type=types.Type.STRING,
+                            description='The unified diff patch to apply.'
+                        )
+                    },
+                    required=['diff_content']
                 )
             ),
             types.FunctionDeclaration(
@@ -57,6 +72,73 @@ agent_tools = [
         ]
     )
 ]
+
+def safe_apply_patch(diff_content):
+    """
+    Wrapper around apply_patch to ensure no file outside the current project directory can be touched.
+    """
+    from vimini.code import apply_patch
+
+    project_root = os.path.abspath(util.get_git_repo_root() or vim.eval("getcwd()"))
+
+    modified_files = set()
+    for line in diff_content.split('\n'):
+        if line.startswith('--- ') or line.startswith('+++ '):
+            path_part = line[4:].split('\t')[0].strip()
+            if path_part == '/dev/null':
+                continue
+            if path_part.startswith('a/') or path_part.startswith('b/'):
+                path_part = path_part[2:]
+            
+            target_path = os.path.abspath(os.path.join(project_root, path_part))
+            try:
+                if os.path.commonpath([project_root, target_path]) != project_root:
+                    return False, f"Security error: Attempted to modify file outside project directory: {path_part}"
+            except ValueError:
+                return False, f"Security error: Path resolution failed for {path_part}"
+            
+            modified_files.add(path_part)
+
+    if not modified_files:
+        return False, "No valid files found in patch to apply."
+
+    popup_content = ["The agent wants to apply a patch to the following files:", ""]
+    for f in sorted(modified_files):
+        popup_content.append(f"- {f}")
+    
+    popup_content.extend(['', '---', 'Apply patch? [y/n]'])
+
+    popup_options = {
+        'title': ' Confirm Patch ', 'line': 0, 'col': 0,
+        'minwidth': 50, 'maxwidth': 80,
+        'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
+        'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
+        'close': 'none', 'zindex': 200,
+    }
+    
+    popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+    vim.command("redraw!")
+
+    patch_confirmed = False
+    try:
+        answer_code = vim.eval('getchar()')
+        answer_char = chr(int(answer_code))
+        if answer_char.lower() == 'y':
+            patch_confirmed = True
+    except (vim.error, ValueError, TypeError):
+        pass
+    finally:
+        vim.eval(f"popup_close({popup_id})")
+        vim.command("redraw!")
+
+    if not patch_confirmed:
+        return False, "Patch application cancelled by user."
+
+    success, msg = apply_patch(diff_content, project_root)
+    if success:
+        return True, msg
+    else:
+        return False, msg
 
 def chat(prompt=None):
     """
@@ -236,6 +318,17 @@ def chat(prompt=None):
                                         args_dict = {}
                                     filepath = args_dict.get('filepath', '')
                                     result_text = read_file(filepath)
+                                    responses.append(types.Part.from_function_response(
+                                        name=tool_call.name,
+                                        response={'result': result_text}
+                                    ))
+                                elif tool_call.name == 'apply_patch':
+                                    try:
+                                        args_dict = dict(tool_call.args) if tool_call.args else {}
+                                    except Exception:
+                                        args_dict = {}
+                                    diff_content = args_dict.get('diff_content', '')
+                                    success, result_text = safe_apply_patch(diff_content)
                                     responses.append(types.Part.from_function_response(
                                         name=tool_call.name,
                                         response={'result': result_text}

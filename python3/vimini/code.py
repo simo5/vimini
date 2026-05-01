@@ -363,6 +363,82 @@ def show_diff():
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
+def apply_patch(diff_content, project_root=None):
+    """
+    Applies a unified diff patch and reloads affected buffers.
+    Returns (True, message) if successful, (False, error_message) otherwise.
+    """
+    if not diff_content:
+        util.display_message("Diff is empty. Nothing to apply.", history=True)
+        return False
+
+    if not project_root:
+        project_root = util.get_git_repo_root() or vim.eval("getcwd()")
+
+    try:
+        # Use patch command to apply the diff
+        # -p1 strips the first path component (a/ and b/)
+        # -N ignores patches that seem already applied
+        # -r - rejects to stdout (avoids .rej files)
+        result = subprocess.run(
+            ["patch", "-p1", "-N", "-r", "-"],
+            input=diff_content, text=True, check=False,
+            capture_output=True, cwd=project_root
+        )
+
+        if result.returncode != 0:
+            err_msg = f"Patch command failed. Please review the output and the diff.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
+            util.display_message(err_msg, error=True)
+            return False
+
+        # Success
+        util.display_message("Successfully applied modified diff.", history=True)
+
+        # Parse diff to identify modified files for reloading
+        modified_files = set()
+        for line in diff_content.split("\n"):
+            if line.startswith("--- a/"):
+                path = line[len("--- a/"):].strip()
+                if path != "/dev/null":
+                    modified_files.add(path)
+            elif line.startswith("+++ b/"):
+                path = line[len("+++ b/"):].strip()
+                if path != "/dev/null":
+                    modified_files.add(path)
+
+        for relative_path in modified_files:
+            absolute_path = os.path.join(project_root, relative_path)
+
+            # Clean up .orig files potentially created by patch
+            orig_path = absolute_path + ".orig"
+            if os.path.exists(orig_path):
+                try:
+                    os.remove(orig_path)
+                except Exception:
+                    pass
+
+            normalized_target_path = os.path.abspath(absolute_path)
+            for buf in vim.buffers:
+                if buf.name and os.path.abspath(buf.name) == normalized_target_path:
+                    # Reload buffer if visible
+                    win_nr = vim.eval(f"bufwinnr({buf.number})")
+                    if int(win_nr) > 0:
+                        vim.command(f"{win_nr}wincmd w")
+                        vim.command("e!")
+                        vim.command("wincmd p")
+                    else:
+                        # Mark buffer to be reloaded when entered
+                        vim.command(f"checktime {buf.number}")
+                    break
+        return True
+
+    except FileNotFoundError:
+        util.display_message("Error: `patch` command not found. Is it in your PATH?", error=True)
+        return False
+    except Exception as e:
+        util.display_message(f"Error applying diff: {e}", error=True)
+        return False
+
 def apply_code(job_id=None):
     """
     Finds the 'Vimini Code' buffer, writes all specified file changes to
@@ -462,70 +538,10 @@ def apply_code(job_id=None):
             del _BUFFER_DATA_STORE[diff_buffer.number]
         return
 
-    try:
-        # Use patch command to apply the diff
-        # -p1 strips the first path component (a/ and b/)
-        # -N ignores patches that seem already applied
-        # -r - rejects to stdout (avoids .rej files)
-        result = subprocess.run(
-            ["patch", "-p1", "-N", "-r", "-"],
-            input=diff_content, text=True, check=False,
-            capture_output=True, cwd=project_root
-        )
-
-        if result.returncode != 0:
-            err_msg = f"Patch command failed. Please review the output and the diff.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
-            util.display_message(err_msg, error=True)
-            return  # Preserve buffer
-
-        # Success
-        util.display_message("Successfully applied modified diff.", history=True)
-
-        # Parse diff to identify modified files for reloading
-        modified_files = set()
-        for line in diff_content.split("\n"):
-            if line.startswith("--- a/"):
-                path = line[len("--- a/"):].strip()
-                if path != "/dev/null":
-                    modified_files.add(path)
-            elif line.startswith("+++ b/"):
-                path = line[len("+++ b/"):].strip()
-                if path != "/dev/null":
-                    modified_files.add(path)
-
-        for relative_path in modified_files:
-            absolute_path = os.path.join(project_root, relative_path)
-
-            # Clean up .orig files potentially created by patch
-            orig_path = absolute_path + ".orig"
-            if os.path.exists(orig_path):
-                try:
-                    os.remove(orig_path)
-                except Exception:
-                    pass
-
-            normalized_target_path = os.path.abspath(absolute_path)
-            for buf in vim.buffers:
-                if buf.name and os.path.abspath(buf.name) == normalized_target_path:
-                    # Reload buffer if visible
-                    win_nr = vim.eval(f"bufwinnr({buf.number})")
-                    if int(win_nr) > 0:
-                        vim.command(f"{win_nr}wincmd w")
-                        vim.command("e!")
-                        vim.command("wincmd p")
-                    else:
-                        # Mark buffer to be reloaded when entered
-                        vim.command(f"checktime {buf.number}")
-                    break
-
+    if apply_patch(diff_content, project_root):
         # Remove from data store
         if diff_buffer.number in _BUFFER_DATA_STORE:
             del _BUFFER_DATA_STORE[diff_buffer.number]
 
         # Cleanup
         vim.command(f"bdelete! {diff_buffer.number}")
-
-    except FileNotFoundError:
-        util.display_message("Error: `patch` command not found. Is it in your PATH?", error=True)
-    except Exception as e:
-        util.display_message(f"Error applying diff: {e}", error=True)
