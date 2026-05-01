@@ -1,6 +1,7 @@
 import vim
 import json
 import os
+import time
 from vimini import util
 from google.genai import types
 
@@ -14,20 +15,6 @@ A_prefix = "A: "
 agent_tools = [
     types.Tool(
         function_declarations=[
-            types.FunctionDeclaration(
-                name='execute_vim_command',
-                description='Executes a Vim command. Use for safe editor actions.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        'command': types.Schema(
-                            type=types.Type.STRING,
-                            description='The Vim command string to execute.'
-                        )
-                    },
-                    required=['command']
-                )
-            ),
             types.FunctionDeclaration(
                 name='apply_patch',
                 description='Applies a unified diff patch to modify files. Ensure the patch paths are relative to the project root directory.',
@@ -77,7 +64,7 @@ def safe_apply_patch(diff_content):
     """
     Wrapper around apply_patch to ensure no file outside the current project directory can be touched.
     """
-    from vimini.code import apply_patch
+    from vimini.code import _DIFF_SEPARATOR
 
     project_root = os.path.abspath(util.get_git_repo_root() or vim.eval("getcwd()"))
 
@@ -89,56 +76,59 @@ def safe_apply_patch(diff_content):
                 continue
             if path_part.startswith('a/') or path_part.startswith('b/'):
                 path_part = path_part[2:]
-            
+
             target_path = os.path.abspath(os.path.join(project_root, path_part))
             try:
                 if os.path.commonpath([project_root, target_path]) != project_root:
                     return False, f"Security error: Attempted to modify file outside project directory: {path_part}"
             except ValueError:
                 return False, f"Security error: Path resolution failed for {path_part}"
-            
+
             modified_files.add(path_part)
 
     if not modified_files:
         return False, "No valid files found in patch to apply."
 
-    popup_content = ["The agent wants to apply a patch to the following files:", ""]
-    for f in sorted(modified_files):
-        popup_content.append(f"- {f}")
+    job_id = util.reserve_next_job_id("Chat Patch")
     
-    popup_content.extend(['', '---', 'Apply patch? [y/n]'])
+    util.new_split()
+    base_buffer_name = f"[{job_id}] Vimini Code"
+    safe_name = base_buffer_name.replace(" ", "\\ ")
+    
+    vim.command(f"file {safe_name}")
+    vim.command("setlocal buftype=nofile")
+    vim.command("setlocal bufhidden=wipe")
+    vim.command("setlocal noswapfile")
+    vim.command("setlocal filetype=diff")
 
-    popup_options = {
-        'title': ' Confirm Patch ', 'line': 0, 'col': 0,
-        'minwidth': 50, 'maxwidth': 80,
-        'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
-        'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
-        'close': 'none', 'zindex': 200,
-    }
-    
-    popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+    diff_buffer = vim.current.buffer
+    diff_buffer_num = diff_buffer.number
+
+    vim.command(f"let b:vimini_project_root = '{project_root}'")
+    vim.command(f"let b:vimini_job_id = '{job_id}'")
+
+    lines = ["The agent wants to apply a patch to the following files:", ""]
+    for f in sorted(modified_files):
+        lines.append(f"- {f}")
+    lines.append("")
+    lines.append(_DIFF_SEPARATOR)
+    lines.extend(diff_content.split('\n'))
+
+    diff_buffer[:] = lines
     vim.command("redraw!")
 
-    patch_confirmed = False
-    try:
-        answer_code = vim.eval('getchar()')
-        answer_char = chr(int(answer_code))
-        if answer_char.lower() == 'y':
-            patch_confirmed = True
-    except (vim.error, ValueError, TypeError):
-        pass
-    finally:
-        vim.eval(f"popup_close({popup_id})")
-        vim.command("redraw!")
+    # Wait until the buffer is closed (by user applying or rejecting it)
+    while True:
+        exists = False
+        for b in vim.buffers:
+            if b.number == diff_buffer_num:
+                exists = True
+                break
+        if not exists:
+            break
+        time.sleep(1)
 
-    if not patch_confirmed:
-        return False, "Patch application cancelled by user."
-
-    success, msg = apply_patch(diff_content, project_root)
-    if success:
-        return True, msg
-    else:
-        return False, msg
+    return True, "Patch buffer closed. User has either applied or rejected the patch."
 
 def chat(prompt=None):
     """
