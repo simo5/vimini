@@ -363,14 +363,15 @@ def show_diff():
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
-def apply_patch(diff_content, project_root=None):
+def apply_patch(diff_content, project_root=None, silent=False):
     """
     Applies a unified diff patch and reloads affected buffers.
     Returns (True, message) if successful, (False, error_message) otherwise.
     """
     if not diff_content:
-        util.display_message("Diff is empty. Nothing to apply.", history=True)
-        return False
+        msg = "Diff is empty. Nothing to apply."
+        if not silent: util.display_message(msg, history=True)
+        return False, msg
 
     if not project_root:
         project_root = util.get_git_repo_root() or vim.eval("getcwd()")
@@ -388,8 +389,8 @@ def apply_patch(diff_content, project_root=None):
 
         if result.returncode != 0:
             err_msg = f"Patch command failed. Please review the output and the diff.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
-            util.display_message(err_msg, error=True)
-            return False
+            if not silent: util.display_message(err_msg, error=True)
+            return False, err_msg
 
         # Success
         util.display_message("Successfully applied modified diff.", history=True)

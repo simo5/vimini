@@ -17,7 +17,10 @@ agent_tools = [
         function_declarations=[
             types.FunctionDeclaration(
                 name='apply_patch',
-                description='Applies a unified diff patch to modify files. Ensure the patch paths are relative to the project root directory.',
+                description='Applies a unified diff patch to modify files. ' +
+                    'Ensure the patch paths are relative to the project root ' +
+                    'directory. Assume patch -p1 will be used. ' +
+                    'Include sufficient unmodified context lines for the patch to apply cleanly.',
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
@@ -213,7 +216,15 @@ def chat(prompt=None):
         # Create the GenAI session object with Agentic config
         agent_config = types.GenerateContentConfig(
             tools=agent_tools,
-            system_instruction="You are an autonomous coding agent. Use tools to execute actions when requested."
+            system_instruction=(
+                "You are an expert autonomous coding agent and software engineer. "
+                "Follow these guidelines for optimal performance:\n"
+                "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory` and `read_file` tools to understand the repository structure and exact file contents. Never assume or guess code.\n"
+                "2. **Use the Patch Tool Correctly:** To modify files, use the `apply_patch` tool. Provide a valid unified diff. Use file paths relative to the project root. Ensure your diff includes sufficient unmodified context lines for reliable application.\n"
+                "3. **Patch Reliability:** `apply_patch` should ideally be the final action in your response. If a patch fails due to a formatting or context mismatch, do not blindly retry the exact same patch. First, re-read the file to obtain the up-to-date content, then formulate a corrected diff.\n"
+                "4. **Limit Retries:** Avoid multiple calls to `apply_patch` for the same file in a single response. If you struggle to apply a patch, stop and ask the user to refine the request, or request more context to ensure a higher chance of success on the next attempt.\n"
+                "5. **Be Concise:** Provide brief, clear explanations. Avoid unnecessary conversational filler."
+            )
         )
         chat_session['session'] = client.chats.create(
             model=util._MODEL,
