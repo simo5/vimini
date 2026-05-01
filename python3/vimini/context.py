@@ -709,7 +709,7 @@ def list_directory(directory_path="."):
         current_root = os.path.abspath(vim.eval('getcwd()'))
         target_path = os.path.abspath(os.path.join(current_root, directory_path))
 
-        if not target_path.startswith(current_root):
+        if os.path.commonpath([current_root, target_path]) != current_root:
             return "Error: Cannot list directories above the current working directory."
 
         if not os.path.isdir(target_path):
@@ -745,7 +745,7 @@ def read_file(filepath):
         current_root = os.path.abspath(vim.eval('getcwd()'))
         target_path = os.path.abspath(os.path.join(current_root, filepath))
 
-        if not target_path.startswith(current_root):
+        if os.path.commonpath([current_root, target_path]) != current_root:
             return "Error: Cannot read files above the current working directory."
 
         if not os.path.isfile(target_path):
