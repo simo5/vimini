@@ -698,6 +698,67 @@ def confirm_context_files():
         _VIMINI_PENDING_CONTEXT_FILES = None
 
 
+# --- Agentic Context Functions ---
+
+def list_directory(directory_path="."):
+    """
+    Reads the list of files and directories in a given path.
+    Does not allow listing files above the current working directory.
+    """
+    try:
+        current_root = os.path.abspath(vim.eval('getcwd()'))
+        target_path = os.path.abspath(os.path.join(current_root, directory_path))
+
+        if not target_path.startswith(current_root):
+            return "Error: Cannot list directories above the current working directory."
+
+        if not os.path.isdir(target_path):
+            return f"Error: Directory '{directory_path}' does not exist or is not a directory."
+
+        items = os.listdir(target_path)
+        dirs = []
+        files = []
+        for item in items:
+            item_path = os.path.join(target_path, item)
+            if os.path.isdir(item_path):
+                dirs.append(item + "/")
+            else:
+                files.append(item)
+
+        dirs.sort()
+        files.sort()
+        listing = dirs + files
+
+        if not listing:
+            return f"Directory '{directory_path}' is empty."
+
+        return "\n".join(listing)
+    except Exception as e:
+        return f"Error listing directory: {str(e)}"
+
+def read_file(filepath):
+    """
+    Reads the content of a file. Only files within the current working directory
+    or its subdirectories can be read.
+    """
+    try:
+        current_root = os.path.abspath(vim.eval('getcwd()'))
+        target_path = os.path.abspath(os.path.join(current_root, filepath))
+
+        if not target_path.startswith(current_root):
+            return "Error: Cannot read files above the current working directory."
+
+        if not os.path.isfile(target_path):
+            return f"Error: File '{filepath}' does not exist or is not a regular file."
+
+        with open(target_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        return content
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
 # --- Remote File Manager ---
 
 def _refresh_files_buffer():

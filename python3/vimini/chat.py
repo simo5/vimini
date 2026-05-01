@@ -1,11 +1,62 @@
 import vim
+import json
 from vimini import util
+from google.genai import types
 
 # Global variable to hold the chat session
 chat_session = {}
 
 Q_prefix = "Q: "
 A_prefix = "A: "
+
+# Define agent tools for safe execution
+agent_tools = [
+    types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name='execute_vim_command',
+                description='Executes a Vim command. Use for safe editor actions.',
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        'command': types.Schema(
+                            type=types.Type.STRING,
+                            description='The Vim command string to execute.'
+                        )
+                    },
+                    required=['command']
+                )
+            ),
+            types.FunctionDeclaration(
+                name='read_file',
+                description='Reads the content of a file. Only files within the current working directory or its subdirectories can be read.',
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        'filepath': types.Schema(
+                            type=types.Type.STRING,
+                            description='Path to the file to read.'
+                        )
+                    },
+                    required=['filepath']
+                )
+            ),
+            types.FunctionDeclaration(
+                name='list_directory',
+                description='Reads the list of files and directories in a given path. Cannot list above the current working directory.',
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        'directory_path': types.Schema(
+                            type=types.Type.STRING,
+                            description='The relative path to the directory to list. Defaults to "." for the current directory.'
+                        )
+                    }
+                )
+            )
+        ]
+    )
+]
 
 def chat(prompt=None):
     """
@@ -87,8 +138,15 @@ def chat(prompt=None):
         if not client:
              return
 
-        # Create the GenAI session object
-        chat_session['session'] = client.chats.create(model=util._MODEL)
+        # Create the GenAI session object with Agentic config
+        agent_config = types.GenerateContentConfig(
+            tools=agent_tools,
+            system_instruction="You are an autonomous coding agent. Use tools to execute actions when requested."
+        )
+        chat_session['session'] = client.chats.create(
+            model=util._MODEL,
+            config=agent_config
+        )
         chat_session['running'] = True
 
         def on_chunk(text):
@@ -118,8 +176,81 @@ def chat(prompt=None):
                     prompt = chat_session.get('prompt')
                     if not prompt:
                         return (0, "Invalid prompt")
+
+                    # Intercept function calls in the stream for safe agentic workflows
+                    def agentic_stream_wrapper(current_prompt):
+                        response_stream = session.send_message_stream(current_prompt)
+                        pending_tool_calls = []
+                        for chunk in response_stream:
+                            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+                                modified_parts = []
+                                chunk_has_func = False
+                                for part in chunk.candidates[0].content.parts:
+                                    if hasattr(part, 'function_call') and part.function_call:
+                                        chunk_has_func = True
+                                        tool_call = part.function_call
+                                        pending_tool_calls.append(tool_call)
+                                        try:
+                                            args_str = json.dumps(dict(tool_call.args)) if tool_call.args else "{}"
+                                        except Exception:
+                                            args_str = str(tool_call.args)
+                                        modified_parts.append(types.Part(text=f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n"))
+                                    else:
+                                        modified_parts.append(part)
+
+                                if chunk_has_func:
+                                    yield types.GenerateContentResponse(
+                                        candidates=[
+                                            types.Candidate(
+                                                content=types.Content(
+                                                    parts=modified_parts
+                                                )
+                                            )
+                                        ]
+                                    )
+                                else:
+                                    yield chunk
+                            else:
+                                yield chunk
+
+                        if pending_tool_calls:
+                            responses = []
+                            for tool_call in pending_tool_calls:
+                                if tool_call.name == 'list_directory':
+                                    from vimini.context import list_directory
+                                    try:
+                                        args_dict = dict(tool_call.args) if tool_call.args else {}
+                                    except Exception:
+                                        args_dict = {}
+                                    dir_path = args_dict.get('directory_path', '.')
+                                    result_text = list_directory(dir_path)
+                                    responses.append(types.Part.from_function_response(
+                                        name=tool_call.name,
+                                        response={'result': result_text}
+                                    ))
+                                elif tool_call.name == 'read_file':
+                                    from vimini.context import read_file
+                                    try:
+                                        args_dict = dict(tool_call.args) if tool_call.args else {}
+                                    except Exception:
+                                        args_dict = {}
+                                    filepath = args_dict.get('filepath', '')
+                                    result_text = read_file(filepath)
+                                    responses.append(types.Part.from_function_response(
+                                        name=tool_call.name,
+                                        response={'result': result_text}
+                                    ))
+                                else:
+                                    # TODO: Suspend stream, prompt user for confirmation, execute tool, and submit function_response
+                                    responses.append(types.Part.from_function_response(
+                                        name=tool_call.name,
+                                        response={'error': 'Tool execution pending user confirmation (not implemented)'}
+                                    ))
+
+                            yield from agentic_stream_wrapper(responses)
+
                     # Return the new counter as 'prev' for next iteration
-                    return (c, session.send_message_stream(prompt))
+                    return (c, agentic_stream_wrapper(prompt))
                 else:
                     return (c, None)
             return (0, "Session not running")
