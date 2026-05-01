@@ -28,6 +28,61 @@ def initialize(api_key, model, logfile=None):
 def logging(logfile=None):
     util.set_logging(logfile)
 
+def reload_vimini():
+    """
+    Reloads the vimini python modules to pick up changes from disk.
+    Also re-initializes the plugin to preserve the API key and settings.
+    """
+    import sys
+    import os
+    import vim
+
+    # Save initialization parameters before deleting modules
+    try:
+        from vimini import util as old_util
+        api_key = old_util._API_KEY
+        model = old_util._MODEL
+        log_file = None
+        if old_util._LOGGER and old_util._LOGGER.handlers:
+            import logging
+            for handler in old_util._LOGGER.handlers:
+                if isinstance(handler, logging.FileHandler):
+                    log_file = handler.baseFilename
+                    break
+    except Exception:
+        api_key = vim.eval("get(g:, 'vimini_api_key', '')")
+        if not api_key:
+            token_path = os.path.expanduser('~/.config/gemini.token')
+            if os.path.exists(token_path):
+                try:
+                    with open(token_path, 'r') as f:
+                        api_key = f.read().strip()
+                except Exception:
+                    pass
+        model = vim.eval("get(g:, 'vimini_model', 'gemini-2.5-flash')")
+        log_file = vim.eval("get(g:, 'vimini_log_file', '')")
+        if not log_file or vim.eval("get(g:, 'vimini_logging', 'off')") != 'on':
+            log_file = None
+
+    # Delete all vimini modules from sys.modules
+    modules_to_delete = [m for m in list(sys.modules.keys()) if m.startswith('vimini')]
+    for m in modules_to_delete:
+        del sys.modules[m]
+
+    # Re-import main and re-initialize
+    from vimini import main
+    main.initialize(api_key=api_key, model=model, logfile=log_file)
+
+    # Use the freshly imported util to display the message
+    from vimini import util as new_util
+    new_util.display_message("Vimini Python modules reloaded.", history=True)
+
+def reload_plugin():
+    """
+    Reloads the Vimini Python modules.
+    """
+    reload_vimini()
+
 def list_models():
     """
     Lists the available Gemini models.
@@ -390,8 +445,10 @@ def help(command_name=None):
         ":ViminiStatus",
         "    Shows a read-only window with all currently active jobs.",
         "",
+        ":ViminiReload",
+        "    Reloads the Vimini Python code from disk for faster development iterations.",
+        "",
         ":ViminiHelp [command]",
-        "    Shows this help. Optionally jumps to [command].",
     ]
 
     # Find or create buffer

@@ -418,6 +418,14 @@ Opens a read-only buffer showing the status of currently running asynchronous jo
 :ViminiStatus
 ```
 
+### `:ViminiReload`
+
+Reloads the Vimini Python modules from disk. This is primarily useful for developers working on the plugin, allowing them to test changes and achieve faster development iterations without having to restart Vim.
+
+```vim
+:ViminiReload
+```
+
 ### `:ViminiHelp [command]`
 
 Opens a help buffer listing all available Vimini commands and their descriptions. You can optionally provide a command name to jump directly to its help entry.

@@ -555,6 +555,20 @@ endfunction
 
 command! ViminiStatus call ViminiStatus()
 
+" Expose a function to reload Vimini code
+function! ViminiReload()
+  py3 << EOF
+try:
+    from vimini import main
+    main.reload_plugin()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error reloading: {error_message}'")
+EOF
+endfunction
+
+command! -nargs=0 ViminiReload call ViminiReload()
+
 let s:status_timer = -1
 
 function! ViminiInternalUpdateStatus(timer)
