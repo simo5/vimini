@@ -93,11 +93,11 @@ def safe_apply_patch(diff_content):
         return False, "No valid files found in patch to apply."
 
     job_id = util.reserve_next_job_id("Chat Patch")
-    
+
     util.new_split()
     base_buffer_name = f"[{job_id}] Vimini Code"
     safe_name = base_buffer_name.replace(" ", "\\ ")
-    
+
     vim.command(f"file {safe_name}")
     vim.command("setlocal buftype=nofile")
     vim.command("setlocal bufhidden=wipe")
@@ -217,8 +217,14 @@ def chat(prompt=None):
         agent_config = types.GenerateContentConfig(
             tools=agent_tools,
             system_instruction=(
-                "You are an expert autonomous coding agent and software engineer. "
-                "Follow these guidelines for optimal performance:\n"
+                "When explicitly requested to change code You act as an expert"
+                "autonomous coding agent and software engineer, and can access"
+                "tools and execute functions."
+                "Normaly although You are just an expeert at returning general"
+                "infomation. and avoid as much as possible using functions and"
+                "performiang actions."
+                "Follow these guidelines for optimal performance ONLY when"
+                "acting as a coding agent:\n"
                 "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory` and `read_file` tools to understand the repository structure and exact file contents. Never assume or guess code.\n"
                 "2. **Use the Patch Tool Correctly:** To modify files, use the `apply_patch` tool. Provide a valid unified diff. Use file paths relative to the project root. Ensure your diff includes sufficient unmodified context lines for reliable application.\n"
                 "3. **Patch Reliability:** `apply_patch` should ideally be the final action in your response. If a patch fails due to a formatting or context mismatch, do not blindly retry the exact same patch. First, re-read the file to obtain the up-to-date content, then formulate a corrected diff.\n"
@@ -342,6 +348,16 @@ def chat(prompt=None):
                                     ))
 
                             yield from agentic_stream_wrapper(responses)
+                        else:
+                            yield types.GenerateContentResponse(
+                                candidates=[
+                                    types.Candidate(
+                                        content=types.Content(
+                                            parts=[types.Part(text="----")]
+                                        )
+                                    )
+                                ]
+                            )
 
                     # Return the new counter as 'prev' for next iteration
                     return (c, agentic_stream_wrapper(prompt))
