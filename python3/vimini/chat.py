@@ -223,6 +223,7 @@ def chat(prompt=None):
                 "Normaly although You are just an expeert at returning general"
                 "infomation. and avoid as much as possible using functions and"
                 "performiang actions."
+                "Your identity is Vimini, and you are integrated into the vimini project."
                 "Follow these guidelines for optimal performance ONLY when"
                 "acting as a coding agent:\n"
                 "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory` and `read_file` tools to understand the repository structure and exact file contents. Never assume or guess code.\n"
@@ -353,7 +354,7 @@ def chat(prompt=None):
                                 candidates=[
                                     types.Candidate(
                                         content=types.Content(
-                                            parts=[types.Part(text="----")]
+                                            parts=[types.Part(text="\n----\n")]
                                         )
                                     )
                                 ]

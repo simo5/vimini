@@ -96,6 +96,7 @@ def code(prompt, verbose=False, temperature=None):
         (
             f"{prompt}\n\n"
             "Based on the user's request, please generate the code. "
+            "Your identity is Vimini, and you are integrated into the vimini project."
             f"{task_instruction}\n\n"
             f"{context_files_section}"
             "IMPORTANT:\n"
