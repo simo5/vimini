@@ -287,7 +287,7 @@ endfunction
 command! ViminiDiff call ViminiDiff()
 
 " Configuration: Commit author trailer
-let g:vimini_commit_author = get(g:, 'vimini_commit_author', 'Co-authored-by: Gemini <gemini@google.com>')
+let g:vimini_commit_author = get(g:, 'vimini_commit_author', 'Assisted-by: Gemini <gemini@google.com>')
 
 " Expose a function to generate and execute a git commit
 function! ViminiCommit(q_args)
