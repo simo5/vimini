@@ -111,13 +111,13 @@ def list_models():
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
-def commit(author=None, temperature=None, regenerate=False, refinement=None):
+def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
     """
     Generates a commit message. By default, it stages all changes and creates
     a new commit. If `regenerate` is True, it regenerates the message for the
     HEAD commit and amends it.
     """
-    util.log_info(f"commit(author='{author}', temperature={temperature}, regenerate={regenerate}, refinement='{refinement}')")
+    util.log_info(f"commit(assistant={assistant}, temperature={temperature}, regenerate={regenerate}, refinement='{refinement}')")
     try:
         repo_path = util.get_git_repo_root()
         if not repo_path:
@@ -356,8 +356,9 @@ def commit(author=None, temperature=None, regenerate=False, refinement=None):
 
         if body:
             commit_cmd.extend(['-m', body])
-        if author:
-            commit_cmd.extend(['-m', '', '-m', author]) # Blank line before trailer.
+        if assistant:
+            trailer = f"Assisted-by: Gemini:{util._MODEL}"
+            commit_cmd.extend(['-m', '', '-m', trailer]) # Blank line before trailer.
 
         action = "Amending" if regenerate else "Committing"
         util.display_message(f"{action} with subject: {subject}", history=True)

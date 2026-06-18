@@ -286,18 +286,15 @@ endfunction
 
 command! ViminiDiff call ViminiDiff()
 
-" Configuration: Commit author trailer
-let g:vimini_commit_author = get(g:, 'vimini_commit_author', 'Assisted-by: Gemini <gemini@google.com>')
-
 " Expose a function to generate and execute a git commit
 function! ViminiCommit(q_args)
-  let l:author = g:vimini_commit_author
+  let l:assistant = 1
   let l:regenerate = 0
   let l:other_args = []
   let l:args = split(a:q_args)
   for l:arg in l:args
     if l:arg ==# '-n'
-      let l:author = v:null
+      let l:assistant = 0
     elseif l:arg ==# '-r'
       let l:regenerate = 1
     else
@@ -309,11 +306,11 @@ function! ViminiCommit(q_args)
   py3 << EOF
 try:
     from vimini import main
-    author = vim.eval('l:author')
+    assistant = bool(int(vim.eval('l:assistant')))
     regenerate = bool(int(vim.eval('l:regenerate')))
     refinement = vim.eval('l:prompt_refinement')
     temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    main.commit(author=author, temperature=temperature, regenerate=regenerate, refinement=refinement)
+    main.commit(assistant=assistant, temperature=temperature, regenerate=regenerate, refinement=refinement)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
