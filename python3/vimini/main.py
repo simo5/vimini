@@ -2,7 +2,7 @@ import vim
 import os, subprocess, shlex, textwrap, json
 from google.genai import types
 from vimini import util
-from vimini.util import process_queue
+from vimini.util import process_queue, get_model_name
 from vimini.autocomplete import autocomplete, cancel_autocomplete, process_autocomplete_queue
 from vimini.code import code, show_diff, apply_code
 from vimini.review import review
@@ -357,7 +357,7 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
         if body:
             commit_cmd.extend(['-m', body])
         if assistant:
-            trailer = f"Assisted-by: Gemini:{util._MODEL}"
+            trailer = f"Assisted-by: Gemini:{get_model_name()}"
             commit_cmd.extend(['-m', '', '-m', trailer]) # Blank line before trailer.
 
         action = "Amending" if regenerate else "Committing"

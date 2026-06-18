@@ -8,6 +8,7 @@ from google.genai import types
 # Module-level variables to store the API key, model name, and client instance.
 _API_KEY = None
 _MODEL = None
+_MODEL_NAME = None
 _GENAI_CLIENT = None # Global, lazily-initialized client.
 _REPO_NAME_CACHE = None # Cache for the git repository directory name.
 _REPO_ROOT_CACHE = None # Cache for the git repository root path.
@@ -40,6 +41,28 @@ def get_client():
             vim.command(f"echoerr '[Vimini] Error creating API client: {e}'")
             return None
     return _GENAI_CLIENT
+
+def get_model_name():
+    """
+    Returns the resolved model name for the current _MODEL.
+    Uses the API to resolve it if _MODEL_NAME is not yet set.
+    """
+    global _MODEL_NAME
+    if _MODEL_NAME is not None:
+        return _MODEL_NAME
+
+    client = get_client()
+    if not client:
+        return _MODEL
+
+    try:
+        model_info = client.models.get(model=_MODEL)
+        _MODEL_NAME = model_info.display_name
+    except Exception as e:
+        log_info(f"Failed to resolve model name for '{_MODEL}': {e}")
+        _MODEL_NAME = _MODEL
+
+    return _MODEL_NAME
 
 def new_split():
     """Creates a new split using the user's preferred method."""
