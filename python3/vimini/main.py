@@ -1,5 +1,5 @@
 import vim
-import os, subprocess, shlex, textwrap, json
+import os, subprocess, shlex, textwrap, json, tempfile
 from google.genai import types
 from vimini import util
 from vimini.util import process_queue, get_model_name
@@ -288,83 +288,103 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
             util.display_message(msg, error=True)
             return
 
-        # Show the generated message in a popup for review and confirmation.
-        popup_content = [f"Subject: {subject}", ""]
+        # Show the generated message in a new buffer backed by an empty temp file.
+        with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8", suffix=".gitcommit") as f:
+             tmp_filename = f.name
+
+        util.new_split()
+        vim.command(f"edit {tmp_filename.replace(' ', '\\ ')}")
+        vim.command("setlocal filetype=gitcommit")
+        vim.command("setlocal bufhidden=wipe")
+
+        buffer_content = [subject, ""]
         if body:
-            popup_content.extend(body.split('\n'))
+            buffer_content.extend(body.split('\n'))
 
         if diff_stat_output:
-            stat_header = '--- Files in commit ---' if regenerate else '--- Staged files ---'
-            popup_content.extend(['', stat_header])
-            popup_content.extend(diff_stat_output.split('\n'))
+            stat_header = '# --- Files in commit ---' if regenerate else '# --- Staged files ---'
+            buffer_content.extend(['', stat_header])
+            for line in diff_stat_output.split('\n'):
+                buffer_content.append(f"# {line}")
 
-        popup_title = ' Regenerate Commit Message ' if regenerate else ' Commit Message '
-        popup_question = 'Amend HEAD with this message? [y/n]' if regenerate else 'Commit with this message? [y/n]'
-        popup_content.extend(['', '---', popup_question])
+        vim.current.buffer[:] = buffer_content
 
+        safe_tmp = tmp_filename.replace("'", "''")
+        safe_repo = repo_path.replace("'", "''")
+        vim.command(f"let b:vimini_commit_tmp_file = '{safe_tmp}'")
+        vim.command(f"let b:vimini_commit_repo_path = '{safe_repo}'")
+        vim.command(f"let b:vimini_commit_regenerate = {1 if regenerate else 0}")
+        vim.command(f"let b:vimini_commit_assistant = {1 if assistant else 0}")
 
-        # The str() representation of a Python dict is compatible with Vimscript's
-        # dict syntax, which is required for vim.eval(). For popup_create, the
-        # value 0 for 'line' and 'col' centers the popup.
-        popup_options = {
-            'title': popup_title, 'line': 0, 'col': 0,
-            'minwidth': 50, 'maxwidth': 80,
-            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
-            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
-            'close': 'none', 'zindex': 200,
-        }
-        # Use vim.eval to call Vim's popup_create function.
-        popup_id = vim.eval(f"popup_create({popup_content}, {popup_options})")
-        # Show the popup
+        vim.command("autocmd BufWipeout <buffer> py3 from vimini import main; main._finalize_commit()")
+
+        util.display_message("Review the commit message. Save and close the buffer to commit, or close without saving to abort.", history=True)
         vim.command("redraw!")
 
-        # Capture a single character for confirmation.
-        commit_confirmed = False
-        try:
-            # We convert it to a char to check for 'y' or 'Y'.
-            answer_code = vim.eval('getchar()')
-            # Ensure answer_code is a string that can be converted to an integer.
-            # If not (e.g., for special keys), it is not an affirmative answer.
-            answer_char = chr(int(answer_code))
-            if answer_char.lower() == 'y':
-                commit_confirmed = True
-        except (vim.error, ValueError, TypeError): # Catches Ctrl-C and non-integer return values.
-            pass # commit_confirmed remains False
-        finally:
-            # Ensure the popup is always closed, no matter what key was pressed.
-            vim.eval(f"popup_close({popup_id})")
-            # Redraw to clear any screen artifacts from the popup.
-            vim.command("redraw!")
+    except FileNotFoundError:
+        util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
+    except Exception as e:
+        util.display_message(f"Error: {e}", error=True)
 
-        # If user cancelled, revert the staging and exit.
-        if not commit_confirmed:
-            if regenerate:
-                util.display_message("Amend cancelled.", error=True)
-            else:
-                util.display_message("Commit cancelled. Reverting `git add`.", error=True)
-                reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
-                subprocess.run(reset_cmd, check=False)
-            return
+def _finalize_commit():
+    """Finalizes the commit after the user closes the commit message buffer."""
+    util.log_info("Finalizing commit")
+    try:
+        tmp_filename = vim.eval("get(b:, 'vimini_commit_tmp_file', '')")
+        repo_path = vim.eval("get(b:, 'vimini_commit_repo_path', '')")
+        regenerate = int(vim.eval("get(b:, 'vimini_commit_regenerate', 0)"))
+        assistant = int(vim.eval("get(b:, 'vimini_commit_assistant', 0)"))
+    except Exception as e:
+        util.log_info(f"Failed to read commit variables: {e}")
+        return
 
-        util.log_info("Commit Message accepted")
+    if not tmp_filename or not os.path.exists(tmp_filename):
+        util.log_info(f"Failed to find commit log file")
+        return
 
-        # Construct the commit command with subject, body, and sign-off.
-        commit_cmd = ['git', '-C', repo_path, 'commit']
+    try:
+        with open(tmp_filename, 'r', encoding='utf-8') as f:
+            content = f.read()
+        os.remove(tmp_filename)
+    except Exception as e:
+        util.display_message(f"Error reading commit message: {e}", error=True)
+        return
+
+    # Check if all lines are comments or empty
+    has_non_comment = False
+    for line in content.split('\n'):
+        if line.strip() and not line.strip().startswith('#'):
+            has_non_comment = True
+            break
+
+    if not has_non_comment:
         if regenerate:
-            commit_cmd.append('--amend')
-        commit_cmd.extend(['-s', '-m', subject])
+            util.display_message("Amend cancelled (no commit message saved).", error=True)
+        else:
+            util.display_message("Commit cancelled (no commit message saved). Reverting `git add`.", error=True)
+            reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
+            subprocess.run(reset_cmd, check=False)
+        return
 
-        if body:
-            commit_cmd.extend(['-m', body])
-        if assistant:
-            trailer = f"Assisted-by: Gemini:{get_model_name()}"
-            commit_cmd.extend(['-m', '', '-m', trailer]) # Blank line before trailer.
+    util.log_info("Commit Message accepted")
 
-        action = "Amending" if regenerate else "Committing"
-        util.display_message(f"{action} with subject: {subject}", history=True)
-        vim.command("redraw")
+    commit_cmd = ['git', '-C', repo_path, 'commit', '-s', '--cleanup=strip']
+    if regenerate:
+        commit_cmd.append('--amend')
 
-        commit_result = subprocess.run(commit_cmd, capture_output=True, text=True, check=False)
+    if assistant:
+        trailer = f"Assisted-by: Gemini:{get_model_name()}"
+        if trailer not in content:
+            content += f"\n\n{trailer}\n"
+
+    commit_cmd.extend(['-F', '-'])
+
+    action = "Amending" if regenerate else "Committing"
+    util.display_message(f"{action}...", history=True)
+    vim.command("redraw")
+
+    try:
+        commit_result = subprocess.run(commit_cmd, input=content, capture_output=True, text=True, check=False)
 
         if commit_result.returncode == 0:
             success_message = commit_result.stdout.strip().split('\n')[0]
@@ -374,9 +394,6 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
             error_message = (commit_result.stderr or commit_result.stdout).strip()
             action_past = "amend" if regenerate else "commit"
             util.display_message(f"Git {action_past} failed: {error_message}", error=True)
-
-    except FileNotFoundError:
-        util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
 
