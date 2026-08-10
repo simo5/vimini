@@ -186,6 +186,86 @@ def code(prompt, verbose=False, temperature=None):
         "on_error": on_error
     }, job_id=job_id)
 
+def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
+    """
+    Helper function to parse x-diff chunks, fix the --- and +++ paths,
+    and recount/adjust the line counters in @@ headers if they are incorrect.
+    """
+    lines = ai_generated_code.strip('\n').split('\n')
+    if not lines or (len(lines) == 1 and not lines[0]):
+        return []
+
+    if not lines[0].startswith("diff"):
+        lines.insert(0, f"diff --git a/{relative_path} b/{relative_path}")
+
+    fixed_lines = []
+    current_hunk_header = None
+    current_hunk_data = []
+
+    def flush_hunk():
+        nonlocal current_hunk_header, current_hunk_data
+        if current_hunk_header is None:
+            return
+
+        minus_count = 0
+        plus_count = 0
+        for hl in current_hunk_data:
+            if hl.startswith('-'):
+                minus_count += 1
+            elif hl.startswith('+'):
+                plus_count += 1
+            elif hl.startswith('\\'):
+                pass
+            else:
+                minus_count += 1
+                plus_count += 1
+
+        m = re.match(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$', current_hunk_header)
+        if m:
+            start_minus = m.group(1)
+            start_plus = m.group(2)
+            rest = m.group(3)
+
+            new_minus_str = f"{start_minus},{minus_count}" if minus_count != 1 else start_minus
+            new_plus_str = f"{start_plus},{plus_count}" if plus_count != 1 else start_plus
+
+            fixed_header = f"@@ -{new_minus_str} +{new_plus_str} @@{rest}"
+            fixed_lines.append(fixed_header)
+        else:
+            fixed_lines.append(current_hunk_header)
+
+        fixed_lines.extend(current_hunk_data)
+        current_hunk_header = None
+        current_hunk_data = []
+
+    for line in lines:
+        if line.startswith("@@ "):
+            flush_hunk()
+            current_hunk_header = line
+        elif current_hunk_header is not None:
+            current_hunk_data.append(line)
+        else:
+            if line.startswith("--- "):
+                path = line[4:].strip()
+                if path == "/dev/null":
+                    fixed_lines.append(line)
+                else:
+                    if not file_exists:
+                        fixed_lines.append("--- /dev/null")
+                    else:
+                        fixed_lines.append(f"--- a/{relative_path}")
+            elif line.startswith("+++ "):
+                path = line[4:].strip()
+                if path == "/dev/null":
+                    fixed_lines.append(line)
+                else:
+                    fixed_lines.append(f"+++ b/{relative_path}")
+            else:
+                fixed_lines.append(line)
+
+    flush_hunk()
+    return fixed_lines
+
 def _finalize_code_generation(json_aggregator, project_root, job_id, buffer_num):
     """Parses accumulated JSON and generates diff."""
     global _BUFFER_DATA_STORE
@@ -228,36 +308,8 @@ def _finalize_code_generation(json_aggregator, project_root, job_id, buffer_num)
             relative_path = os.path.relpath(absolute_path, project_root)
 
             if file_type == "text/x-diff":
-                # Do not strip trailing empty lines indiscriminately, but clean up the string ends.
-                # .strip('\n') removes leading/trailing newlines but preserves context spaces.
-                lines = ai_generated_code.strip('\n').split("\n")
-                if lines:
-                    # Validate that the first line is a diff command
-                    if not lines[0].startswith("diff"):
-                        lines.insert(0, f"diff --git a/{relative_path} b/{relative_path}")
-
-                    # Validate that individual --- +++ lines are suitable for patch -p1
-                    fixed_lines = []
-                    for line in lines:
-                        if line.startswith("--- "):
-                            path = line[4:].strip()
-                            # Trust /dev/null if explicitly mentioned
-                            if path == "/dev/null":
-                                fixed_lines.append(line)
-                            else:
-                                # Otherwise, rewrite based on metadata to ensure correctness
-                                if not file_exists:
-                                    fixed_lines.append("--- /dev/null")
-                                else:
-                                    fixed_lines.append(f"--- a/{relative_path}")
-                        elif line.startswith("+++ "):
-                            path = line[4:].strip()
-                            if path == "/dev/null":
-                                fixed_lines.append(line)
-                            else:
-                                fixed_lines.append(f"+++ b/{relative_path}")
-                        else:
-                            fixed_lines.append(line)
+                fixed_lines = _process_x_diff_chunks(ai_generated_code, relative_path, file_exists)
+                if fixed_lines:
                     combined_diff_output.extend(fixed_lines)
             else: # 'text/plain' or unspecified
                 original_content = ""
@@ -367,12 +419,12 @@ def show_diff():
 def apply_patch(diff_content, project_root=None, silent=False):
     """
     Applies a unified diff patch and reloads affected buffers.
-    Returns (True, message) if successful, (False, error_message) otherwise.
+    Returns True if successful, False otherwise.
     """
     if not diff_content:
         msg = "Diff is empty. Nothing to apply."
         if not silent: util.display_message(msg, history=True)
-        return False, msg
+        return False
 
     if not project_root:
         project_root = util.get_git_repo_root() or vim.eval("getcwd()")
@@ -391,7 +443,7 @@ def apply_patch(diff_content, project_root=None, silent=False):
         if result.returncode != 0:
             err_msg = f"Patch command failed. Please review the output and the diff.\nSTDOUT: {result.stdout}\nSTDERR: {result.stderr}"
             if not silent: util.display_message(err_msg, error=True)
-            return False, err_msg
+            return False
 
         # Success
         util.display_message("Successfully applied modified diff.", history=True)
