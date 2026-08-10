@@ -25,7 +25,7 @@ if empty(s:api_key)
 endif
 
 " Configuration: Model name
-let g:vimini_model = get(g:, 'vimini_model', 'gemini-2.5-flash')
+let g:vimini_model = get(g:, 'vimini_model', 'gemini-3.6-flash')
 
 " Configuration: Temperature for generation. Must be between 0.0 and 2.0.
 let g:vimini_temperature = get(g:, 'vimini_temperature', v:null)
