@@ -41,6 +41,9 @@ let g:vimini_logging = get(g:, 'vimini_logging', 'off')
 " Configuration: Default path for saved reviews
 let g:vimini_review_path = get(g:, 'vimini_review_path', '')
 
+" Configuration: Agent Channel
+let g:vimini_channel = get(g:, 'vimini_channel', v:null)
+
 let s:plugin_root_dir = fnamemodify(resolve(expand('<sfile>:p')), ':h')
 
 py3 << EOF

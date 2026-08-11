@@ -1,3 +1,5 @@
+# This file makes the 'vimini' directory a Python package.
+# It can be left empty.
 import vim
 import os, subprocess, shlex, textwrap, json, tempfile
 from google.genai import types
@@ -23,6 +25,11 @@ def initialize(api_key, model, logfile=None):
     util.set_logging(logfile)
     if not util._API_KEY:
         util.display_message("API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token.", error=True)
+    try:
+        from vimini.agent.server import start_agent_server
+        start_agent_server()
+    except Exception as e:
+        util.log_info(f"Failed to start agent server: {e}")
 
 # This new function is needed because vimini.vim calls main.logging()
 def logging(logfile=None):
