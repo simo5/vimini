@@ -46,12 +46,24 @@ let g:vimini_channel = get(g:, 'vimini_channel', v:null)
 
 let s:plugin_root_dir = fnamemodify(resolve(expand('<sfile>:p')), ':h')
 
+function! ViminiChannelCallback(channel, msg)
+  py3 << EOF
+try:
+    from vimini import main
+    msg = vim.eval('a:msg')
+    main.handle_channel_message(msg)
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Channel callback error: {error_message}'")
+EOF
+endfunction
+
+let s:socket_path = ''
+
 py3 << EOF
 from os.path import normpath, join
 import vim
 try:
-    # It's good practice to add the plugin's python directory to sys.path
-    # to ensure imports work correctly, especially for larger projects.
     import sys
     import os
     plugin_root_dir = vim.eval('s:plugin_root_dir')
@@ -63,22 +75,32 @@ try:
     model = vim.eval('g:vimini_model')
     log_file = vim.eval('g:vimini_log_file') if vim.eval('g:vimini_logging') == 'on' else None
     main.initialize(api_key=api_key, model=model, logfile=log_file)
+    socket_path = main.start_agent()
+    if socket_path:
+        vim.command(f"let s:socket_path = '{socket_path}'")
 except Exception as e:
-    # Escape single quotes in the error message to prevent Vimscript errors
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 
+if !empty(s:socket_path)
+  let g:vimini_channel = ch_open('unix:' . s:socket_path, {'callback': "ViminiChannelCallback"})
+endif
+
 " Expose a function to list available models
 function! ViminiListModels()
-  py3 << EOF
-try:
-    from vimini import main
-    main.list_models()
-except Exception as e:
-    error_message = str(e).replace("'", "''")
-    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
-EOF
+  if !exists('g:vimini_channel') || type(g:vimini_channel) != v:t_channel || ch_status(g:vimini_channel) !=# 'open'
+    echoerr '[Vimini] Error: Agent server channel is not open.'
+    return
+  endif
+  echo '[Vimini] Fetching models...'
+  try
+    let l:req = py3eval('main.list_models()')
+    call ch_sendexpr(g:vimini_channel, l:req)
+  catch
+    let l:error_message = substitute(v:exception, "'", "''", 'g')
+    echoerr '[Vimini] Error: ' . l:error_message
+  endtry
 endfunction
 
 command! ViminiListModels call ViminiListModels()
@@ -557,14 +579,30 @@ command! ViminiStatus call ViminiStatus()
 
 " Expose a function to reload Vimini code
 function! ViminiReload()
+  if exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'
+    call ch_close(g:vimini_channel)
+    let g:vimini_channel = v:null
+  endif
+
+  let s:socket_path = ''
+
   py3 << EOF
 try:
     from vimini import main
-    main.reload_plugin()
+    main.stop_agent()
+    main.reload_vimini()
+    from vimini import main as reloaded_main
+    socket_path = reloaded_main.start_agent()
+    if socket_path:
+        vim.command(f"let s:socket_path = '{socket_path}'")
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error reloading: {error_message}'")
 EOF
+
+  if !empty(s:socket_path)
+    let g:vimini_channel = ch_open('unix:' . s:socket_path, {'callback': "ViminiChannelCallback"})
+  endif
 endfunction
 
 command! -nargs=0 ViminiReload call ViminiReload()
@@ -593,3 +631,25 @@ function! ViminiInternalStopStatusTimer()
     let s:status_timer = -1
   endif
 endfunction
+
+" --- Shutdown ---
+
+function! s:ViminiShutdown()
+  if exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'
+    call ch_close(g:vimini_channel)
+    let g:vimini_channel = v:null
+  endif
+
+  py3 << EOF
+try:
+    from vimini import main
+    main.stop_agent()
+except Exception:
+    pass
+EOF
+endfunction
+
+augroup vimini_shutdown
+  autocmd!
+  autocmd VimLeavePre * call s:ViminiShutdown()
+augroup END

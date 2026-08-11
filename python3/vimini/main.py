@@ -1,5 +1,3 @@
-# This file makes the 'vimini' directory a Python package.
-# It can be left empty.
 import vim
 import os, subprocess, shlex, textwrap, json, tempfile
 from google.genai import types
@@ -25,11 +23,53 @@ def initialize(api_key, model, logfile=None):
     util.set_logging(logfile)
     if not util._API_KEY:
         util.display_message("API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token.", error=True)
+
+def start_agent():
+    """
+    Starts the agent server process and returns its Unix socket path.
+    """
     try:
         from vimini.agent.server import start_agent_server
-        start_agent_server()
+        return start_agent_server()
     except Exception as e:
         util.log_info(f"Failed to start agent server: {e}")
+        return None
+
+def stop_agent():
+    """
+    Stops the agent server process if running.
+    """
+    try:
+        from vimini.agent.server import stop_agent_server
+        stop_agent_server()
+    except Exception as e:
+        util.log_info(f"Failed to stop agent server: {e}")
+
+def handle_channel_message(msg):
+    """
+    Handles JSON channel messages received from the agent server via Vim channel.
+    """
+    util.log_info(f"Received channel message: {msg}")
+    if not isinstance(msg, dict):
+        return
+    error = msg.get("error")
+    if error:
+        err_msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
+        util.display_message(f"Error: {err_msg}", error=True)
+        return
+    result = msg.get("result")
+    if isinstance(result, dict):
+        method = result.get("method")
+        if method == "list_models":
+            models = result.get("models", [])
+            util.display_message("")
+            model_list = ["Available Models:"]
+            for model in models:
+                model_list.append(f"- {model}")
+
+            util.new_split()
+            vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+            vim.current.buffer[:] = model_list
 
 # This new function is needed because vimini.vim calls main.logging()
 def logging(logfile=None):
@@ -84,39 +124,19 @@ def reload_vimini():
     from vimini import util as new_util
     new_util.display_message("Vimini Python modules reloaded.", history=True)
 
-def reload_plugin():
-    """
-    Reloads the Vimini Python modules.
-    """
-    reload_vimini()
-
 def list_models():
     """
     Lists the available Gemini models.
     """
     util.log_info("list_models()")
-    try:
-        client = util.get_client()
-        if not client:
-            return
-
-        # Get the list of models.
-        util.display_message("Fetching models...")
-        models = client.models.list()
-        util.display_message("") # Clear the message
-
-        # Prepare the content for the new buffer.
-        model_list = ["Available Models:"]
-        for model in models:
-            model_list.append(f"- {model.name}")
-
-        # Display the models in a new split window.
-        util.new_split()
-        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-        vim.current.buffer[:] = model_list
-
-    except Exception as e:
-        util.display_message(f"Error: {e}", error=True)
+    return {
+        "jsonrpc": "2.0",
+        "id": "list_models",
+        "method": "list_models",
+        "params": {
+            "api_key": util._API_KEY
+        }
+    }
 
 def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
     """
