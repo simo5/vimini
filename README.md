@@ -8,8 +8,7 @@ coding environment.
 
 ## Features
 
-*   **Chat with Gemini**: Send prompts and receive responses in a new
-    buffer.
+*   **Chat with Gemini**: Opens the chat buffer for interactive mode.
 *   **Context-Aware Code Generation**: Use all open buffers as context to
     generate code.
 *   **Code Review**: Get AI-powered reviews for the code in your current
@@ -162,13 +161,12 @@ useful for knowing which models you can set for `g:vimini_model`.
 :ViminiListModels
 ```
 
-### `:ViminiChat {prompt}`
+### `:ViminiChat`
 
-Sends a `prompt` to the configured Gemini model and displays the AI's
-response in a new vertical split buffer.
+Opens the chat buffer for interactive mode with Gemini.
 
 ```vim
-:ViminiChat What is the capital of France?
+:ViminiChat
 ```
 
 ### `:ViminiThinking [on|off]`

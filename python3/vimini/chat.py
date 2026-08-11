@@ -1,198 +1,328 @@
 import vim
 import json
 import os
-import time
 from vimini import util
-from google.genai import types
+from vimini.code import _DIFF_SEPARATOR, _process_x_diff_chunks
 
-# Global variable to hold the chat session
-chat_session = {}
+WAITING_MSG = "Waiting for prompt (CTRL-W q to exit)"
+WELCOME_MSG = "Welcome to Vimini! Waiting for prompt (CTRL-W q to exit)"
+
+chat_session = {
+    'buf_num': -1,
+    'running': False
+}
+
+send_buffer = ""
 
 Q_prefix = "Q: "
 A_prefix = "A: "
 
-# Define agent tools for safe execution
-agent_tools = [
-    types.Tool(
-        function_declarations=[
-            types.FunctionDeclaration(
-                name='apply_patch',
-                description='Applies a unified diff patch to modify files. ' +
-                    'Ensure the patch paths are relative to the project root ' +
-                    'directory. Assume patch -p1 will be used. ' +
-                    'Include sufficient unmodified context lines for the patch to apply cleanly.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        'diff_content': types.Schema(
-                            type=types.Type.STRING,
-                            description='The unified diff patch to apply.'
-                        )
-                    },
-                    required=['diff_content']
-                )
-            ),
-            types.FunctionDeclaration(
-                name='read_file',
-                description='Reads the content of a file. Only files within the current working directory or its subdirectories can be read.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        'filepath': types.Schema(
-                            type=types.Type.STRING,
-                            description='Path to the file to read.'
-                        )
-                    },
-                    required=['filepath']
-                )
-            ),
-            types.FunctionDeclaration(
-                name='list_directory',
-                description='Reads the list of files and directories in a given path. Cannot list above the current working directory.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        'directory_path': types.Schema(
-                            type=types.Type.STRING,
-                            description='The relative path to the directory to list. Defaults to "." for the current directory.'
-                        )
-                    }
-                )
-            )
-        ]
-    )
-]
+SPECIAL_MAP_KEYS = {
+    '<': '<LT>',
+    '|': '<Bar>',
+    '\\': '<Bslash>',
+    ' ': '<Space>'
+}
 
-def safe_apply_patch(diff_content):
-    """
-    Wrapper around apply_patch to ensure no file outside the current project directory can be touched.
-    """
-    from vimini.code import _DIFF_SEPARATOR
+def _display_send_buffer():
+    global send_buffer
+    try:
+        current_buf = vim.current.buffer.number
+        if chat_session.get('buf_num') != -1 and current_buf != chat_session.get('buf_num'):
+            return
+        msg = f"Prompt: {send_buffer}"
+        safe_msg = msg.replace("'", "''")
+        vim.command("redraw")
+        vim.command(f"echo '{safe_msg}'")
+    except Exception as e:
+        util.log_info(f"Error displaying send buffer: {e}")
 
-    project_root = os.path.abspath(util.get_git_repo_root() or vim.eval("getcwd()"))
+def _on_key_code(code):
+    global send_buffer
+    send_buffer += chr(code)
+    _display_send_buffer()
 
-    modified_files = set()
-    for line in diff_content.split('\n'):
-        if line.startswith('--- ') or line.startswith('+++ '):
-            path_part = line[4:].split('\t')[0].strip()
-            if path_part == '/dev/null':
-                continue
-            if path_part.startswith('a/') or path_part.startswith('b/'):
-                path_part = path_part[2:]
+def _on_backspace():
+    global send_buffer
+    if send_buffer:
+        send_buffer = send_buffer[:-1]
+        _display_send_buffer()
 
-            target_path = os.path.abspath(os.path.join(project_root, path_part))
-            try:
-                if os.path.commonpath([project_root, target_path]) != project_root:
-                    return False, f"Security error: Attempted to modify file outside project directory: {path_part}"
-            except ValueError:
-                return False, f"Security error: Path resolution failed for {path_part}"
+def _on_enter():
+    global send_buffer
+    prompt = send_buffer
+    send_buffer = ""
+    _display_send_buffer()
+    if prompt.strip():
+        _send_prompt(prompt)
 
-            modified_files.add(path_part)
+def _setup_chat_mappings():
+    vim.command("nnoremap <buffer> <silent> <CR> :py3 from vimini.chat import _on_enter; _on_enter()<CR>")
+    vim.command("nnoremap <buffer> <silent> <BS> :py3 from vimini.chat import _on_backspace; _on_backspace()<CR>")
+    vim.command("nnoremap <buffer> <silent> <Del> :py3 from vimini.chat import _on_backspace; _on_backspace()<CR>")
 
-    if not modified_files:
-        return False, "No valid files found in patch to apply."
+    for code in range(32, 127):
+        ch = chr(code)
+        if ch in SPECIAL_MAP_KEYS:
+            lhs = SPECIAL_MAP_KEYS[ch]
+        else:
+            lhs = ch
+        vim.command(f"nnoremap <buffer> <silent> {lhs} :py3 from vimini.chat import _on_key_code; _on_key_code({code})<CR>")
 
+def _unsetup_chat_mappings():
+    vim.command("silent! nunmap <buffer> <CR>")
+    vim.command("silent! nunmap <buffer> <BS>")
+    vim.command("silent! nunmap <buffer> <Del>")
+
+    for code in range(32, 127):
+        ch = chr(code)
+        if ch in SPECIAL_MAP_KEYS:
+            lhs = SPECIAL_MAP_KEYS[ch]
+        else:
+            lhs = ch
+        vim.command(f"silent! nunmap <buffer> {lhs}")
+
+def _send_channel_request(req_dict):
+    if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
+        util.display_message("Error: Agent server channel is not open.", error=True)
+        return False
+    try:
+        util.log_info(f"Sending response to agent: {req_dict}")
+        safe_json = json.dumps(req_dict)
+        vim.command(f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))")
+        return True
+    except Exception as e:
+        util.display_message(f"Error sending channel request: {e}", error=True)
+        return False
+
+def send_agent_approval(approved):
+    req = {
+        "jsonrpc": "2.0",
+        "id": "chat_session",
+        "method": "chat",
+        "params": {
+            "approved": bool(approved)
+        }
+    }
+    _send_channel_request(req)
+
+def send_chat_termination():
+    req = {
+        "jsonrpc": "2.0",
+        "id": "chat_session",
+        "method": "chat",
+        "params": {
+            "terminate": True
+        }
+    }
+    _send_channel_request(req)
+
+def _on_chat_buffer_closed():
+    global send_buffer
+    send_buffer = ""
+    try:
+        send_chat_termination()
+        util.display_message("Chat session has been terminated.", history=True)
+    except Exception as e:
+        util.log_info(f"Error in _on_chat_buffer_closed: {e}")
+
+def _on_patch_buffer_closed():
+    try:
+        handled = int(vim.eval("get(b:, 'vimini_patch_handled', 0)"))
+        if handled:
+            return
+        vim.command("let b:vimini_patch_handled = 1")
+        util.display_message("Patch buffer closed without applying. Canceling operation...", history=True)
+        send_agent_approval(False)
+    except Exception as e:
+        util.log_info(f"Error in _on_patch_buffer_closed: {e}")
+
+def _open_patch_buffer(temp_file):
+    if not temp_file or not os.path.exists(temp_file):
+        util.display_message("Error: Patch temp file does not exist.", error=True)
+        send_agent_approval(False)
+        return
+
+    diff_content = ""
+    try:
+        with open(temp_file, 'r', encoding='utf-8') as f:
+            diff_content = f.read()
+    except Exception as e:
+        util.log_info(f"Error reading patch temp file: {e}")
+
+    if not diff_content.strip():
+        util.display_message("Error: Patch content is empty.", error=True)
+        send_agent_approval(False)
+        return
+
+    project_root = util.get_git_repo_root() or vim.eval("getcwd()")
+
+    fixed_lines = []
+    raw_chunks = []
+    current_chunk = []
+    for line in diff_content.strip('\n').split('\n'):
+        if line.startswith("diff --git ") or line.startswith("--- "):
+            if current_chunk and any(l.startswith("@@ ") or l.startswith("+++ ") for l in current_chunk):
+                raw_chunks.append(current_chunk)
+                current_chunk = []
+        current_chunk.append(line)
+    if current_chunk:
+        raw_chunks.append(current_chunk)
+
+    for chunk in raw_chunks:
+        rel_path = None
+        for l in chunk:
+            if l.startswith("--- "):
+                p = l[4:].split('\t')[0].strip()
+                if p != "/dev/null":
+                    if p.startswith("a/"): p = p[2:]
+                    rel_path = p
+                    break
+            elif l.startswith("+++ "):
+                p = l[4:].split('\t')[0].strip()
+                if p != "/dev/null":
+                    if p.startswith("b/"): p = p[2:]
+                    rel_path = p
+                    break
+            elif l.startswith("diff --git "):
+                parts = l.split()
+                if len(parts) >= 4:
+                    p = parts[3]
+                    if p.startswith("b/"): p = p[2:]
+                    elif p.startswith("a/"): p = p[2:]
+                    rel_path = p
+                    break
+
+        abs_path = os.path.join(project_root, rel_path) if rel_path else None
+        file_exists = os.path.exists(abs_path) if abs_path else True
+        chunk_str = "\n".join(chunk)
+        processed = _process_x_diff_chunks(chunk_str, rel_path or "", file_exists)
+        if processed:
+            fixed_lines.extend(processed)
+        else:
+            fixed_lines.extend(chunk)
+
+    if fixed_lines:
+        diff_content = "\n".join(fixed_lines) + "\n"
     job_id = util.reserve_next_job_id("Chat Patch")
 
     util.new_split()
     base_buffer_name = f"[{job_id}] Vimini Code"
     safe_name = base_buffer_name.replace(" ", "\\ ")
-
     vim.command(f"file {safe_name}")
     vim.command("setlocal buftype=nofile")
     vim.command("setlocal bufhidden=wipe")
     vim.command("setlocal noswapfile")
-    vim.command("setlocal filetype=diff")
 
-    diff_buffer = vim.current.buffer
-    diff_buffer_num = diff_buffer.number
+    buf = vim.current.buffer
+    buf_num = buf.number
 
-    vim.command(f"let b:vimini_project_root = '{project_root}'")
+    safe_root = project_root.replace("'", "''")
+    vim.command(f"let b:vimini_project_root = '{safe_root}'")
     vim.command(f"let b:vimini_job_id = '{job_id}'")
+    vim.command("let b:vimini_is_chat_patch = 1")
+    vim.command("let b:vimini_patch_handled = 0")
 
-    lines = ["The agent wants to apply a patch to the following files:", ""]
-    for f in sorted(modified_files):
-        lines.append(f"- {f}")
-    lines.append("")
-    lines.append(_DIFF_SEPARATOR)
-    lines.extend(diff_content.split('\n'))
+    summary_lines = [
+        f"# Request Summary (Chat Patch - Job {job_id})",
+        "",
+        "## Agent Patch Request",
+        "The agent requested code modifications below.",
+        "Run :ViminiApply to apply these changes, or close this buffer (:q) to cancel.",
+        "",
+        "---",
+        "",
+        _DIFF_SEPARATOR
+    ]
+    if not diff_content.endswith('\n'):
+        diff_content += '\n'
 
-    diff_buffer[:] = lines
+    buf[:] = summary_lines + diff_content.splitlines()
+
+    vim.command("setlocal filetype=diff")
+    vim.command("autocmd BufUnload <buffer> py3 from vimini.chat import _on_patch_buffer_closed; _on_patch_buffer_closed()")
+
+    util.display_message("Patch buffer opened. Run :ViminiApply to apply changes.", history=True)
     vim.command("redraw!")
 
-    # Wait until the buffer is closed (by user applying or rejecting it)
-    while True:
-        exists = False
-        for b in vim.buffers:
-            if b.number == diff_buffer_num:
-                exists = True
-                break
-        if not exists:
-            break
-        time.sleep(1)
-
-    return True, "Patch buffer closed. User has either applied or rejected the patch."
-
-def chat(prompt=None):
-    """
-    Opens a new chat window named "Vimini Chat" if one does not yet exist,
-    otherwise switches to that window. If a non-empty argument is provided,
-    it is used as a chat query. Code runs asynchronously.
-    """
-    global chat_session
-
-    # Initialize chat_session structure if needed
-    if not chat_session or 'session' not in chat_session:
-        chat_session = {
-            'prompt': '',
-            'session': None,
-            'counter': 0,
-            'buf_num': -1,
-            'running': False
-        }
-
-    if prompt:
-        prompt = prompt.strip().strip("'\"").strip()
-        chat_session['prompt'] = prompt
-        chat_session['counter'] += 1
-
-    util.log_info(f"chat({prompt})")
-
-    # --- 1. Find or create the chat window ---
-    win_nr = vim.eval("bufwinnr('^Vimini Chat$')")
-
-    if int(win_nr) > 0:
-        vim.command(f"{win_nr}wincmd w")
-    else:
-        # Create and initialize a new chat window
-        util.new_split()
-        vim.command('file Vimini Chat')
-        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-        vim.command('setlocal nomodifiable') # Read only by default
-
-        session = chat_session.get('session')
-        if session:
-            buf_num = vim.current.buffer.number
-            _write_to_buffer(buf_num, ["History:"], clear=True)
-            for msg in session.get_history():
-                _write_to_buffer(buf_num, [f"{msg.role}: {msg.parts[0].text}"])
-
-    current_buffer = vim.current.buffer
-    buf_num = current_buffer.number
-
-    # Update buffer number in session so the running thread knows where to write
-    chat_session['buf_num'] = buf_num
-
-    # --- 2. Initialize buffer if it's empty ---
-    if len(current_buffer) == 1 and not current_buffer[0]:
-        _write_to_buffer(buf_num, [""], clear=True)
-
-    if not prompt:
+def handle_channel_response(result):
+    if not isinstance(result, dict):
         return
 
-    # --- 3. Prepare for Async Job ---
-    # Add spacing if needed
-    last_line = current_buffer[-1]
+    status = result.get("status")
+    buf_num = chat_session.get("buf_num", -1)
+
+    if buf_num == -1:
+        for b in vim.buffers:
+            if b.name and os.path.basename(b.name) == "Vimini Chat":
+                buf_num = b.number
+                chat_session['buf_num'] = buf_num
+                break
+
+    if status == "chunk":
+        text = result.get("text", "")
+        if text:
+            _write_to_buffer(buf_num, text, append_to_last=True)
+
+    elif status == "tool_use_requested":
+        tool = result.get("tool", "")
+        temp_file = result.get("temp_file")
+
+        if tool == "apply_patch":
+            req_line = f"\nAgent Requested: apply_patch({temp_file})"
+        else:
+            args = result.get("args", {})
+            if isinstance(args, dict):
+                args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
+            else:
+                args_str = str(args) if args else ""
+            req_line = f"\nAgent Requested: {tool}({args_str})"
+
+        _write_to_buffer(buf_num, req_line, append_to_last=True)
+
+        if tool in ("list_directory", "read_file"):
+            send_agent_approval(True)
+        elif tool == "apply_patch":
+            _open_patch_buffer(temp_file)
+        else:
+            send_agent_approval(False)
+
+    elif status in ("done", "ok"):
+        chat_session["running"] = False
+        text = result.get("text", "")
+        if text:
+            _write_to_buffer(buf_num, text, append_to_last=True)
+        _write_to_buffer(buf_num, ["", WAITING_MSG])
+
+def _send_prompt(prompt):
+    buf_num = chat_session.get('buf_num', -1)
+    if buf_num == -1:
+        for b in vim.buffers:
+            if b.name and os.path.basename(b.name) == "Vimini Chat":
+                buf_num = b.number
+                chat_session['buf_num'] = buf_num
+                break
+
+    current_buffer = None
+    for b in vim.buffers:
+        if b.number == buf_num:
+            current_buffer = b
+            break
+
+    if current_buffer is None:
+        return
+
+    if len(current_buffer) > 0 and current_buffer[-1] in (WAITING_MSG, WELCOME_MSG):
+        vim.command(f"call setbufvar({buf_num}, '&modifiable', 1)")
+        try:
+            if len(current_buffer) == 1:
+                current_buffer[:] = []
+            else:
+                del current_buffer[-1]
+        finally:
+            vim.command(f"call setbufvar({buf_num}, '&modifiable', 0)")
+
+    last_line = current_buffer[-1] if len(current_buffer) > 0 else ""
     lines_to_add = []
     if last_line != "":
         lines_to_add.append("")
@@ -203,236 +333,95 @@ def chat(prompt=None):
 
     _write_to_buffer(buf_num, lines_to_add)
 
-    # If job is already running, the updated counter/prompt will trigger action in the loop
-    if chat_session.get('running'):
-        return
+    chat_session['running'] = True
 
-    try:
-        # Ensure session exists
-        client = util.get_client()
-        if not client:
-             return
+    req = {
+        "jsonrpc": "2.0",
+        "id": "chat_session",
+        "method": "chat",
+        "params": {
+            "prompt": prompt,
+            "api_key": util._API_KEY,
+            "model": util._MODEL
+        }
+    }
 
-        # Create the GenAI session object with Agentic config
-        agent_config = types.GenerateContentConfig(
-            tools=agent_tools,
-            system_instruction=(
-                "When explicitly requested to change code You act as an expert"
-                "autonomous coding agent and software engineer, and can access"
-                "tools and execute functions."
-                "Normaly although You are just an expeert at returning general"
-                "infomation. and avoid as much as possible using functions and"
-                "performiang actions."
-                "Your identity is Vimini, and you are integrated into the vimini project."
-                "Follow these guidelines for optimal performance ONLY when"
-                "acting as a coding agent:\n"
-                "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory` and `read_file` tools to understand the repository structure and exact file contents. Never assume or guess code.\n"
-                "2. **Use the Patch Tool Correctly:** To modify files, use the `apply_patch` tool. Provide a valid unified diff. Use file paths relative to the project root. Ensure your diff includes sufficient unmodified context lines for reliable application.\n"
-                "3. **Patch Reliability:** `apply_patch` should ideally be the final action in your response. If a patch fails due to a formatting or context mismatch, do not blindly retry the exact same patch. First, re-read the file to obtain the up-to-date content, then formulate a corrected diff.\n"
-                "4. **Limit Retries:** Avoid multiple calls to `apply_patch` for the same file in a single response. If you struggle to apply a patch, stop and ask the user to refine the request, or request more context to ensure a higher chance of success on the next attempt.\n"
-                "5. **Be Concise:** Provide brief, clear explanations. Avoid unnecessary conversational filler."
-            )
-        )
-        chat_session['session'] = client.chats.create(
-            model=util._MODEL,
-            config=agent_config
-        )
-        chat_session['running'] = True
+    if not _send_channel_request(req):
+        chat_session['running'] = False
+        _write_to_buffer(buf_num, ["", "[Error: Agent channel is not open]", "", WAITING_MSG])
 
-        def on_chunk(text):
-            _write_to_buffer(chat_session['buf_num'], text, append_to_last=True)
+def chat():
+    global chat_session
 
-        def on_finish():
-            # nuke this session
-            chat_session['session'] = None
-            chat_session['running'] = False
-            _write_to_buffer(chat_session['buf_num'], ["", "Terminated"])
+    util.log_info("chat()")
 
-        def on_error(msg):
-            _write_to_buffer(chat_session['buf_num'], [f"\n[Error: {msg}]"])
-            chat_session['session'] = None
-            chat_session['running'] = False
-            return f"Chat Error: {msg}"
+    win_nr = vim.eval("bufwinnr('^Vimini Chat$')")
 
-        # Target function that trigers only on new updates
-        def target(prev, **kwargs):
-            if chat_session.get('running', False):
-                c = chat_session.get('counter', 0)
-                if c > prev:
-                    # New prompt found
-                    session = chat_session.get('session')
-                    if not session:
-                        return (0, "Invalid session")
-                    prompt = chat_session.get('prompt')
-                    if not prompt:
-                        return (0, "Invalid prompt")
+    if int(win_nr) > 0:
+        vim.command(f"{win_nr}wincmd w")
+    else:
+        util.new_split()
+        vim.command('file Vimini Chat')
+        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+        vim.command('setlocal nomodifiable')
+        vim.command("highlight default ViminiWaiting ctermfg=Green guifg=Green")
+        vim.command("highlight default ViminiPrompt ctermfg=DarkBlue guifg=DarkBlue")
+        vim.command("highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic")
+        vim.command("syntax match ViminiWaiting '^\\(Welcome.*\\|Waiting for prompt.*\\)'")
+        vim.command("syntax match ViminiPrompt '^Q: .*'")
+        vim.command("syntax match ViminiService '^Agent Requested: .*'")
+        vim.command("autocmd BufUnload <buffer> py3 from vimini.chat import _on_chat_buffer_closed; _on_chat_buffer_closed()")
+        vim.command("autocmd BufEnter <buffer> py3 from vimini.chat import _display_send_buffer; _display_send_buffer()")
+        _setup_chat_mappings()
 
-                    # Intercept function calls in the stream for safe agentic workflows
-                    def agentic_stream_wrapper(current_prompt):
-                        response_stream = session.send_message_stream(current_prompt)
-                        pending_tool_calls = []
-                        for chunk in response_stream:
-                            if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                                modified_parts = []
-                                chunk_has_func = False
-                                for part in chunk.candidates[0].content.parts:
-                                    if hasattr(part, 'function_call') and part.function_call:
-                                        chunk_has_func = True
-                                        tool_call = part.function_call
-                                        pending_tool_calls.append(tool_call)
-                                        try:
-                                            args_str = json.dumps(dict(tool_call.args)) if tool_call.args else "{}"
-                                        except Exception:
-                                            args_str = str(tool_call.args)
-                                        modified_parts.append(types.Part(text=f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n"))
-                                    else:
-                                        modified_parts.append(part)
+    current_buffer = vim.current.buffer
+    buf_num = current_buffer.number
+    chat_session['buf_num'] = buf_num
 
-                                if chunk_has_func:
-                                    yield types.GenerateContentResponse(
-                                        candidates=[
-                                            types.Candidate(
-                                                content=types.Content(
-                                                    parts=modified_parts
-                                                )
-                                            )
-                                        ]
-                                    )
-                                else:
-                                    yield chunk
-                            else:
-                                yield chunk
-
-                        if pending_tool_calls:
-                            responses = []
-                            for tool_call in pending_tool_calls:
-                                if tool_call.name == 'list_directory':
-                                    from vimini.context import list_directory
-                                    try:
-                                        args_dict = dict(tool_call.args) if tool_call.args else {}
-                                    except Exception:
-                                        args_dict = {}
-                                    dir_path = args_dict.get('directory_path', '.')
-                                    result_text = list_directory(dir_path)
-                                    responses.append(types.Part.from_function_response(
-                                        name=tool_call.name,
-                                        response={'result': result_text}
-                                    ))
-                                elif tool_call.name == 'read_file':
-                                    from vimini.context import read_file
-                                    try:
-                                        args_dict = dict(tool_call.args) if tool_call.args else {}
-                                    except Exception:
-                                        args_dict = {}
-                                    filepath = args_dict.get('filepath', '')
-                                    result_text = read_file(filepath)
-                                    responses.append(types.Part.from_function_response(
-                                        name=tool_call.name,
-                                        response={'result': result_text}
-                                    ))
-                                elif tool_call.name == 'apply_patch':
-                                    try:
-                                        args_dict = dict(tool_call.args) if tool_call.args else {}
-                                    except Exception:
-                                        args_dict = {}
-                                    diff_content = args_dict.get('diff_content', '')
-                                    success, result_text = safe_apply_patch(diff_content)
-                                    responses.append(types.Part.from_function_response(
-                                        name=tool_call.name,
-                                        response={'result': result_text}
-                                    ))
-                                else:
-                                    # TODO: Suspend stream, prompt user for confirmation, execute tool, and submit function_response
-                                    responses.append(types.Part.from_function_response(
-                                        name=tool_call.name,
-                                        response={'error': 'Tool execution pending user confirmation (not implemented)'}
-                                    ))
-
-                            yield from agentic_stream_wrapper(responses)
-                        else:
-                            yield types.GenerateContentResponse(
-                                candidates=[
-                                    types.Candidate(
-                                        content=types.Content(
-                                            parts=[types.Part(text="\n----\n")]
-                                        )
-                                    )
-                                ]
-                            )
-
-                    # Return the new counter as 'prev' for next iteration
-                    return (c, agentic_stream_wrapper(prompt))
-                else:
-                    return (c, None)
-            return (0, "Session not running")
-
-        util.start_async_job(
-            client,
-            kwargs={}, # No kwargs needed for the lambda as we captured prompt
-            callbacks={
-                'on_chunk': on_chunk,
-                'on_error': on_error,
-                'on_finish': on_finish,
-                'status_message': "Running..."
-            },
-            job_name="Persistent Vimini Chat",
-            target_func=target
-        )
-
-    except Exception as e:
-        util.display_message(f"Error starting chat: {e}", error=True)
-        _write_to_buffer(buf_num, ["", f"[System Error: {e}]"])
+    if len(current_buffer) == 1 and not current_buffer[0]:
+        _write_to_buffer(buf_num, [WELCOME_MSG], clear=True)
+    elif not chat_session.get('running') and (len(current_buffer) == 0 or current_buffer[-1] not in (WAITING_MSG, WELCOME_MSG)):
+        _write_to_buffer(buf_num, ["", WAITING_MSG])
+    _display_send_buffer()
 
 def _write_to_buffer(buf_num, content, clear=False, append_to_last=False):
-    """
-    Writes content to a read-only buffer by temporarily enabling modifiable.
-    Args:
-        buf_num (int): Buffer number.
-        content (str or list): Text to write. If string, handled based on append_to_last.
-        clear (bool): If True, replaces buffer content.
-        append_to_last (bool): If True, appends string content to the very last line
-                               (and adds new lines if content has them).
-    """
     buf = None
     for b in vim.buffers:
         if b.number == buf_num:
             buf = b
             break
-    if not buf: return
+    if not buf:
+        return
 
-    # Determine if we need to scroll (only if active window)
     is_active = (vim.current.buffer.number == buf_num)
 
     vim.command(f"call setbufvar({buf_num}, '&modifiable', 1)")
     try:
         if clear:
-             buf[:] = content if isinstance(content, list) else [content]
+            buf[:] = content if isinstance(content, list) else [content]
         else:
             if append_to_last and isinstance(content, str):
-                # Split content into lines to handle newlines correctly
+                if len(buf) > 0 and buf[-1].startswith("Agent Requested:"):
+                    if not content.startswith('\n'):
+                        content = '\n' + content
                 lines = content.split('\n')
-
-                # Append first part to the last line of buffer
                 if len(buf) > 0:
                     buf[-1] += lines[0]
                 else:
                     buf[:] = [lines[0]]
-
-                # Append subsequent lines if any
                 if len(lines) > 1:
                     buf.append(lines[1:])
             else:
-                # Append list of lines or single string as new line
                 if isinstance(content, str):
                     content = content.split('\n')
                 buf.append(content)
 
         if is_active:
-             vim.command("normal! G")
+            vim.command("normal! G")
 
     except Exception as e:
         util.log_info(f"Error writing to chat buffer: {e}")
     finally:
         vim.command(f"call setbufvar({buf_num}, '&modifiable', 0)")
         if is_active:
-             vim.command("redraw")
+            _display_send_buffer()

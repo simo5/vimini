@@ -520,7 +520,7 @@ def apply_code(job_id=None):
             # Try matching by internal buffer variable
             try:
                 bid = vim.eval(f"getbufvar({buf.number}, 'vimini_job_id', '')")
-                if bid and int(bid) == job_id:
+                if bid and str(bid) == str(job_id):
                     target_candidates.append(buf)
                     continue
             except:
@@ -593,6 +593,15 @@ def apply_code(job_id=None):
         return
 
     if apply_patch(diff_content, project_root):
+        is_chat_patch = int(vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_is_chat_patch', 0)"))
+        if is_chat_patch:
+            vim.command(f"call setbufvar({diff_buffer.number}, 'vimini_patch_handled', 1)")
+            try:
+                from vimini.chat import send_agent_approval
+                send_agent_approval(True)
+            except Exception as e:
+                util.log_info(f"Error sending agent approval from apply_code: {e}")
+
         # Remove from data store
         if diff_buffer.number in _BUFFER_DATA_STORE:
             del _BUFFER_DATA_STORE[diff_buffer.number]

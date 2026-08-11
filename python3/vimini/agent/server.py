@@ -144,7 +144,7 @@ class AgentServer:
                         conn, response = self.result_queue.get_nowait()
                         if conn in clients:
                             try:
-                                logger.info(f"Sending response for id: {response[0]}")
+                                logger.info(f"Sending response for payload: {response[1].get("id", None)}")
                                 payload = (json.dumps(response) + '\n').encode('utf-8')
                                 conn.sendall(payload)
                             except Exception as e:
@@ -227,12 +227,16 @@ class AgentServer:
 
                                         logger.info(f"Received message method: {method} (id: {req_id})")
 
-                                        t = threading.Thread(
-                                            target=execute_function,
-                                            args=(req_id, method, params, self.result_queue, s),
-                                            daemon=True
-                                        )
-                                        t.start()
+                                        if method == "chat":
+                                            from vimini.agent.chat import handle_chat_request
+                                            handle_chat_request(req_id, params, self.result_queue, s)
+                                        else:
+                                            t = threading.Thread(
+                                                target=execute_function,
+                                                args=(req_id, method, params, self.result_queue, s),
+                                                daemon=True
+                                            )
+                                            t.start()
                                     except Exception as e:
                                         logger.error(f"Error processing incoming message '{line_str}': {e}", exc_info=True)
                                         err_resp = [

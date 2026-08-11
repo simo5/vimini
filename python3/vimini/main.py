@@ -70,6 +70,9 @@ def handle_channel_message(msg):
             util.new_split()
             vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
             vim.current.buffer[:] = model_list
+        elif method == "chat":
+            from vimini.chat import handle_channel_response
+            handle_channel_response(result)
 
 # This new function is needed because vimini.vim calls main.logging()
 def logging(logfile=None):
@@ -438,9 +441,8 @@ def help(command_name=None):
         ":ViminiListModels",
         "    Lists all available Gemini models in a new split window.",
         "",
-        ":ViminiChat {prompt}",
-        "    Sends a prompt to the configured Gemini model and displays the response.",
-        "    If no prompt is provided, opens the chat buffer for interactive mode.",
+        ":ViminiChat",
+        "    Opens the chat buffer for interactive mode with Gemini.",
         "",
         ":ViminiThinking [on|off]",
         "    Toggles or sets the display of the AI's real-time thought process.",

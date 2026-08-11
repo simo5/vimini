@@ -11,7 +11,7 @@ CONTENTS                                                      *vimini*
 ==============================================================================
 INTRODUCTION                                          *vimini-introduction*
 
-This is an Vim plugin to use Gemini via APIs written in Python3.
+This is a Vim plugin to use Gemini via APIs written in Python 3.
 
 ==============================================================================
 USAGE                                                         *vimini-usage*
@@ -21,8 +21,8 @@ Install the plugin using your favorite plugin manager.
 ==============================================================================
 COMMANDS                                                    *vimini-commands*
 
-*:MyPluginHello*
-    Prints a friendly greeting.
+*:ViminiChat*
+    Opens the interactive chat window to communicate with Gemini.
 
 ==============================================================================
 CONFIGURATION                                           *vimini-configuration*

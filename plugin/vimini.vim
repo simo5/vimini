@@ -106,19 +106,18 @@ endfunction
 command! ViminiListModels call ViminiListModels()
 
 " Expose a function to Chat with Gemini
-function! ViminiChat(prompt)
+function! ViminiChat()
   py3 << EOF
 try:
     from vimini import main
-    prompt = vim.eval('a:prompt')
-    main.chat(prompt)
+    main.chat()
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
 
-command! -nargs=* ViminiChat call ViminiChat(string(<q-args>))
+command! ViminiChat call ViminiChat()
 
 let g:vimini_thinking = get(g:, 'vimini_thinking', 'on')
 
