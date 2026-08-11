@@ -57,6 +57,34 @@ def execute_function(req_id, method, params, result_queue, conn):
             models_iter = client.models.list()
             models = [m.name for m in models_iter]
             result = {"status": "ok", "method": method, "models": models}
+        elif method == "commit":
+            api_key = params.get("api_key") if isinstance(params, dict) else None
+            model = params.get("model", "gemini-2.5-flash") if isinstance(params, dict) else "gemini-2.5-flash"
+            prompt = params.get("prompt", "") if isinstance(params, dict) else ""
+            temperature = params.get("temperature") if isinstance(params, dict) else None
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=api_key) if api_key else genai.Client()
+            config = types.GenerateContentConfig()
+            if temperature is not None:
+                try:
+                    config.temperature = float(temperature)
+                except (ValueError, TypeError):
+                    pass
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config
+            )
+            result = {
+                "status": "ok",
+                "method": "commit",
+                "text": response.text,
+                "repo_path": params.get("repo_path") if isinstance(params, dict) else None,
+                "diff_stat_output": params.get("diff_stat_output") if isinstance(params, dict) else None,
+                "regenerate": params.get("regenerate") if isinstance(params, dict) else False,
+                "assistant": params.get("assistant") if isinstance(params, dict) else True
+            }
         else:
             result = {"status": "ok", "method": method}
         response = [
@@ -144,7 +172,7 @@ class AgentServer:
                         conn, response = self.result_queue.get_nowait()
                         if conn in clients:
                             try:
-                                logger.info(f"Sending response for payload: {response[1].get("id", None)}")
+                                logger.info(f"Sending response for payload: {response[1].get('id', None)}")
                                 payload = (json.dumps(response) + '\n').encode('utf-8')
                                 conn.sendall(payload)
                             except Exception as e:

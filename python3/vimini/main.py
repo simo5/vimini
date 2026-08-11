@@ -45,6 +45,87 @@ def stop_agent():
     except Exception as e:
         util.log_info(f"Failed to stop agent server: {e}")
 
+def _send_channel_request(req_dict):
+    if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
+        util.display_message("Error: Agent server channel is not open.", error=True)
+        return False
+    try:
+        util.log_info(f"Sending channel request: {req_dict}")
+        safe_json = json.dumps(req_dict)
+        vim.command(f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))")
+        return True
+    except Exception as e:
+        util.display_message(f"Error sending channel request: {e}", error=True)
+        return False
+
+def handle_commit_response(result):
+    text = result.get("text", "")
+    repo_path = result.get("repo_path", "")
+    diff_stat_output = result.get("diff_stat_output", "")
+    regenerate = bool(result.get("regenerate", False))
+    assistant = bool(result.get("assistant", True))
+
+    response_text = text.strip()
+    if '---' in response_text:
+        parts = response_text.split('---', 1)
+        subject = parts[0].strip()
+        raw_body = parts[1].strip() if len(parts) > 1 else ""
+    else:  # Fallback if model doesn't follow instructions.
+        lines = response_text.split('\n')
+        subject = lines[0].strip()
+        raw_body = '\n'.join(lines[1:]).strip()
+
+    body = ""
+    if raw_body:
+        wrapped_lines = []
+        for line in raw_body.split('\n'):
+            if not line.strip():
+                wrapped_lines.append('')
+            else:
+                wrapped_lines.extend(textwrap.wrap(line, width=78))
+        body = '\n'.join(wrapped_lines)
+
+    if not subject:
+        msg = "Failed to generate a commit message."
+        if not regenerate and repo_path:
+            msg += " Reverting `git add`."
+            reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
+            subprocess.run(reset_cmd, check=False)
+        util.display_message(msg, error=True)
+        return
+
+    with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8", suffix=".gitcommit") as f:
+        tmp_filename = f.name
+
+    util.new_split()
+    vim.command(f"edit {tmp_filename.replace(' ', '\\ ')}")
+    vim.command("setlocal filetype=gitcommit")
+    vim.command("setlocal bufhidden=wipe")
+
+    buffer_content = [subject, ""]
+    if body:
+        buffer_content.extend(body.split('\n'))
+
+    if diff_stat_output:
+        stat_header = '# --- Files in commit ---' if regenerate else '# --- Staged files ---'
+        buffer_content.extend(['', stat_header])
+        for line in diff_stat_output.split('\n'):
+            buffer_content.append(f"# {line}")
+
+    vim.current.buffer[:] = buffer_content
+
+    safe_tmp = tmp_filename.replace("'", "''")
+    safe_repo = repo_path.replace("'", "''")
+    vim.command(f"let b:vimini_commit_tmp_file = '{safe_tmp}'")
+    vim.command(f"let b:vimini_commit_repo_path = '{safe_repo}'")
+    vim.command(f"let b:vimini_commit_regenerate = {1 if regenerate else 0}")
+    vim.command(f"let b:vimini_commit_assistant = {1 if assistant else 0}")
+
+    vim.command("autocmd BufWipeout <buffer> py3 from vimini import main; main._finalize_commit()")
+
+    util.display_message("Review the commit message. Save and close the buffer to commit, or close without saving to abort.", history=True)
+    vim.command("redraw!")
+
 def handle_channel_message(msg):
     """
     Handles JSON channel messages received from the agent server via Vim channel.
@@ -73,6 +154,8 @@ def handle_channel_message(msg):
         elif method == "chat":
             from vimini.chat import handle_channel_response
             handle_channel_response(result)
+        elif method == "commit":
+            handle_commit_response(result)
 
 # This new function is needed because vimini.vim calls main.logging()
 def logging(logfile=None):
@@ -146,6 +229,7 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
     Generates a commit message. By default, it stages all changes and creates
     a new commit. If `regenerate` is True, it regenerates the message for the
     HEAD commit and amends it.
+    Offloads commit message generation to the agent server.
     """
     util.log_info(f"commit(assistant={assistant}, temperature={temperature}, regenerate={regenerate}, refinement='{refinement}')")
     try:
@@ -175,7 +259,6 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
             # Stage changes with filtering (exclude dotfiles and swap/backup files)
             util.display_message("Staging changes...")
 
-            # Get status to find files to add.
             status_cmd = ['git', '-C', repo_path, 'status', '-z', '--porcelain']
             status_result = subprocess.run(status_cmd, capture_output=True, text=True, check=False)
 
@@ -194,14 +277,12 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
                     path = output[path_start:path_end]
                     i = path_end + 1
 
-                    # Handle renames (R) or copies (C) which have a second path
                     if status[0] in ('R', 'C'):
                         orig_end = output.find('\0', i)
                         if orig_end != -1:
                             i = orig_end + 1
 
                     basename = os.path.basename(path)
-                    # Exclude dotfiles, backup files (~) and swap files
                     if (basename.startswith('.') or
                         basename.endswith('~') or
                         basename.endswith('.swp') or
@@ -222,7 +303,6 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
 
             util.display_message("")
 
-            # Get the diff of what was just staged.
             staged_diff_cmd = ['git', '-C', repo_path, 'diff', '--staged']
             staged_diff_result = subprocess.run(staged_diff_cmd, capture_output=True, text=True, check=False)
 
@@ -233,7 +313,6 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
 
             diff_to_process = staged_diff_result.stdout.strip()
 
-            # Get the diff stat to show in the confirmation popup.
             staged_stat_cmd = ['git', '-C', repo_path, 'diff', '--staged', '--stat']
             staged_stat_result = subprocess.run(staged_stat_cmd, capture_output=True, text=True, check=False)
             if staged_stat_result.returncode == 0:
@@ -244,7 +323,6 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
             util.display_message(message, history=True)
             return
 
-        # Create prompt for AI to generate subject and body.
         prompt = (
             "Based on the following git diff, generate a commit message with a subject and a body.\n\n"
             "RULES:\n"
@@ -264,92 +342,31 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
             "--- END GIT DIFF ---"
         )
 
-        util.display_message("Generating commit message... (this may take a moment)")
+        util.display_message("Generating commit message via agent server... (this may take a moment)")
 
-        client = util.get_client()
-        if not client:
-            msg = "Commit cancelled (client init failed)."
+        req = {
+            "jsonrpc": "2.0",
+            "id": "commit",
+            "method": "commit",
+            "params": {
+                "prompt": prompt,
+                "api_key": util._API_KEY,
+                "model": util._MODEL,
+                "temperature": temperature,
+                "repo_path": repo_path,
+                "diff_stat_output": diff_stat_output,
+                "regenerate": regenerate,
+                "assistant": assistant
+            }
+        }
+
+        if not _send_channel_request(req):
+            msg = "Commit cancelled (sending request to agent server failed)."
             if not regenerate:
                 msg += " Reverting `git add`."
                 reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
                 subprocess.run(reset_cmd, check=False)
             util.display_message(msg, error=True)
-            return
-
-        kwargs = util.create_generation_kwargs(
-            contents=prompt,
-            temperature=temperature
-        )
-
-        response = client.models.generate_content(**kwargs)
-        util.display_message("")
-
-        # Parse the response into subject and a raw body.
-        response_text = response.text.strip()
-        if '---' in response_text:
-            parts = response_text.split('---', 1)
-            subject = parts[0].strip()
-            raw_body = parts[1].strip() if len(parts) > 1 else ""
-        else:  # Fallback if model doesn't follow instructions.
-            lines = response_text.split('\n')
-            subject = lines[0].strip()
-            raw_body = '\n'.join(lines[1:]).strip()
-
-        # Wrap the body so that no line is longer than 78 characters.
-        body = ""
-        if raw_body:
-            wrapped_lines = []
-            for line in raw_body.split('\n'):
-                # Preserve blank lines for paragraph separation. textwrap.wrap()
-                # would otherwise discard them.
-                if not line.strip():
-                    wrapped_lines.append('')
-                else:
-                    wrapped_lines.extend(textwrap.wrap(line, width=78))
-            body = '\n'.join(wrapped_lines)
-
-
-        if not subject:
-            msg = "Failed to generate a commit message."
-            if not regenerate:
-                msg += " Reverting `git add`."
-                reset_cmd = ['git', '-C', repo_path, 'reset', 'HEAD', '--']
-                subprocess.run(reset_cmd, check=False)
-            util.display_message(msg, error=True)
-            return
-
-        # Show the generated message in a new buffer backed by an empty temp file.
-        with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8", suffix=".gitcommit") as f:
-             tmp_filename = f.name
-
-        util.new_split()
-        vim.command(f"edit {tmp_filename.replace(' ', '\\ ')}")
-        vim.command("setlocal filetype=gitcommit")
-        vim.command("setlocal bufhidden=wipe")
-
-        buffer_content = [subject, ""]
-        if body:
-            buffer_content.extend(body.split('\n'))
-
-        if diff_stat_output:
-            stat_header = '# --- Files in commit ---' if regenerate else '# --- Staged files ---'
-            buffer_content.extend(['', stat_header])
-            for line in diff_stat_output.split('\n'):
-                buffer_content.append(f"# {line}")
-
-        vim.current.buffer[:] = buffer_content
-
-        safe_tmp = tmp_filename.replace("'", "''")
-        safe_repo = repo_path.replace("'", "''")
-        vim.command(f"let b:vimini_commit_tmp_file = '{safe_tmp}'")
-        vim.command(f"let b:vimini_commit_repo_path = '{safe_repo}'")
-        vim.command(f"let b:vimini_commit_regenerate = {1 if regenerate else 0}")
-        vim.command(f"let b:vimini_commit_assistant = {1 if assistant else 0}")
-
-        vim.command("autocmd BufWipeout <buffer> py3 from vimini import main; main._finalize_commit()")
-
-        util.display_message("Review the commit message. Save and close the buffer to commit, or close without saving to abort.", history=True)
-        vim.command("redraw!")
 
     except FileNotFoundError:
         util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
