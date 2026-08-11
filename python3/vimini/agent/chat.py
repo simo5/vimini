@@ -8,6 +8,7 @@ import tempfile
 from google import genai
 from google.genai import types
 from vimini.common.util import get_project_root
+from vimini.agent.server import AGENT_CONFIG
 
 logger = logging.getLogger('vimini_agent')
 
@@ -207,8 +208,8 @@ class ChatSession(threading.Thread):
             return
 
         prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-        api_key = params.get("api_key") if isinstance(params, dict) else None
-        model = params.get("model", "gemini-2.5-flash") if isinstance(params, dict) else "gemini-2.5-flash"
+        api_key = AGENT_CONFIG.get("api_key")
+        model = AGENT_CONFIG.get("model")
 
         if prompt:
             logger.info(f"User prompt: {prompt}")

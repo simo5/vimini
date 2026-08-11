@@ -87,6 +87,15 @@ if !empty(s:socket_path)
   let g:vimini_channel = ch_open('unix:' . s:socket_path, {'callback': "ViminiChannelCallback"})
 endif
 
+py3 << EOF
+import vim
+try:
+    main.send_setup()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+
 " Expose a function to list available models
 function! ViminiListModels()
   if !exists('g:vimini_channel') || type(g:vimini_channel) != v:t_channel || ch_status(g:vimini_channel) !=# 'open'
@@ -602,6 +611,15 @@ EOF
   if !empty(s:socket_path)
     let g:vimini_channel = ch_open('unix:' . s:socket_path, {'callback': "ViminiChannelCallback"})
   endif
+
+  py3 << EOF
+import vim
+try:
+    main.send_setup()
+except Exception as e:
+    error_message = str(e).replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
 endfunction
 
 command! -nargs=0 ViminiReload call ViminiReload()

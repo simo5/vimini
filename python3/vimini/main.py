@@ -1,5 +1,5 @@
 import vim
-import os, subprocess, shlex, textwrap, json, tempfile
+import os, subprocess, shlex, textwrap, json, tempfile, time
 from google.genai import types
 from vimini import util
 from vimini.util import process_queue, get_model_name
@@ -24,13 +24,41 @@ def initialize(api_key, model, logfile=None):
     if not util._API_KEY:
         util.display_message("API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token.", error=True)
 
+def send_setup():
+    """
+    Sends a setup request to the agent server with internal configuration.
+    """
+    temperature = None
+    try:
+        temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
+    except Exception:
+        pass
+    req = {
+        "jsonrpc": "2.0",
+        "id": "setup",
+        "method": "setup",
+        "params": {
+            "api_key": util._API_KEY,
+            "model": util._MODEL,
+            "temperature": temperature
+        }
+    }
+    return _send_channel_request(req, silent=False)
+
 def start_agent():
     """
-    Starts the agent server process and returns its Unix socket path.
+    Starts the agent server process, sends a setup request, and returns its Unix socket path.
     """
     try:
         from vimini.agent.server import start_agent_server
-        return start_agent_server()
+        socket_path = start_agent_server()
+        if socket_path:
+            start_time = time.time()
+            while time.time() - start_time < 5:
+                if os.path.exists(socket_path):
+                    break
+                time.sleep(0.1)
+        return socket_path
     except Exception as e:
         util.log_info(f"Failed to start agent server: {e}")
         return None
@@ -45,9 +73,10 @@ def stop_agent():
     except Exception as e:
         util.log_info(f"Failed to stop agent server: {e}")
 
-def _send_channel_request(req_dict):
+def _send_channel_request(req_dict, silent=False):
     if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
-        util.display_message("Error: Agent server channel is not open.", error=True)
+        if not silent:
+            util.display_message("Error: Agent server channel is not open.", error=True)
         return False
     try:
         util.log_info(f"Sending channel request: {req_dict}")
@@ -55,7 +84,8 @@ def _send_channel_request(req_dict):
         vim.command(f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))")
         return True
     except Exception as e:
-        util.display_message(f"Error sending channel request: {e}", error=True)
+        if not silent:
+            util.display_message(f"Error sending channel request: {e}", error=True)
         return False
 
 def handle_commit_response(result):
@@ -141,7 +171,9 @@ def handle_channel_message(msg):
     result = msg.get("result")
     if isinstance(result, dict):
         method = result.get("method")
-        if method == "list_models":
+        if method == "setup":
+            util.log_info("Agent server setup completed.")
+        elif method == "list_models":
             models = result.get("models", [])
             util.display_message("")
             model_list = ["Available Models:"]
@@ -219,9 +251,7 @@ def list_models():
         "jsonrpc": "2.0",
         "id": "list_models",
         "method": "list_models",
-        "params": {
-            "api_key": util._API_KEY
-        }
+        "params": {}
     }
 
 def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
@@ -350,8 +380,6 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
             "method": "commit",
             "params": {
                 "prompt": prompt,
-                "api_key": util._API_KEY,
-                "model": util._MODEL,
                 "temperature": temperature,
                 "repo_path": repo_path,
                 "diff_stat_output": diff_stat_output,

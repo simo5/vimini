@@ -340,9 +340,7 @@ def _send_prompt(prompt):
         "id": "chat_session",
         "method": "chat",
         "params": {
-            "prompt": prompt,
-            "api_key": util._API_KEY,
-            "model": util._MODEL
+            "prompt": prompt
         }
     }
 

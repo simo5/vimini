@@ -18,6 +18,7 @@ import signal
 import atexit
 
 MAX_RECEIVE_BUFFER_SIZE = 1024 * 1024
+AGENT_CONFIG = {}
 
 def get_var_dir():
     var_dir = os.path.expanduser('~/.var/vimini')
@@ -50,18 +51,22 @@ def execute_function(req_id, method, params, result_queue, conn):
     """
     logger.info(f"Executing method: {method} (id: {req_id})")
     try:
-        if method == "list_models":
-            api_key = params.get("api_key") if isinstance(params, dict) else None
+        if method == "setup":
+            if isinstance(params, dict):
+                AGENT_CONFIG.update(params)
+            result = {"status": "ok", "method": "setup"}
+        elif method == "list_models":
+            api_key = AGENT_CONFIG.get("api_key")
             from google import genai
             client = genai.Client(api_key=api_key) if api_key else genai.Client()
             models_iter = client.models.list()
             models = [m.name for m in models_iter]
             result = {"status": "ok", "method": method, "models": models}
         elif method == "commit":
-            api_key = params.get("api_key") if isinstance(params, dict) else None
-            model = params.get("model", "gemini-2.5-flash") if isinstance(params, dict) else "gemini-2.5-flash"
+            api_key = AGENT_CONFIG.get("api_key")
+            model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-            temperature = params.get("temperature") if isinstance(params, dict) else None
+            temperature = AGENT_CONFIG.get("temperature")
             from google import genai
             from google.genai import types
             client = genai.Client(api_key=api_key) if api_key else genai.Client()
