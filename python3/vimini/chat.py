@@ -30,6 +30,8 @@ def _display_send_buffer():
         current_buf = vim.current.buffer.number
         if chat_session.get('buf_num') != -1 and current_buf != chat_session.get('buf_num'):
             return
+        if chat_session.get('running'):
+            return
         msg = f"Prompt: {send_buffer}"
         safe_msg = msg.replace("'", "''")
         vim.command("redraw")
@@ -39,17 +41,23 @@ def _display_send_buffer():
 
 def _on_key_code(code):
     global send_buffer
+    if chat_session.get('running'):
+        return
     send_buffer += chr(code)
     _display_send_buffer()
 
 def _on_backspace():
     global send_buffer
+    if chat_session.get('running'):
+        return
     if send_buffer:
         send_buffer = send_buffer[:-1]
         _display_send_buffer()
 
 def _on_enter():
     global send_buffer
+    if chat_session.get('running'):
+        return
     prompt = send_buffer
     send_buffer = ""
     _display_send_buffer()
@@ -81,6 +89,27 @@ def _unsetup_chat_mappings():
         else:
             lhs = ch
         vim.command(f"silent! nunmap <buffer> {lhs}")
+
+def _enable_chat_mappings():
+    buf_num = chat_session.get("buf_num", -1)
+    if buf_num == -1:
+        return
+    try:
+        winid = int(vim.eval(f"bufwinid({buf_num})"))
+        if winid != -1:
+            if int(vim.eval("exists('*win_execute')")):
+                vim.command(f"call win_execute({winid}, 'py3 from vimini.chat import _setup_chat_mappings; _setup_chat_mappings()')")
+            elif vim.current.buffer.number == buf_num:
+                _setup_chat_mappings()
+        elif vim.current.buffer.number == buf_num:
+            _setup_chat_mappings()
+    except Exception as e:
+        util.log_info(f"Error enabling chat mappings: {e}")
+
+def _on_buf_enter():
+    if not chat_session.get('running'):
+        _setup_chat_mappings()
+    _display_send_buffer()
 
 def _send_channel_request(req_dict):
     if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
@@ -120,6 +149,7 @@ def send_chat_termination():
 def _on_chat_buffer_closed():
     global send_buffer
     send_buffer = ""
+    chat_session['running'] = False
     try:
         send_chat_termination()
         util.display_message("Chat session has been terminated.", history=True)
@@ -293,8 +323,16 @@ def handle_channel_response(result):
         if text:
             _write_to_buffer(buf_num, text, append_to_last=True)
         _write_to_buffer(buf_num, ["", WAITING_MSG])
+        _enable_chat_mappings()
 
 def _send_prompt(prompt):
+    if prompt.startswith(':'):
+        try:
+            vim.command(prompt[1:])
+        except Exception as e:
+            util.display_message(f"Error: {e}", error=True)
+        return
+
     buf_num = chat_session.get('buf_num', -1)
     if buf_num == -1:
         for b in vim.buffers:
@@ -334,6 +372,7 @@ def _send_prompt(prompt):
     _write_to_buffer(buf_num, lines_to_add)
 
     chat_session['running'] = True
+    _unsetup_chat_mappings()
 
     req = {
         "jsonrpc": "2.0",
@@ -347,6 +386,9 @@ def _send_prompt(prompt):
     if not _send_channel_request(req):
         chat_session['running'] = False
         _write_to_buffer(buf_num, ["", "[Error: Agent channel is not open]", "", WAITING_MSG])
+        _enable_chat_mappings()
+    else:
+        util.display_message("Command has been sent and waiting for chat response")
 
 def chat():
     global chat_session
@@ -369,8 +411,9 @@ def chat():
         vim.command("syntax match ViminiPrompt '^Q: .*'")
         vim.command("syntax match ViminiService '^Agent Requested: .*'")
         vim.command("autocmd BufUnload <buffer> py3 from vimini.chat import _on_chat_buffer_closed; _on_chat_buffer_closed()")
-        vim.command("autocmd BufEnter <buffer> py3 from vimini.chat import _display_send_buffer; _display_send_buffer()")
-        _setup_chat_mappings()
+        vim.command("autocmd BufEnter <buffer> py3 from vimini.chat import _on_buf_enter; _on_buf_enter()")
+        if not chat_session.get('running'):
+            _setup_chat_mappings()
 
     current_buffer = vim.current.buffer
     buf_num = current_buffer.number

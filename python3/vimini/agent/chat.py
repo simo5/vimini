@@ -5,12 +5,22 @@ import threading
 import subprocess
 import logging
 import tempfile
+import sys
 from google import genai
 from google.genai import types
 from vimini.common.util import get_project_root
-from vimini.agent.server import AGENT_CONFIG
 
 logger = logging.getLogger('vimini_agent')
+
+def _get_agent_config():
+    main_mod = sys.modules.get('__main__')
+    if main_mod and hasattr(main_mod, 'AGENT_CONFIG'):
+        return getattr(main_mod, 'AGENT_CONFIG')
+    try:
+        from vimini.agent import server
+        return getattr(server, 'AGENT_CONFIG', {})
+    except ImportError:
+        return {}
 
 _chat_sessions = {}
 _sessions_lock = threading.Lock()
@@ -208,8 +218,9 @@ class ChatSession(threading.Thread):
             return
 
         prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-        api_key = AGENT_CONFIG.get("api_key")
-        model = AGENT_CONFIG.get("model")
+        agent_config = _get_agent_config()
+        api_key = agent_config.get("api_key")
+        model = agent_config.get("model")
 
         if prompt:
             logger.info(f"User prompt: {prompt}")
