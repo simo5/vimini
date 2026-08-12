@@ -90,6 +90,30 @@ def execute_function(req_id, method, params, result_queue, conn):
                 "regenerate": params.get("regenerate") if isinstance(params, dict) else False,
                 "assistant": params.get("assistant") if isinstance(params, dict) else True
             }
+        elif method == "autocomplete":
+            api_key = AGENT_CONFIG.get("api_key")
+            model = AGENT_CONFIG.get("model")
+            prompt = params.get("prompt", "") if isinstance(params, dict) else ""
+            temperature = AGENT_CONFIG.get("temperature")
+            from google import genai
+            from google.genai import types
+            client = genai.Client(api_key=api_key) if api_key else genai.Client()
+            config = types.GenerateContentConfig()
+            if temperature is not None:
+                try:
+                    config.temperature = float(temperature)
+                except (ValueError, TypeError):
+                    pass
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config
+            )
+            result = {
+                "status": "ok",
+                "method": "autocomplete",
+                "text": response.text
+            }
         else:
             result = {"status": "ok", "method": method}
         response = [

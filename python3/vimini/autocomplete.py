@@ -1,15 +1,24 @@
 import vim
-import threading
 import uuid
-import queue
-from google.genai import types
+import json
 from vimini import util
 
 # --- Autocomplete state ---
-_autocomplete_lock = threading.Lock()
 _current_autocomplete_job_id = None
-_autocomplete_queue = queue.Queue() # Queue for thread communication
-_original_cursor_hl = {} # Stores original cursor highlight settings
+_original_cursor_hl = {}
+
+def _send_channel_request(req_dict):
+    if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
+        util.display_message("Error: Agent server channel is not open.", error=True)
+        return False
+    try:
+        util.log_info(f"Sending request to agent: {req_dict}")
+        safe_json = json.dumps(req_dict)
+        vim.command(f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))")
+        return True
+    except Exception as e:
+        util.display_message(f"Error sending channel request: {e}", error=True)
+        return False
 
 def cancel_autocomplete():
     """
@@ -17,15 +26,7 @@ def cancel_autocomplete():
     This is called from Vimscript when the user types or leaves insert mode.
     """
     global _current_autocomplete_job_id
-
-    with _autocomplete_lock:
-        _current_autocomplete_job_id = None
-        # Clear any stale results from a previously cancelled job.
-        while not _autocomplete_queue.empty():
-            try:
-                _autocomplete_queue.get_nowait()
-            except queue.Empty:
-                break
+    _current_autocomplete_job_id = None
 
 def _show_autocomplete_popup(suggestion):
     """
@@ -51,7 +52,7 @@ def _show_autocomplete_popup(suggestion):
                 vim.command(f"call feedkeys('{suggestion}', 'n')")
             else:
                 vim.command(f"call feedkeys('{key_code}', 'n')")
-        except vim.error: # Also catches Vim:Interrupt from Ctrl-C.
+        except vim.error:
             pass
         finally:
             # Ensure the popup is always closed, no matter what key was pressed.
@@ -63,108 +64,81 @@ def _show_autocomplete_popup(suggestion):
         error_message = str(e).replace("'", "''")
         vim.command(f"echoerr '[Vimini] Autocomplete popup Error: {error_message}'")
 
-def process_autocomplete_queue():
+def handle_channel_response(result):
     """
-    Process one item from the autocomplete queue.
-    This function is designed to be called repeatedly from a Vim timer.
-    """
-    try:
-        task_type, data = _autocomplete_queue.get_nowait()
-        if task_type == 'popup':
-            # The popup function handles restoring the cursor itself.
-            _show_autocomplete_popup(data)
-        elif task_type == 'error':
-            vim.command(f"echom '[Vimini] Autocomplete Error: {data}'")
-    except queue.Empty:
-        pass # Queue is empty, nothing to do.
-    except Exception as e:
-        error_message = str(e).replace("'", "''")
-        vim.command(f"echom '[Vimini] Queue processing error: {error_message}'")
-
-def _autocomplete_worker(job_id, buffer_content, cursor_pos, verbose):
-    """
-    The background worker for autocomplete. Makes the API call and puts the
-    result into a queue for the main thread to process.
-    """
-    try:
-        row, col = cursor_pos # `row` is 1-based.
-
-        with _autocomplete_lock:
-            if _current_autocomplete_job_id != job_id:
-                return
-
-        client = util.get_client()
-        if not client:
-            return
-
-        start_line_index = max(0, row - 20) # Use more context
-        context_lines = buffer_content[start_line_index:row]
-
-        if not context_lines:
-            return
-
-        current_line_content = context_lines[-1]
-        context_lines[-1] = current_line_content[:col] + "<CURSOR>" + current_line_content[col:]
-        context_text = "\n".join(context_lines)
-
-        prompt = (
-            "You are an expert coding assistant. Based on the following code snippet, "
-            "provide a single-line code completion for the position marked by `<CURSOR>`.\n"
-            "IMPORTANT: Return only the code to be inserted. Do not include the original line, "
-            "any explanations, quotes, or markdown formatting.\n\n"
-            "--- CODE ---\n"
-            f"{context_text}\n"
-            "--- END CODE ---"
-        )
-
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=prompt,
-        )
-
-        with _autocomplete_lock:
-            if _current_autocomplete_job_id != job_id:
-                return
-
-        suggestion = response.text.strip().split('\n')[0]
-        if not suggestion:
-            return
-
-        _autocomplete_queue.put(('popup', suggestion))
-
-    except Exception as e:
-        error_message = str(e).replace("'", "''")
-        _autocomplete_queue.put(('error', error_message))
-
-def autocomplete(verbose=False):
-    """
-    Gets context from the current buffer and starts a background thread to
-    fetch a single-line completion from the Gemini API.
+    Callback function invoked when the agent sends back an autocomplete response via Vim's channel.
     """
     global _current_autocomplete_job_id
 
-    util.log_info(f"autocomplete(verbose={verbose})")
+    if _current_autocomplete_job_id is None:
+        return
 
-    # Prevent multiple autocomplete jobs from running and overwriting the cursor color.
+    _current_autocomplete_job_id = None
+
+    if not isinstance(result, dict):
+        return
+
+    if "error" in result:
+        err_msg = result["error"].get("message", "Unknown error")
+        util.log_info(f"Autocomplete error: {err_msg}")
+        return
+
+    text = result.get("text", "")
+    if not text:
+        return
+
+    suggestion = text.strip().split('\n')[0]
+    if not suggestion:
+        return
+
+    _show_autocomplete_popup(suggestion)
+
+def autocomplete():
+    """
+    Gets context from the current buffer and sends an autocomplete request
+    to the agent server via Vim's channel.
+    """
+    global _current_autocomplete_job_id
+
+    util.log_info(f"autocomplete called")
+
     if _original_cursor_hl:
         return
 
-    if vim.eval('mode()') != 'i':
-        return
-
     job_id = uuid.uuid4()
+    _current_autocomplete_job_id = job_id
+
     buffer_content = list(vim.current.buffer)
     cursor_pos = vim.current.window.cursor
+    row, col = cursor_pos  # `row` is 1-based.
 
-    with _autocomplete_lock:
-        _current_autocomplete_job_id = job_id
+    start_line_index = max(0, row - 20)  # Use more context
+    context_lines = buffer_content[start_line_index:row]
 
-    if verbose:
-        vim.command("echo '[Vimini] Autocompleting...'")
+    if not context_lines:
+        return
 
-    thread = threading.Thread(
-        target=_autocomplete_worker,
-        args=(job_id, buffer_content, cursor_pos, verbose),
-        daemon=True
+    current_line_content = context_lines[-1]
+    context_lines[-1] = current_line_content[:col] + "<CURSOR>" + current_line_content[col:]
+    context_text = "\n".join(context_lines)
+
+    prompt = (
+        "You are an expert coding assistant. Based on the following code snippet, "
+        "provide a single-line code completion for the position marked by `<CURSOR>`.\n"
+        "IMPORTANT: Return only the code to be inserted. Do not include the original line, "
+        "any explanations, quotes, or markdown formatting.\n\n"
+        "--- CODE ---\n"
+        f"{context_text}\n"
+        "--- END CODE ---"
     )
-    thread.start()
+
+    req = {
+        "jsonrpc": "2.0",
+        "id": str(job_id),
+        "method": "autocomplete",
+        "params": {
+            "prompt": prompt
+        }
+    }
+
+    _send_channel_request(req)

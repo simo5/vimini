@@ -3,7 +3,7 @@ import os, subprocess, shlex, textwrap, json, tempfile, time
 from google.genai import types
 from vimini import util
 from vimini.util import process_queue, get_model_name
-from vimini.autocomplete import autocomplete, cancel_autocomplete, process_autocomplete_queue
+from vimini.autocomplete import autocomplete, cancel_autocomplete
 from vimini.code import code, show_diff, apply_code
 from vimini.review import review
 from vimini.ripgrep import command as ripgrep_command
@@ -171,7 +171,10 @@ def handle_channel_message(msg):
     result = msg.get("result")
     if isinstance(result, dict):
         method = result.get("method")
-        if method == "setup":
+        if method == "autocomplete":
+            from vimini.autocomplete import handle_channel_response
+            handle_channel_response(result)
+        elif method == "setup":
             util.log_info("Agent server setup completed.")
         elif method == "list_models":
             models = result.get("models", [])

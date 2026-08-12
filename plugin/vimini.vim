@@ -386,8 +386,7 @@ function! ViminiAutocomplete()
   py3 << EOF
 try:
     from vimini import main
-    verbose = vim.eval('g:vimini_thinking') == 'on'
-    main.autocomplete(verbose)
+    main.autocomplete()
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
@@ -398,19 +397,6 @@ endfunction
 let g:vimini_autocomplete = get(g:, 'vimini_autocomplete', 'off')
 
 let s:autocomplete_timer = -1
-let s:autocomplete_queue_timer = -1
-
-" Function to be called by the queue timer to process results from python
-function! s:ProcessAutocompleteQueue(timer)
-  py3 << EOF
-try:
-    from vimini import main
-    main.process_autocomplete_queue()
-except Exception:
-    # Fail silently, this is called frequently
-    pass
-EOF
-endfunction
 
 " Expose a function to toggle autocomplete on and off
 function! ViminiToggleAutocomplete(...)
@@ -434,19 +420,6 @@ function! ViminiToggleAutocomplete(...)
     endif
   endif
 
-  if g:vimini_autocomplete ==# 'on'
-    " Start the queue processor timer if it's not already running
-    if s:autocomplete_queue_timer == -1
-      let s:autocomplete_queue_timer = timer_start(100, 's:ProcessAutocompleteQueue', {'repeat': -1})
-    endif
-  else " 'off'
-    call s:StopAutocompleteTimer() " Stops trigger timer and cancels jobs
-    " Also stop the queue processor timer
-    if s:autocomplete_queue_timer != -1
-      call timer_stop(s:autocomplete_queue_timer)
-      let s:autocomplete_queue_timer = -1
-    endif
-  endif
 
   echo "[Vimini] Autocomplete is now " . g:vimini_autocomplete
 endfunction
@@ -478,7 +451,7 @@ function! s:ResetAutocompleteTimer()
   " Stop the previous timer and cancel any pending request.
   call s:StopAutocompleteTimer()
   if g:vimini_autocomplete ==# 'on' && mode() ==# 'i'
-    let s:autocomplete_timer = timer_start(1000, 's:TriggerAutocomplete')
+    let s:autocomplete_timer = timer_start(100, 's:TriggerAutocomplete')
   endif
 endfunction
 
