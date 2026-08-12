@@ -6,6 +6,47 @@ import json
 from . import util
 from google.genai import types
 
+# --- Context File Storage Helpers ---
+
+def get_project_name():
+    project_name = util.get_git_repo_name()
+    if not project_name or project_name == "temp":
+        return None
+    return project_name
+
+def get_project_context_file_path():
+    project_name = get_project_name()
+    if not project_name:
+        return None
+    projects_dir = os.path.expanduser("~/.var/vimini/projects")
+    return os.path.join(projects_dir, project_name)
+
+def save_project_context_files(files):
+    try:
+        file_path = get_project_context_file_path()
+        if not file_path:
+            return
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(files, f, indent=2)
+        util.log_info(f"Saved context files for project to {file_path}")
+    except Exception as e:
+        util.display_message(f"Error saving project context files: {e}", error=True)
+
+def restore_context_files():
+    try:
+        file_path = get_project_context_file_path()
+        if not file_path:
+            return
+        if os.path.exists(file_path):
+            with open(file_path, 'r', encoding='utf-8') as f:
+                restored_files = json.load(f)
+            if isinstance(restored_files, list):
+                vim.command(f"let g:context_files = {json.dumps(restored_files)}")
+                util.log_info(f"Restored context files for project from {file_path}")
+    except Exception as e:
+        util.log_info(f"Failed to restore context files: {e}")
+
 # --- Context File Uploading ---
 # (moved from util.py)
 
@@ -629,6 +670,7 @@ def confirm_context_files():
     """
     Called on BufUnload of the context files buffer.
     Shows a confirmation popup to save or discard changes to the context.
+    Option 'a' allows saving changes permanently for the project.
     """
     global _VIMINI_PENDING_CONTEXT_FILES
     try:
@@ -660,7 +702,7 @@ def confirm_context_files():
         else:
             popup_content.append("(Context will be empty)")
 
-        popup_content.extend(['', '---', 'Accept changes? [y/n]'])
+        popup_content.extend(['', '---', 'Accept changes? [y/n/a]'])
 
         popup_options = {
             'title': ' Confirm Context ', 'line': 0, 'col': 0,
@@ -673,11 +715,15 @@ def confirm_context_files():
         vim.command("redraw!")
 
         commit_confirmed = False
+        always_save = False
         try:
             answer_code = vim.eval('getchar()')
             answer_char = chr(int(answer_code))
             if answer_char.lower() == 'y':
                 commit_confirmed = True
+            elif answer_char.lower() == 'a':
+                commit_confirmed = True
+                always_save = True
         except (vim.error, ValueError, TypeError):
             pass
         finally:
@@ -687,7 +733,11 @@ def confirm_context_files():
         if commit_confirmed:
             # Use json.dumps to create a string that is a valid Vimscript list literal.
             vim.command(f"let g:context_files = {json.dumps(pending_files)}")
-            util.display_message("Context files updated.", history=True)
+            if always_save:
+                save_project_context_files(pending_files)
+                util.display_message("Context files updated and saved for project.", history=True)
+            else:
+                util.display_message("Context files updated.", history=True)
         else:
             util.display_message("Context file changes discarded.", history=True)
 

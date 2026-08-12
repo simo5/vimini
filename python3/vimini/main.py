@@ -9,7 +9,7 @@ from vimini.review import review
 from vimini.ripgrep import command as ripgrep_command
 from vimini.ripgrep import apply as ripgrep_apply
 from vimini.chat import chat
-from vimini.context import context_files_command, toggle_context_file, show_context_lists, confirm_context_files, files_command
+from vimini.context import context_files_command, toggle_context_file, show_context_lists, confirm_context_files, files_command, restore_context_files
 
 def initialize(api_key, model, logfile=None):
     """
@@ -21,6 +21,7 @@ def initialize(api_key, model, logfile=None):
     util._MODEL = model
     util._GENAI_CLIENT = None # Reset client if key/model changes.
     util.set_logging(logfile)
+    restore_context_files()
     if not util._API_KEY:
         util.display_message("API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token.", error=True)
 
