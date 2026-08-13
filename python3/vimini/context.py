@@ -1,10 +1,9 @@
 import vim
 import os
-import io
-import time
 import json
+import logging
 from . import util
-from google.genai import types
+from vimini.common.context import upload_context_files as _common_upload_context_files
 
 # --- Context File Storage Helpers ---
 
@@ -111,212 +110,36 @@ def find_context_files(file_paths_to_include=None):
 def upload_context_files(client, file_paths_to_include=None):
     """
     Uploads files to use as context. This includes files from open buffers and
-    from the `g:context_files` list. It re-uploads files if they have been
-    modified since the last upload.
-    Returns a list of active file API resources, or None on failure.
+    from the `g:context_files` list.
+    Delegates the non-vim upload logic to vimini.common.context.upload_context_files.
     """
-    # --- 1. Determine which files to upload vs. reuse ---
-    files_to_process = []
-    files_requiring_upload = []
-    util.display_message("Checking context files...")
-
     context_files = find_context_files(file_paths_to_include)
-    if context_files:
-        util.log_info(f"Considering these context files {context_files}")
-    else:
+    if not context_files:
         util.display_message("No context files found (from open buffers or g:context_files).", history=True)
         return None
 
-    # Load existing files into a map for quick lookup.
-    existing_files = {}
-    try:
-        for f in client.files.list():
-            existing_files[f.display_name] = f
-    except Exception:
-        # Ignore errors; if listing fails, we'll just upload everything.
-        pass
-
+    items = []
     for file_path, buf_number in context_files:
-        relative_path = util.get_relative_path(file_path)
-        found_file = existing_files.get(relative_path)
-
-        if not found_file:
-            # Not found, needs uploading.
-            files_requiring_upload.append((file_path, buf_number))
-            continue
-
-        # File was found, check if it's stale.
-        is_stale = False
-        buffer_is_modified = False
-        if buf_number is not None:
-            buffer = vim.buffers[buf_number]
-            if util.is_buffer_modified(buffer):
-                is_stale = True
-                buffer_is_modified = True
-
-        if not buffer_is_modified:
-            # Check disk if buffer isn't modified, or if there is no buffer.
-            try:
-                disk_mtime = os.path.getmtime(file_path)
-                uploaded_time = found_file.create_time.timestamp()
-                if uploaded_time < disk_mtime:
-                    is_stale = True
-            except (OSError, AttributeError):
-                is_stale = True # Re-upload to be safe.
-
-        if is_stale:
-            files_requiring_upload.append((file_path, buf_number))
-            # It's good practice to delete the old one.
-            try:
-                client.files.delete(name=found_file.name)
-            except Exception:
-                pass # Deletion is best-effort.
-        else:
-            # Uploaded file is recent enough, use it.
-            files_to_process.append(found_file)
-
-    # --- Log context files status before upload ---
-    reused_file_paths = {f.display_name for f in files_to_process}
-    upload_file_paths = {util.get_relative_path(path) for path, _ in files_requiring_upload}
-    all_context_file_paths = sorted(list(reused_file_paths | upload_file_paths))
-
-    util.log_info(f"Found {len(all_context_file_paths)} context files:")
-    for file_path in all_context_file_paths:
-        status = " (will upload)" if file_path in upload_file_paths else " (already available)"
-        util.log_info(f"  - {file_path}{status}")
-
-
-    # --- 2. Prepare and filter files for upload ---
-    files_with_content = []
-    for file_path, buf_number in files_requiring_upload:
-        content = ""
+        content = None
         if buf_number is not None:
             buf = vim.buffers[buf_number]
             content = "\n".join(buf[:])
-        else:
-            # Read from disk for files not in a buffer.
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-            except Exception as e:
-                util.display_message(f"Could not read context file {file_path}: {e}", error=True)
-                continue # Skip this file
+        items.append((file_path, content))
 
-        if not content.strip():
-            continue
-
-        content_bytes = content.encode('utf-8')
-        files_with_content.append({
-            'path': file_path,
-            'content_bytes': content_bytes,
-            'size': len(content_bytes)
-        })
-
-    # Limit total upload size to 1MB
-    MAX_UPLOAD_BYTES = 1 * 1024 * 1024 # 1 Megabyte
-    total_size = sum(f['size'] for f in files_with_content)
-    eliminated_files = []
-
-    while total_size > MAX_UPLOAD_BYTES and files_with_content:
-        # Find and remove the largest file
-        largest_file = max(files_with_content, key=lambda f: f['size'])
-        files_with_content.remove(largest_file)
-        total_size -= largest_file['size']
-        eliminated_files.append(os.path.basename(largest_file['path']))
-
-    if eliminated_files:
-        util.display_message(f"Context files > 1MB. Excluded: {', '.join(sorted(eliminated_files))}", history=True)
-        util.log_info(f"Excluded {len(eliminated_files)} files from context upload due to size limit: {', '.join(sorted(eliminated_files))}")
-
-
-    # --- 3. Upload necessary files ---
-    if files_with_content:
-        util.display_message(f"Uploading {len(files_with_content)} context file(s)...")
-
-    uploaded_files = []
-    for file_info in files_with_content:
-        file_path = file_info['path']
-        relative_path = util.get_relative_path(file_path)
-        buf_content_bytes = file_info['content_bytes']
-
-        buf_io = io.BytesIO(buf_content_bytes)
-        # Always force plain text, the GEeminiAPI is very fussy with thr type
-        # and returns 400 errors on types it doesn't like
-        mime_type = 'text/plain'
-
-        try:
-            uploaded_file = client.files.upload(
-                file=buf_io,
-                config=types.UploadFileConfig(
-                    display_name=relative_path,
-                    mime_type=mime_type
-                ),
-            )
-            uploaded_files.append(uploaded_file)
-        except Exception as e:
-            util.display_message(f"Error uploading {relative_path}: {e}", error=True)
-            return None # Fail fast on upload error
-
-    # --- 4. Wait for all files (reused and new) to become ACTIVE ---
-    pending_files = []
-    for f in uploaded_files:
-        # Re-check the state of reused files as well.
-        if f.state.name == 'ACTIVE':
-            files_to_process.append(f)
-        elif f.state.name == 'PROCESSING':
-            pending_files.append(f)
-        else: # FAILED, etc.
-             util.display_message(f"Reused file {f.display_name} is in an unusable state: {f.state.name}", error=True)
-             return None
-
-    start_time = time.time()
-    timeout = 2.0
-    while pending_files:
-        if time.time() - start_time > timeout:
-            util.display_message(f"File processing timed out after {int(timeout)}s.", error=True)
-            return None
-        remaining_time = timeout - (time.time() - start_time)
-        util.display_message(f"Waiting for {len(pending_files)} files... ({remaining_time:.1f}s left)")
-        time.sleep(0.1)
-        still_pending = []
-        for f in pending_files:
-            try:
-                updated_file = client.files.get(name=f.name)
-                if updated_file.state.name == 'PROCESSING':
-                    still_pending.append(updated_file)
-                elif updated_file.state.name == 'ACTIVE':
-                    files_to_process.append(updated_file)
-                else: # FAILED or other terminal state
-                    util.display_message(f"File processing failed for {updated_file.display_name}: {updated_file.state.name}", error=True)
-                    return None
-            except Exception as e:
-                util.display_message(f"Error checking file status for {f.display_name}: {e}", error=True)
-                return None
-        pending_files = still_pending
-
-    if not files_to_process:
-        util.display_message("No content found in open buffers to create context.", history=True)
-        return None
-
-    util.log_info(f"Final active context files ({len(files_to_process)}):")
-    for file in files_to_process:
-        util.log_info(f"  - {file.display_name}")
-
-    return files_to_process
+    logger = logging.getLogger('vimini')
+    return _common_upload_context_files(
+        logger,
+        client,
+        file_paths_to_include=items,
+        display_cb=util.display_message
+    )
 
 
 # --- Interactive Context File Manager ---
-# (moved from main.py)
 
-# Global variable to hold the list of pending context files while the
-# context file manager is open.
 _VIMINI_PENDING_CONTEXT_FILES = None
 
 def _draw_context_files_listing(target_path, project_root, context_files_list):
-    """
-    Generates the list of lines for the context files buffer.
-    """
-    # 1. Create a set of absolute paths for files in context for quick lookups.
     context_files_abs = set()
     for f in context_files_list:
         path = os.path.expanduser(f)

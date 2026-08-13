@@ -1,7 +1,6 @@
 import os
 import json
 import queue
-import threading
 import subprocess
 import logging
 import tempfile
@@ -9,21 +8,9 @@ import sys
 from google import genai
 from google.genai import types
 from vimini.common.util import get_project_root
+from vimini.agent.comms import CommSession
 
 logger = logging.getLogger('vimini_agent')
-
-def _get_agent_config():
-    main_mod = sys.modules.get('__main__')
-    if main_mod and hasattr(main_mod, 'AGENT_CONFIG'):
-        return getattr(main_mod, 'AGENT_CONFIG')
-    try:
-        from vimini.agent import server
-        return getattr(server, 'AGENT_CONFIG', {})
-    except ImportError:
-        return {}
-
-_chat_sessions = {}
-_sessions_lock = threading.Lock()
 
 agent_tools = [
     types.Tool(
@@ -160,65 +147,21 @@ def validate_patch_is_safe(temp_file_path):
 
     return True, "Patch is safe."
 
-class ChatSession(threading.Thread):
-    def __init__(self, req_id, result_queue):
-        super().__init__(daemon=True)
-        self.req_id = req_id
-        self.result_queue = result_queue
-        self.cmd_queue = queue.Queue()
-        self.running = True
+class ChatSession(CommSession):
+    def __init__(self, req_id, result_queue, agent_config=None, request=None):
+        super().__init__(req_id, result_queue, agent_config=agent_config, request=request)
         self.client = None
         self.session = None
-
-    def post_cmd(self, req_id, params, conn):
-        self.cmd_queue.put((req_id, params, conn))
-
-    def _send_response(self, req_id, conn, result=None, error=None):
-        resp = {"id": req_id, "jsonrpc": "2.0"}
-        if error is not None:
-            resp["error"] = error
-        else:
-            res = result or {}
-            resp["result"] = res
-        self.result_queue.put((conn, [0, resp]))
-
-    def run(self):
-        logger.info(f"ChatSession thread started for req_id: {self.req_id}")
-        while self.running:
-            try:
-                item = self.cmd_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-
-            if item is None:
-                break
-
-            if len(item) == 3:
-                req_id, params, conn = item
-            else:
-                params, conn = item
-                req_id = self.req_id
-
-            try:
-                self._process_command(req_id, params, conn)
-            except Exception as e:
-                logger.error(f"Error processing chat command for req_id {req_id}: {e}", exc_info=True)
-                self._send_response(req_id, conn, error={"code": -32603, "message": str(e)})
-
-        logger.info(f"ChatSession thread exiting for req_id: {self.req_id}")
 
     def _process_command(self, req_id, params, conn):
         if isinstance(params, dict) and params.get("terminate"):
             logger.info(f"Terminating ChatSession for req_id: {self.req_id}")
             self.running = False
-            with _sessions_lock:
-                if _chat_sessions.get(self.req_id) == self:
-                    del _chat_sessions[self.req_id]
-            self._send_response(req_id, conn, result={"status": "terminated", "method": "chat"})
+            self.send_response(req_id, conn, result={"status": "terminated", "method": "chat"})
             return
 
         prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-        agent_config = _get_agent_config()
+        agent_config = self.agent_config
         api_key = agent_config.get("api_key")
         model = agent_config.get("model")
 
@@ -227,7 +170,7 @@ class ChatSession(threading.Thread):
 
         if not self.session:
             self.client = genai.Client(api_key=api_key) if api_key else genai.Client()
-            agent_config = types.GenerateContentConfig(
+            agent_config_obj = types.GenerateContentConfig(
                 tools=agent_tools,
                 system_instruction=(
                     "When explicitly requested to change code You act as an expert"
@@ -248,11 +191,11 @@ class ChatSession(threading.Thread):
             )
             self.session = self.client.chats.create(
                 model=model,
-                config=agent_config
+                config=agent_config_obj
             )
 
         if not prompt:
-            self._send_response(req_id, conn, result={"status": "ok", "method": "chat", "text": ""})
+            self.send_response(req_id, conn, result={"status": "ok", "method": "chat", "text": ""})
             return
 
         def process_prompt_stream(current_prompt, current_req_id):
@@ -269,15 +212,16 @@ class ChatSession(threading.Thread):
                             modified_text += part.text
 
                     if modified_text:
-                        self._send_response(current_req_id, conn, result={"status": "chunk", "method": "chat", "text": modified_text})
+                        self.send_response(current_req_id, conn, result={"status": "chunk", "method": "chat", "text": modified_text})
                 elif chunk.text:
-                    self._send_response(current_req_id, conn, result={"status": "chunk", "method": "chat", "text": chunk.text})
+                    self.send_response(current_req_id, conn, result={"status": "chunk", "method": "chat", "text": chunk.text})
 
             if pending_tool_calls:
                 responses = []
                 for tool_call in pending_tool_calls:
                     args_dict = dict(tool_call.args) if tool_call.args else {}
                     temp_file_path = None
+                    logger.info(f"Chat[{req_id}]: tool use requested: {tool_call.name}")
                     if tool_call.name == 'apply_patch':
                         diff_content = args_dict.get('diff_content', '')
                         with tempfile.NamedTemporaryFile(mode='w', suffix='.diff', delete=False, encoding='utf-8') as f:
@@ -291,7 +235,6 @@ class ChatSession(threading.Thread):
                                     os.remove(temp_file_path)
                                 except Exception:
                                     pass
-                            fail_msg = f"\n[Patch validation failed: {err_msg}]\n"
                             responses.append(types.Part.from_function_response(
                                 name=tool_call.name,
                                 response={'result': f"Patch validation failed: {err_msg}"}
@@ -299,7 +242,7 @@ class ChatSession(threading.Thread):
                             continue
 
                         req_msg = f"\n[Agent requested tool execution: apply_patch. Patch saved to temp file: {temp_file_path}]\n"
-                        self._send_response(current_req_id, conn, result={
+                        self.send_response(current_req_id, conn, result={
                             "status": "tool_use_requested",
                             "method": "chat",
                             "tool": tool_call.name,
@@ -309,7 +252,7 @@ class ChatSession(threading.Thread):
                     else:
                         args_str = json.dumps(args_dict)
                         req_msg = f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n"
-                        self._send_response(current_req_id, conn, result={
+                        self.send_response(current_req_id, conn, result={
                             "status": "tool_use_requested",
                             "method": "chat",
                             "tool": tool_call.name,
@@ -390,14 +333,4 @@ class ChatSession(threading.Thread):
                 process_prompt_stream(responses, next_req_id)
 
         process_prompt_stream(prompt, req_id)
-        self._send_response(req_id, conn, result={"status": "done", "method": "chat"})
-
-def handle_chat_request(req_id, params, result_queue, conn):
-    with _sessions_lock:
-        session = _chat_sessions.get(req_id)
-        if session is None or not session.is_alive():
-            session = ChatSession(req_id, result_queue)
-            _chat_sessions[req_id] = session
-            session.start()
-
-    session.post_cmd(req_id, params, conn)
+        self.send_response(req_id, conn, result={"status": "done", "method": "chat"})

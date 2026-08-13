@@ -7,19 +7,6 @@ from vimini import util
 _current_autocomplete_job_id = None
 _original_cursor_hl = {}
 
-def _send_channel_request(req_dict):
-    if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
-        util.display_message("Error: Agent server channel is not open.", error=True)
-        return False
-    try:
-        util.log_info(f"Sending request to agent: {req_dict}")
-        safe_json = json.dumps(req_dict)
-        vim.command(f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))")
-        return True
-    except Exception as e:
-        util.display_message(f"Error sending channel request: {e}", error=True)
-        return False
-
 def cancel_autocomplete():
     """
     Signals that any ongoing autocomplete job should be cancelled.
@@ -105,7 +92,7 @@ def autocomplete():
     if _original_cursor_hl:
         return
 
-    job_id = uuid.uuid4()
+    job_id = util.reserve_next_job_id(job_name)
     _current_autocomplete_job_id = job_id
 
     buffer_content = list(vim.current.buffer)
@@ -141,4 +128,4 @@ def autocomplete():
         }
     }
 
-    _send_channel_request(req)
+    util.send_channel_request(req)

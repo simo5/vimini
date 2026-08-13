@@ -1,5 +1,5 @@
 import vim
-import os, subprocess, time, io, logging, inspect
+import os, subprocess, time, io, logging, inspect, json
 import threading
 import queue
 from google import genai
@@ -22,6 +22,21 @@ _JOB_COUNTER = 0
 _ACTIVE_JOBS = {}
 _JOB_NAMES = {}
 _JOB_CLIENTS = {}
+
+def send_channel_request(req_dict, silent=False):
+    if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
+        if not silent:
+            display_message("Error: Agent server channel is not open.", error=True)
+        return False
+    try:
+        log_info(f"Sending channel request: {req_dict}")
+        safe_json = json.dumps(req_dict)
+        vim.command(f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))")
+        return True
+    except Exception as e:
+        if not silent:
+            display_message(f"Error sending channel request: {e}", error=True)
+        return False
 
 def get_client():
     """
@@ -135,39 +150,19 @@ def get_git_repo_name():
 
     return _REPO_NAME_CACHE
 
-def get_relative_path(file_path):
+def get_relative_path(file_path, repo_name=None, git_root=None):
     """
     Computes a path for a file relative to its git repository root,
     or to the user's home directory as a fallback.
     Prepends the capitalized git repo name or 'HOME' to the path.
     """
-    if not file_path:
-        return ""
+    if repo_name is None:
+        repo_name = get_git_repo_name()
+    if git_root is None:
+        git_root = _REPO_ROOT_CACHE or get_git_repo_root()
 
-    abs_path = os.path.abspath(file_path)
-
-    # Prime the repo root cache. This assumes we are operating within a single
-    # project context, so we use the repo of the current buffer for all files.
-    repo_name = get_git_repo_name() # This also populates _REPO_ROOT_CACHE
-    git_root = _REPO_ROOT_CACHE
-
-    if git_root and abs_path.startswith(git_root):
-        relative_path = os.path.relpath(abs_path, git_root)
-        return f"{repo_name.upper()}:{relative_path}"
-
-    home_dir = os.path.expanduser('~')
-    # Check if the path is inside the home directory.
-    if abs_path.startswith(home_dir):
-        try:
-            relative_path = os.path.relpath(abs_path, home_dir)
-            return f"HOME:{relative_path}"
-        except ValueError:
-            # This can happen on Windows if home_dir and abs_path are on different drives,
-            # even with startswith check if symlinks are involved. Fallback is safe.
-            pass
-
-    # Fallback for files not in git repo or home, or on different drives on Windows.
-    return os.path.basename(abs_path)
+    from vimini.common.util import get_relative_path as common_get_relative_path
+    return common_get_relative_path(file_path, repo_name=repo_name, git_root=git_root)
 
 def get_absolute_path_from_api_path(api_path):
     """
@@ -177,7 +172,7 @@ def get_absolute_path_from_api_path(api_path):
     if not api_path:
         return ""
 
-    project_root = get_git_repo_root() or vim.eval('getcwd()')
+    project_root = get_git_repo_root() or os.getcwd()
 
     if ':' not in api_path:
         # Fallback for paths without a prefix: assume relative to project root.

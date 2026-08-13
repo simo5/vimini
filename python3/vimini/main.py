@@ -44,7 +44,7 @@ def send_setup():
             "temperature": temperature
         }
     }
-    return _send_channel_request(req, silent=False)
+    return util.send_channel_request(req, silent=False)
 
 def start_agent():
     """
@@ -89,7 +89,7 @@ def _send_channel_request(req_dict, silent=False):
             util.display_message(f"Error sending channel request: {e}", error=True)
         return False
 
-def handle_commit_response(result):
+def handle_commit_response(req_id, result):
     text = result.get("text", "")
     repo_path = result.get("repo_path", "")
     diff_stat_output = result.get("diff_stat_output", "")
@@ -169,12 +169,16 @@ def handle_channel_message(msg):
         err_msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
         util.display_message(f"Error: {err_msg}", error=True)
         return
+    req_id = msg.get("id")
     result = msg.get("result")
     if isinstance(result, dict):
         method = result.get("method")
         if method == "autocomplete":
             from vimini.autocomplete import handle_channel_response
-            handle_channel_response(result)
+            handle_channel_response(req_id, result)
+        elif method == "code":
+            from vimini.code import handle_channel_response
+            handle_channel_response(req_id, result)
         elif method == "setup":
             util.log_info("Agent server setup completed.")
         elif method == "list_models":
@@ -189,9 +193,9 @@ def handle_channel_message(msg):
             vim.current.buffer[:] = model_list
         elif method == "chat":
             from vimini.chat import handle_channel_response
-            handle_channel_response(result)
+            handle_channel_response(req_id, result)
         elif method == "commit":
-            handle_commit_response(result)
+            handle_commit_response(req_id, result)
 
 # This new function is needed because vimini.vim calls main.logging()
 def logging(logfile=None):
@@ -392,7 +396,7 @@ def commit(assistant=True, temperature=None, regenerate=False, refinement=None):
             }
         }
 
-        if not _send_channel_request(req):
+        if not util.send_channel_request(req):
             msg = "Commit cancelled (sending request to agent server failed)."
             if not regenerate:
                 msg += " Reverting `git add`."

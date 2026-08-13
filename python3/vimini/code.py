@@ -7,12 +7,176 @@ from vimini import util, context
 _BUFFER_DATA_STORE = {}
 # Separator line to distinguish between thoughts/summary and the actual diff
 _DIFF_SEPARATOR = "========== VIMINI DIFF START =========="
+_STREAM_JSON_STORE = {}
+
+def _to_str(val):
+    if isinstance(val, bytes):
+        return val.decode('utf-8', errors='replace')
+    return str(val) if val is not None else ""
+
+def _find_buffer(req_id):
+    try:
+        for buf in vim.buffers:
+            bid = buf.vars.get("vimini_job_id")
+            if bid is not None and _to_str(bid) == str(req_id):
+                return buf
+    except Exception:
+        pass
+    return None
+
+def handle_channel_response(req_id, result):
+    """
+    Handles channel responses from the agent server for code requests.
+    Statuses: 'thought', 'chunk', 'completed', 'error'
+    """
+    if not isinstance(result, dict):
+        return
+
+    status = result.get("status")
+    buf = _find_buffer(req_id)
+    if buf is None:
+        return
+    buf_num = buf.number
+
+    if status == "thought":
+        thought_text = result.get("thought", "")
+        verbose = result.get("verbose")
+        if verbose is None:
+            try:
+                verbose = (vim.eval("get(g:, 'vimini_thinking', 'on')") == 'on')
+            except Exception:
+                verbose = True
+        if verbose and thought_text and buf_num:
+            util.append_to_buffer(buf_num, thought_text)
+
+    elif status == "chunk":
+        chunk_text = result.get("text", "")
+        if req_id is not None:
+            _STREAM_JSON_STORE[req_id] = _STREAM_JSON_STORE.get(req_id, "") + chunk_text
+
+    elif status == "completed":
+        json_text = _STREAM_JSON_STORE.pop(req_id, "")
+        files_to_process = result.get("files", [])
+        diff_output = result.get("diff_output", "")
+        project_root = result.get("project_root") or util.get_git_repo_root() or vim.eval("getcwd()")
+
+        if buf_num:
+            _BUFFER_DATA_STORE[buf_num] = {
+                "files_to_apply": files_to_process,
+                "project_root": project_root,
+                "req_id": req_id
+            }
+
+            if diff_output:
+                separator_block = f"\n{_DIFF_SEPARATOR}\n"
+                util.append_to_buffer(buf_num, separator_block + diff_output)
+            else:
+                util.append_to_buffer(buf_num, "\nAI content is identical to the original files or returned empty diff.")
+
+            vim.command(f"call setbufvar({buf_num}, '&filetype', 'diff')")
+
+            if buf:
+                base_buffer_name = f"[{req_id}] Vimini Code"
+                try:
+                    buf.name = base_buffer_name
+                except Exception:
+                    pass
+
+    elif status == "error":
+        _STREAM_JSON_STORE.pop(req_id, None)
+        err_msg = result.get("error", "Unknown error")
+        if buf_num:
+            util.append_to_buffer(buf_num, f"\nError: {err_msg}")
+        util.display_message(f"Error: {err_msg}", error=True)
 
 def code(prompt, verbose=False, temperature=None):
     """
     Uploads all open files, sends them to the Gemini API with a prompt
     to generate code. Runs asynchronously using a thread and Vim timer.
+    If the prompt starts with 'NEW', sends request to agent server.
     """
+    if prompt.startswith("'NEW "):
+        prompt = "'"+prompt[5:]
+        use_agent = True
+    else:
+        use_agent = False
+
+    if use_agent:
+        util.log_info(f"agent code({prompt})")
+
+        project_root = util.get_git_repo_root()
+        if not project_root:
+            project_root = os.getcwd()
+
+        file_paths_to_include = []
+        for b in vim.buffers:
+            if b.name and os.path.exists(b.name):
+                file_paths_to_include.append(os.path.abspath(b.name))
+
+        try:
+            context_files_list = vim.eval("get(g:, 'context_files', [])")
+            if isinstance(context_files_list, list):
+                for f in context_files_list:
+                    if os.path.isabs(f):
+                        file_paths_to_include.append(os.path.abspath(f))
+                    else:
+                        file_paths_to_include.append(os.path.abspath(os.path.join(project_root, f)))
+        except Exception:
+            pass
+
+        original_buffer = vim.current.buffer
+
+        if original_buffer.name:
+            main_file_name = os.path.relpath(original_buffer.name, project_root) if os.path.isabs(original_buffer.name) else original_buffer.name
+            task_instruction = f"Your primary task is to modify the file named '{main_file_name}'."
+        else:
+            task_instruction = "Your primary task is to address the concern in the active buffer (if any).\n"
+            buffer_content = "\n".join(original_buffer[:])
+            if buffer_content.strip():
+                task_instruction += f"\n\nAdditional context from the current active buffer:\n{buffer_content}\n"
+
+        context_file_names = sorted([os.path.basename(f) for f in file_paths_to_include])
+
+        job_name = f"Code: {prompt}"
+        job_id = str(util.reserve_next_job_id(job_name))
+
+        util.new_split()
+        base_buffer_name = f"[{job_id}] Vimini Code"
+        safe_name = f"{base_buffer_name} [->G?]".replace(" ", "\\ ")
+        vim.command(f"file {safe_name}")
+        vim.command("setlocal buftype=nofile")
+        vim.command("setlocal bufhidden=wipe")
+        vim.command("setlocal noswapfile")
+        vim.command("setlocal filetype=markdown")
+
+        code_buffer = vim.current.buffer
+        code_buffer_num = code_buffer.number
+
+        code_buffer.vars["vimini_project_root"] = project_root
+        code_buffer.vars["vimini_job_id"] = job_id
+
+        util.append_job_summary(code_buffer_num, job_id, prompt, context_file_names)
+
+        util.display_message("Processing via agent... (Async)")
+
+        req = {
+            "jsonrpc": "2.0",
+            "id": str(job_id),
+            "method": "code",
+            "params": {
+                "prompt": prompt,
+                "verbose": verbose,
+                "temperature": temperature,
+                "project_root": project_root,
+                "file_paths_to_include": file_paths_to_include,
+                "task_instruction": task_instruction,
+                "buffer_num": code_buffer_num
+            }
+        }
+
+        util.send_channel_request(req)
+        return
+
     util.log_info(f"code({prompt}, verbose={verbose}, temperature={temperature})")
 
     # --- 1. Initialization and Setup ---
@@ -130,8 +294,8 @@ def code(prompt, verbose=False, temperature=None):
     code_buffer_num = code_buffer.number
 
     # Store buffer-local variables
-    vim.command(f"let b:vimini_project_root = '{project_root}'")
-    vim.command(f"let b:vimini_job_id = '{job_id}'")
+    code_buffer.vars["vimini_project_root"] = project_root
+    code_buffer.vars["vimini_job_id"] = job_id
 
     util.append_job_summary(code_buffer_num, job_id, prompt, context_file_names)
 
@@ -519,11 +683,11 @@ def apply_code(job_id=None):
         for buf in candidates:
             # Try matching by internal buffer variable
             try:
-                bid = vim.eval(f"getbufvar({buf.number}, 'vimini_job_id', '')")
-                if bid and str(bid) == str(job_id):
+                bid = buf.vars.get("vimini_job_id")
+                if bid is not None and _to_str(bid) == str(job_id):
                     target_candidates.append(buf)
                     continue
-            except:
+            except Exception:
                 pass
 
             # Try matching by filename pattern "[{job_id}] Vimini Code"
@@ -548,8 +712,11 @@ def apply_code(job_id=None):
             for buf in candidates:
                 bid = "Unknown"
                 try:
-                    bid = vim.eval(f"getbufvar({buf.number}, 'vimini_job_id', '')")
-                except: pass
+                    raw_bid = buf.vars.get("vimini_job_id")
+                    if raw_bid is not None:
+                        bid = _to_str(raw_bid)
+                except Exception:
+                    pass
 
                 if not bid or bid == "Unknown":
                      m = re.search(r'\[(\d+)\]', os.path.basename(buf.name))
@@ -565,7 +732,7 @@ def apply_code(job_id=None):
             diff_buffer = candidates[0]
 
     # 4. Extract diff content using separator
-    project_root = vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_project_root', '')")
+    project_root = _to_str(diff_buffer.vars.get("vimini_project_root", ""))
     if not project_root:
         project_root = util.get_git_repo_root() or vim.eval("getcwd()")
 
@@ -593,14 +760,14 @@ def apply_code(job_id=None):
         return
 
     if apply_patch(diff_content, project_root):
-        is_chat_patch = int(vim.eval(f"getbufvar({diff_buffer.number}, 'vimini_is_chat_patch', 0)"))
-        if is_chat_patch:
-            vim.command(f"call setbufvar({diff_buffer.number}, 'vimini_patch_handled', 1)")
-            try:
+        try:
+            if diff_buffer.vars.get("vimini_is_chat_patch", 0) == 1:
+                diff_buffer.vars["vimini_patch_handled"] = 1
+                req_id = _to_str(diff_buffer.vars["vimini_chat_job_id"])
                 from vimini.chat import send_agent_approval
-                send_agent_approval(True)
-            except Exception as e:
-                util.log_info(f"Error sending agent approval from apply_code: {e}")
+                send_agent_approval(True, req_id)
+        except Exception as e:
+            util.log_info(f"Error sending agent approval from apply_code: {e}")
 
         # Remove from data store
         if diff_buffer.number in _BUFFER_DATA_STORE:

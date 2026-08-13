@@ -1,0 +1,343 @@
+import os
+import json
+import logging
+import subprocess
+import tempfile
+import re
+from google import genai
+from google.genai import types
+from vimini.agent.comms import CommSession
+from vimini.common.context import upload_context_files
+
+logger = logging.getLogger('vimini_agent')
+
+def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
+    """
+    Helper function to parse x-diff chunks, fix the --- and +++ paths,
+    and recount/adjust the line counters in @@ headers if they are incorrect.
+    """
+    lines = ai_generated_code.strip('\n').split('\n')
+    if not lines or (len(lines) == 1 and not lines[0]):
+        return []
+
+    if not lines[0].startswith("diff"):
+        lines.insert(0, f"diff --git a/{relative_path} b/{relative_path}")
+
+    fixed_lines = []
+    current_hunk_header = None
+    current_hunk_data = []
+
+    def flush_hunk():
+        nonlocal current_hunk_header, current_hunk_data
+        if current_hunk_header is None:
+            return
+
+        minus_count = 0
+        plus_count = 0
+        for hl in current_hunk_data:
+            if hl.startswith('-'):
+                minus_count += 1
+            elif hl.startswith('+'):
+                plus_count += 1
+            elif hl.startswith('\\'):
+                pass
+            else:
+                minus_count += 1
+                plus_count += 1
+
+        m = re.match(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$', current_hunk_header)
+        if m:
+            start_minus = m.group(1)
+            start_plus = m.group(2)
+            rest = m.group(3)
+
+            new_minus_str = f"{start_minus},{minus_count}" if minus_count != 1 else start_minus
+            new_plus_str = f"{start_plus},{plus_count}" if plus_count != 1 else start_plus
+
+            fixed_header = f"@@ -{new_minus_str} +{new_plus_str} @@{rest}"
+            fixed_lines.append(fixed_header)
+        else:
+            fixed_lines.append(current_hunk_header)
+
+        fixed_lines.extend(current_hunk_data)
+        current_hunk_header = None
+        current_hunk_data = []
+
+    for line in lines:
+        if line.startswith("@@ "):
+            flush_hunk()
+            current_hunk_header = line
+        elif current_hunk_header is not None:
+            current_hunk_data.append(line)
+        else:
+            if line.startswith("--- "):
+                path = line[4:].strip()
+                if path == "/dev/null":
+                    fixed_lines.append(line)
+                else:
+                    if not file_exists:
+                        fixed_lines.append("--- /dev/null")
+                    else:
+                        fixed_lines.append(f"--- a/{relative_path}")
+            elif line.startswith("+++ "):
+                path = line[4:].strip()
+                if path == "/dev/null":
+                    fixed_lines.append(line)
+                else:
+                    fixed_lines.append(f"+++ b/{relative_path}")
+            else:
+                fixed_lines.append(line)
+
+    flush_hunk()
+    return fixed_lines
+
+class CodeSession(CommSession):
+    def __init__(self, req_id, result_queue, agent_config=None, request=None):
+        super().__init__(req_id, result_queue, agent_config=agent_config, request=request)
+
+    def _process_command(self, req_id, params, conn):
+        if isinstance(params, dict) and params.get("terminate"):
+            logger.info(f"Terminating CodeSession for req_id: {self.req_id}")
+            self.running = False
+            self.send_response(req_id, conn, result={"status": "terminated", "method": "code"})
+            return
+
+        agent_config = self.agent_config or {}
+        api_key = agent_config.get("api_key")
+        model = agent_config.get("model")
+        default_temperature = agent_config.get("temperature")
+
+        prompt = params.get("prompt") if isinstance(params, dict) else ""
+        verbose = params.get("verbose", False) if isinstance(params, dict) else False
+        temperature = params.get("temperature") if isinstance(params, dict) else None
+        if temperature is None:
+            temperature = default_temperature
+
+        project_root = params.get("project_root") if isinstance(params, dict) else None
+        file_paths_to_include = params.get("file_paths_to_include", []) if isinstance(params, dict) else []
+        task_instruction = params.get("task_instruction", "") if isinstance(params, dict) else ""
+        buffer_num = params.get("buffer_num") if isinstance(params, dict) else None
+
+        try:
+            client = genai.Client(api_key=api_key) if api_key else genai.Client()
+
+            file_object_schema = types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    'file_path': types.Schema(type=types.Type.STRING, description="The full path of the file relative to the project directory."),
+                    'file_type': types.Schema(type=types.Type.STRING, description="The content type. Use 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format."),
+                    'file_content': types.Schema(type=types.Type.STRING, description="The new, complete source code for the file, or a patch in the unified diff format, corresponding to the file_type.")
+                },
+                required=['file_path', 'file_type', 'file_content']
+            )
+            multi_file_output_schema = types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    'files': types.Schema(
+                        type=types.Type.ARRAY,
+                        items=file_object_schema
+                    )
+                },
+                required=['files']
+            )
+
+            uploaded_files = upload_context_files(
+                logger,
+                client,
+                file_paths_to_include=file_paths_to_include,
+                project_root=project_root,
+                display_cb=lambda msg, **kwargs: logger.info(msg)
+            ) or []
+            context_file_names = [f.display_name for f in uploaded_files]
+            upload_errors = []
+
+            file_list_str = "\n".join(f"- {name}" for name in sorted(context_file_names))
+            context_files_section = ""
+            if file_list_str:
+                context_files_section = (
+                    "The following files have been uploaded for context:\n"
+                    f"{file_list_str}\n\n"
+                )
+
+            full_prompt = [
+                (
+                    f"{prompt}\n\n"
+                    "Based on the user's request, please generate the code. "
+                    "Your identity is Vimini, and you are integrated into the vimini project."
+                    f"{task_instruction}\n\n"
+                    f"{context_files_section}"
+                    "IMPORTANT:\n"
+                    "1. Your response must be a single JSON object with a 'files' key.\n"
+                    "2. The value of 'files' must be an array of file objects.\n"
+                    "3. Each file object must have three string keys: 'file_path', 'file_type', and 'file_content'.\n"
+                    "4. 'file_path' must be the full path of the file relative to the project directory. When modifying a file from the context, you MUST use its original file path for the 'file_path' property.\n"
+                    "5. 'file_type' must be either 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format.\n"
+                    "6. 'file_content' must contain either the new, complete source code or the diff patch, corresponding to the 'file_type'.\n"
+                    "7. Diffs ('text/x-diff') can be returned only if explicitly mentioned as an acceptable output in the prompt or if the files are really difficult or too large to process. For small files, returning the entire modified file ('text/plain') is the most preferred option.\n"
+                    "8. You can modify existing files or create new files as needed to fulfill the request."
+                ),
+                *uploaded_files
+            ]
+
+            generation_config = types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=multi_file_output_schema
+            )
+
+            if temperature is not None:
+                try:
+                    temp_float = float(temperature)
+                    if 0.0 <= temp_float <= 2.0:
+                        generation_config.temperature = temp_float
+                except (ValueError, TypeError):
+                    pass
+
+            if verbose:
+                generation_config.thinking_config = types.ThinkingConfig(include_thoughts=True)
+
+            response_stream = client.models.generate_content_stream(
+                model=model,
+                contents=full_prompt,
+                config=generation_config
+            )
+
+            json_aggregator = ""
+
+            for chunk in response_stream:
+                if hasattr(chunk, 'candidates') and chunk.candidates:
+                    candidate = chunk.candidates[0]
+                    if candidate.content and candidate.content.parts:
+                        for part in candidate.content.parts:
+                            if hasattr(part, 'thought') and part.thought:
+                                thought_chunk = part.text or ""
+                                if thought_chunk:
+                                    self.send_response(req_id, conn, result={
+                                        "status": "thought",
+                                        "method": "code",
+                                        "thought": thought_chunk,
+                                        "buffer_num": buffer_num
+                                    })
+                            elif hasattr(part, 'text') and part.text:
+                                text_chunk = part.text
+                                if text_chunk:
+                                    json_aggregator += text_chunk
+                                    self.send_response(req_id, conn, result={
+                                        "status": "chunk",
+                                        "method": "code",
+                                        "text": text_chunk,
+                                        "buffer_num": buffer_num
+                                    })
+                elif hasattr(chunk, 'text') and chunk.text:
+                    text_chunk = chunk.text
+                    if text_chunk:
+                        json_aggregator += text_chunk
+                        self.send_response(req_id, conn, result={
+                            "status": "chunk",
+                            "method": "code",
+                            "text": text_chunk,
+                            "buffer_num": buffer_num
+                        })
+
+            try:
+                parsed_json = json.loads(json_aggregator)
+                files_to_process = parsed_json.get("files", [])
+                if not isinstance(files_to_process, list):
+                    raise ValueError("'files' key is not a list.")
+            except Exception as parse_err:
+                err_msg = f"AI did not return valid JSON for files: {parse_err}"
+                logger.error(f"Error parsing JSON in CodeSession for req_id {req_id}: {parse_err}")
+                self.send_response(req_id, conn, result={
+                    "status": "error",
+                    "method": "code",
+                    "error": err_msg,
+                    "raw_json": json_aggregator,
+                    "buffer_num": buffer_num,
+                    "project_root": project_root,
+                    "upload_errors": upload_errors
+                })
+                return
+
+            combined_diff_output = []
+            for file_op in files_to_process:
+                api_path = file_op.get("file_path", "")
+                ai_generated_code = file_op.get("file_content", "")
+
+                if ai_generated_code and not ai_generated_code.endswith('\n'):
+                    ai_generated_code += '\n'
+
+                file_type = file_op.get("file_type", "text/plain")
+
+                if project_root and not os.path.isabs(api_path):
+                    absolute_path = os.path.abspath(os.path.join(project_root, api_path))
+                else:
+                    absolute_path = os.path.abspath(api_path)
+
+                file_exists = os.path.exists(absolute_path)
+                relative_path = os.path.relpath(absolute_path, project_root) if project_root else api_path
+
+                if file_type == "text/x-diff":
+                    fixed_lines = _process_x_diff_chunks(ai_generated_code, relative_path, file_exists)
+                    if fixed_lines:
+                        combined_diff_output.extend(fixed_lines)
+                else:
+                    original_content = ""
+                    if file_exists:
+                        try:
+                            with open(absolute_path, "r", encoding="utf-8") as f:
+                                original_content = f.read()
+                        except Exception as e:
+                            logger.error(f"Error reading file {absolute_path}: {e}")
+
+                    with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_orig, \
+                         tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_ai:
+                        f_orig.write(original_content)
+                        f_ai.write(ai_generated_code)
+                        orig_filepath = f_orig.name
+                        ai_filepath = f_ai.name
+
+                    try:
+                        source_path = orig_filepath if file_exists else "/dev/null"
+                        cmd = ["diff", "-u", source_path, ai_filepath]
+                        diff_result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                        if diff_result.returncode <= 1:
+                            diff_lines = diff_result.stdout.split("\n")
+                            if len(diff_lines) > 2 or original_content or ai_generated_code:
+                                combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
+                                if not file_exists:
+                                    combined_diff_output.append("new file mode 100644")
+                                    combined_diff_output.append("--- /dev/null")
+                                    combined_diff_output.append(f"+++ b/{relative_path}")
+                                else:
+                                    combined_diff_output.append(f"--- a/{relative_path}")
+                                    combined_diff_output.append(f"+++ b/{relative_path}")
+                                combined_diff_output.extend(diff_lines[2:])
+                    finally:
+                        if os.path.exists(orig_filepath):
+                            os.remove(orig_filepath)
+                        if os.path.exists(ai_filepath):
+                            os.remove(ai_filepath)
+
+            diff_text = "\n".join(combined_diff_output) if combined_diff_output else ""
+
+            result = {
+                "status": "completed",
+                "method": "code",
+                "buffer_num": buffer_num,
+                "project_root": project_root,
+                "verbose": verbose,
+                "files": files_to_process,
+                "diff_output": diff_text,
+                "diff_lines": combined_diff_output,
+                "upload_errors": upload_errors
+            }
+            self.send_response(req_id, conn, result=result)
+        except Exception as e:
+            logger.error(f"Error in CodeSession for req_id {req_id}: {e}", exc_info=True)
+            result = {
+                "status": "error",
+                "method": "code",
+                "error": str(e),
+                "buffer_num": buffer_num,
+                "project_root": project_root
+            }
+            self.send_response(req_id, conn, result=result)

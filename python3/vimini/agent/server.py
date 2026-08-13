@@ -19,6 +19,8 @@ import atexit
 
 MAX_RECEIVE_BUFFER_SIZE = 1024 * 1024
 AGENT_CONFIG = {}
+_sessions = {}
+_sessions_lock = threading.Lock()
 
 def get_var_dir():
     var_dir = os.path.expanduser('~/.var/vimini')
@@ -136,6 +138,41 @@ def execute_function(req_id, method, params, result_queue, conn):
         ]
     result_queue.put((conn, response))
 
+def get_session_class(method):
+    if method == "chat":
+        from vimini.agent.chat import ChatSession
+        return ChatSession
+    if method == "code":
+        from vimini.agent.code import CodeSession
+        return CodeSession
+    return None
+
+def cleanup_sessions():
+    with _sessions_lock:
+        dead_sessions = [req_id for req_id, session in _sessions.items() if not session.is_alive()]
+        if dead_sessions:
+            for req_id in dead_sessions:
+                del _sessions[req_id]
+
+def handle_incoming_request(req_id, method, params, result_queue, conn):
+    session_cls = get_session_class(method)
+    if session_cls:
+        with _sessions_lock:
+            session = _sessions.get(req_id)
+            if session is None or not session.is_alive():
+                session = session_cls(req_id, result_queue, agent_config=AGENT_CONFIG, request=params)
+                _sessions[req_id] = session
+                session.start()
+        session.post_cmd(req_id, params, conn)
+    else:
+        t = threading.Thread(
+            target=execute_function,
+            args=(req_id, method, params, result_queue, conn),
+            daemon=True
+        )
+        t.start()
+        t.join()
+
 class AgentServer:
     def __init__(self, socket_path=None):
         if socket_path is None:
@@ -196,12 +233,13 @@ class AgentServer:
 
         try:
             while self.running:
+                cleanup_sessions()
+
                 while not self.result_queue.empty():
                     try:
                         conn, response = self.result_queue.get_nowait()
                         if conn in clients:
                             try:
-                                logger.info(f"Sending response for payload: {response[1].get('id', None)}")
                                 payload = (json.dumps(response) + '\n').encode('utf-8')
                                 conn.sendall(payload)
                             except Exception as e:
@@ -284,16 +322,7 @@ class AgentServer:
 
                                         logger.info(f"Received message method: {method} (id: {req_id})")
 
-                                        if method == "chat":
-                                            from vimini.agent.chat import handle_chat_request
-                                            handle_chat_request(req_id, params, self.result_queue, s)
-                                        else:
-                                            t = threading.Thread(
-                                                target=execute_function,
-                                                args=(req_id, method, params, self.result_queue, s),
-                                                daemon=True
-                                            )
-                                            t.start()
+                                        handle_incoming_request(req_id, method, params, self.result_queue, s)
                                     except Exception as e:
                                         logger.error(f"Error processing incoming message '{line_str}': {e}", exc_info=True)
                                         err_resp = [
