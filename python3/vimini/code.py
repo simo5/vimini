@@ -1,6 +1,5 @@
 import vim
-import os, json, subprocess, tempfile, re
-from google.genai import types
+import os, subprocess, tempfile, re
 from vimini import util, context
 
 # Global data store keyed by buffer number to exchange data between python calls.
@@ -92,164 +91,29 @@ def handle_channel_response(req_id, result):
 def code(prompt, verbose=False, temperature=None):
     """
     Uploads all open files, sends them to the Gemini API with a prompt
-    to generate code. Runs asynchronously using a thread and Vim timer.
-    If the prompt starts with 'NEW', sends request to agent server.
+    to generate code via the agent server.
     """
-    if prompt.startswith("'NEW "):
-        prompt = "'"+prompt[5:]
-        use_agent = True
-    else:
-        use_agent = False
-
-    if use_agent:
-        util.log_info(f"agent code({prompt})")
-
-        project_root = util.get_git_repo_root()
-        if not project_root:
-            project_root = os.getcwd()
-
-        file_paths_to_include = []
-        for b in vim.buffers:
-            if b.name and os.path.exists(b.name):
-                file_paths_to_include.append(os.path.abspath(b.name))
-
-        try:
-            context_files_list = vim.eval("get(g:, 'context_files', [])")
-            if isinstance(context_files_list, list):
-                for f in context_files_list:
-                    if os.path.isabs(f):
-                        file_paths_to_include.append(os.path.abspath(f))
-                    else:
-                        file_paths_to_include.append(os.path.abspath(os.path.join(project_root, f)))
-        except Exception:
-            pass
-
-        original_buffer = vim.current.buffer
-
-        is_real_file = False
-        if original_buffer.name and os.path.exists(original_buffer.name) and os.path.isfile(original_buffer.name):
-            try:
-                buftype = original_buffer.options['buftype'] if 'buftype' in original_buffer.options else ''
-                if not buftype:
-                    is_real_file = True
-            except Exception:
-                is_real_file = True
-
-        if is_real_file:
-            main_file_name = os.path.relpath(original_buffer.name, project_root) if os.path.isabs(original_buffer.name) else original_buffer.name
-            task_instruction = f"Your primary task is to modify the file named '{main_file_name}'."
-        else:
-            task_instruction = "Your primary task is to address the concern in the active buffer (if any).\n"
-            buffer_content = "\n".join(original_buffer[:])
-            if buffer_content.strip():
-                task_instruction += f"\n\nAdditional context from the current active buffer:\n{buffer_content}\n"
-
-        context_file_names = sorted([os.path.basename(f) for f in file_paths_to_include])
-
-        job_name = f"Code: {prompt}"
-        job_id = str(util.reserve_next_job_id(job_name))
-
-        util.new_split()
-        base_buffer_name = f"[{job_id}] Vimini Code"
-        safe_name = f"{base_buffer_name} [->G?]".replace(" ", "\\ ")
-        vim.command(f"file {safe_name}")
-        vim.command("setlocal buftype=nofile")
-        vim.command("setlocal bufhidden=wipe")
-        vim.command("setlocal noswapfile")
-        vim.command("setlocal filetype=markdown")
-
-        code_buffer = vim.current.buffer
-        code_buffer_num = code_buffer.number
-
-        code_buffer.vars["vimini_project_root"] = project_root
-        code_buffer.vars["vimini_job_id"] = job_id
-
-        util.append_job_summary(code_buffer_num, job_id, prompt, context_file_names)
-
-        util.display_message("Processing via agent... (Async)")
-
-        try:
-            buffers = context.get_buffer_contents(file_paths_to_include)
-        except Exception as e:
-            util.log_info(f"Error getting buffer contents for code prompt: {e}")
-            buffers = []
-
-        req = {
-            "jsonrpc": "2.0",
-            "id": str(job_id),
-            "method": "code",
-            "params": {
-                "prompt": prompt,
-                "verbose": verbose,
-                "temperature": temperature,
-                "project_root": project_root,
-                "file_paths_to_include": file_paths_to_include,
-                "buffers": buffers,
-                "task_instruction": task_instruction,
-                "buffer_num": code_buffer_num
-            }
-        }
-
-        util.send_channel_request(req)
-        return
-
     util.log_info(f"code({prompt}, verbose={verbose}, temperature={temperature})")
 
-    # --- 1. Initialization and Setup ---
+    project_root = util.get_git_repo_root()
+    if not project_root:
+        project_root = os.getcwd()
+
+    file_paths_to_include = []
+    for b in vim.buffers:
+        if b.name and os.path.exists(b.name):
+            file_paths_to_include.append(os.path.abspath(b.name))
+
     try:
-        client = util.get_client()
-        if not client:
-            return
-
-        project_root = util.get_git_repo_root()
-        if not project_root:
-            project_root = vim.eval('getcwd()')
-
-        # Gather context files manually and resolve them relative to project_root
-        file_paths_to_include = []
-        for b in vim.buffers:
-            if b.name and os.path.exists(b.name):
-                file_paths_to_include.append(os.path.abspath(b.name))
-
-        try:
-            context_files_list = vim.eval("get(g:, 'context_files', [])")
-            if isinstance(context_files_list, list):
-                for f in context_files_list:
-                    if os.path.isabs(f):
-                        file_paths_to_include.append(os.path.abspath(f))
-                    else:
-                        file_paths_to_include.append(os.path.abspath(os.path.join(project_root, f)))
-        except Exception:
-            pass
-
-        # Upload context files using the helper function.
-        uploaded_files = context.upload_context_files(client, file_paths_to_include=file_paths_to_include)
-        if uploaded_files is None:
-            return  # The helper function has already displayed an error.
-    except Exception as e:
-        util.display_message(f"Error during initialization: {e}", error=True)
-        return
-
-    # --- 2. Define Schema and Prompt ---
-    file_object_schema = types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            'file_path': types.Schema(type=types.Type.STRING, description="The full path of the file relative to the project directory."),
-            'file_type': types.Schema(type=types.Type.STRING, description="The content type. Use 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format."),
-            'file_content': types.Schema(type=types.Type.STRING, description="The new, complete source code for the file, or a patch in the unified diff format, corresponding to the file_type.")
-        },
-        required=['file_path', 'file_type', 'file_content']
-    )
-    multi_file_output_schema = types.Schema(
-        type=types.Type.OBJECT,
-        properties={
-            'files': types.Schema(
-                type=types.Type.ARRAY,
-                items=file_object_schema
-            )
-        },
-        required=['files']
-    )
+        context_files_list = vim.eval("get(g:, 'context_files', [])")
+        if isinstance(context_files_list, list):
+            for f in context_files_list:
+                if os.path.isabs(f):
+                    file_paths_to_include.append(os.path.abspath(f))
+                else:
+                    file_paths_to_include.append(os.path.abspath(os.path.join(project_root, f)))
+    except Exception:
+        pass
 
     original_buffer = vim.current.buffer
 
@@ -271,41 +135,11 @@ def code(prompt, verbose=False, temperature=None):
         if buffer_content.strip():
             task_instruction += f"\n\nAdditional context from the current active buffer:\n{buffer_content}\n"
 
-    context_file_names = sorted([f.display_name for f in uploaded_files])
-    file_list_str = "\n".join(f"- {name}" for name in context_file_names)
-
-    context_files_section = ""
-    if file_list_str:
-        context_files_section = (
-            "The following files have been uploaded for context:\n"
-            f"{file_list_str}\n\n"
-        )
-
-    full_prompt = [
-        (
-            f"{prompt}\n\n"
-            "Based on the user's request, please generate the code. "
-            "Your identity is Vimini, and you are integrated into the vimini project."
-            f"{task_instruction}\n\n"
-            f"{context_files_section}"
-            "IMPORTANT:\n"
-            "1. Your response must be a single JSON object with a 'files' key.\n"
-            "2. The value of 'files' must be an array of file objects.\n"
-            "3. Each file object must have three string keys: 'file_path', 'file_type', and 'file_content'.\n"
-            "4. 'file_path' must be the full path of the file relative to the project directory. When modifying a file from the context, you MUST use its original file path for the 'file_path' property.\n"
-            "5. 'file_type' must be either 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format.\n"
-            "6. 'file_content' must contain either the new, complete source code or the diff patch, corresponding to the 'file_type'.\n"
-            "7. Diffs ('text/x-diff') can be returned only if explicitly mentioned as an acceptable output in the prompt or if the files are really difficult or too large to process. For small files, returning the entire modified file ('text/plain') is the most preferred option.\n"
-            "8. You can modify existing files or create new files as needed to fulfill the request."
-        ),
-        *uploaded_files
-    ]
+    context_file_names = sorted([os.path.basename(f) for f in file_paths_to_include])
 
     job_name = f"Code: {prompt}"
-    job_id = util.reserve_next_job_id(job_name)
+    job_id = str(util.reserve_next_job_id(job_name))
 
-    # --- 3. Create Code Buffer ---
-    # Create the buffer immediately to store thoughts or request summary.
     util.new_split()
     base_buffer_name = f"[{job_id}] Vimini Code"
     safe_name = f"{base_buffer_name} [->G?]".replace(" ", "\\ ")
@@ -318,62 +152,36 @@ def code(prompt, verbose=False, temperature=None):
     code_buffer = vim.current.buffer
     code_buffer_num = code_buffer.number
 
-    # Store buffer-local variables
     code_buffer.vars["vimini_project_root"] = project_root
     code_buffer.vars["vimini_job_id"] = job_id
 
     util.append_job_summary(code_buffer_num, job_id, prompt, context_file_names)
 
-    util.display_message("Processing... (Async)")
+    util.display_message("Processing via agent... (Async)")
 
-    # State for the closure
-    json_aggregator = ""
-    started_receiving = False
+    try:
+        buffers = context.get_buffer_contents(file_paths_to_include)
+    except Exception as e:
+        util.log_info(f"Error getting buffer contents for code prompt: {e}")
+        buffers = []
 
-    def update_status_receiving():
-        nonlocal started_receiving
-        if not started_receiving:
-            started_receiving = True
-            try:
-                code_buffer.name = f"{base_buffer_name} [<-G]"
-            except Exception:
-                pass
+    req = {
+        "jsonrpc": "2.0",
+        "id": str(job_id),
+        "method": "code",
+        "params": {
+            "prompt": prompt,
+            "verbose": verbose,
+            "temperature": temperature,
+            "project_root": project_root,
+            "file_paths_to_include": file_paths_to_include,
+            "buffers": buffers,
+            "task_instruction": task_instruction,
+            "buffer_num": code_buffer_num
+        }
+    }
 
-    def on_chunk(text):
-        nonlocal json_aggregator
-        update_status_receiving()
-        json_aggregator += text
-
-    def on_thought(text):
-        update_status_receiving()
-        if verbose:
-            util.append_to_buffer(code_buffer_num, text)
-
-    def on_finish():
-        try:
-            code_buffer.name = base_buffer_name
-        except Exception:
-            pass
-        return _finalize_code_generation(json_aggregator, project_root, job_id, code_buffer_num)
-
-    def on_error(msg):
-        util.append_to_buffer(code_buffer_num, f"\nError: {msg}")
-        return f"Error: {msg}"
-
-    kwargs = util.create_generation_kwargs(
-        contents=full_prompt,
-        temperature=temperature,
-        verbose=verbose,
-        response_mime_type="application/json",
-        response_schema=multi_file_output_schema
-    )
-
-    util.start_async_job(client, kwargs, {
-        "on_chunk": on_chunk,
-        "on_thought": on_thought,
-        "on_finish": on_finish,
-        "on_error": on_error
-    }, job_id=job_id)
+    util.send_channel_request(req)
 
 def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
     """
@@ -454,111 +262,6 @@ def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
 
     flush_hunk()
     return fixed_lines
-
-def _finalize_code_generation(json_aggregator, project_root, job_id, buffer_num):
-    """Parses accumulated JSON and generates diff."""
-    global _BUFFER_DATA_STORE
-
-    # --- 5. Parse JSON Response ---
-    try:
-        parsed_json = json.loads(json_aggregator)
-        files_to_process = parsed_json.get("files", [])
-        if not isinstance(files_to_process, list):
-            raise ValueError("'files' key is not a list.")
-    except (json.JSONDecodeError, ValueError) as e:
-        util.append_to_buffer(buffer_num, f"\nError parsing JSON: {e}\n\nRaw JSON:\n{json_aggregator}")
-        return f"AI did not return valid JSON for files: {e}"
-
-    if not files_to_process:
-        util.append_to_buffer(buffer_num, "\nAI returned no file changes.")
-        return "AI returned no file changes."
-
-    # Update Data Store
-    _BUFFER_DATA_STORE[buffer_num] = {
-        "files_to_apply": files_to_process,
-        "project_root": project_root,
-        "job_id": job_id
-    }
-
-    # --- 6. Generate and Display Diff ---
-    try:
-        combined_diff_output = []
-        for file_op in files_to_process:
-            api_path = file_op["file_path"]
-            ai_generated_code = file_op["file_content"]
-
-            # Ensure file ends with newline
-            if ai_generated_code and not ai_generated_code.endswith('\n'):
-                ai_generated_code += '\n'
-
-            file_type = file_op.get("file_type", "text/plain")
-            absolute_path = util.get_absolute_path_from_api_path(api_path)
-            file_exists = os.path.exists(absolute_path)
-            relative_path = os.path.relpath(absolute_path, project_root)
-
-            if file_type == "text/x-diff":
-                fixed_lines = _process_x_diff_chunks(ai_generated_code, relative_path, file_exists)
-                if fixed_lines:
-                    combined_diff_output.extend(fixed_lines)
-            else: # 'text/plain' or unspecified
-                original_content = ""
-                if file_exists:
-                    try:
-                        with open(absolute_path, "r", encoding="utf-8") as f:
-                            original_content = f.read()
-                    except Exception as e:
-                        continue
-
-                with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_orig, \
-                     tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_ai:
-                    f_orig.write(original_content)
-                    f_ai.write(ai_generated_code)
-                    orig_filepath = f_orig.name
-                    ai_filepath = f_ai.name
-
-                try:
-                    source_path = orig_filepath if file_exists else "/dev/null"
-                    cmd = ["diff", "-u", source_path, ai_filepath]
-                    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                    if result.returncode > 1:
-                        continue # diff error
-
-                    diff_lines = result.stdout.split("\n")
-                    if len(diff_lines) <= 2 and not original_content and not ai_generated_code:
-                        continue # Empty diff
-
-                    combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
-                    if not file_exists:
-                        combined_diff_output.append("new file mode 100644")
-                        combined_diff_output.append(f"--- /dev/null")
-                        combined_diff_output.append(f"+++ b/{relative_path}")
-                    else:
-                        combined_diff_output.append(f"--- a/{relative_path}")
-                        combined_diff_output.append(f"+++ b/{relative_path}")
-
-                    combined_diff_output.extend(diff_lines[2:])
-
-                finally:
-                    if os.path.exists(orig_filepath): os.remove(orig_filepath)
-                    if os.path.exists(ai_filepath): os.remove(ai_filepath)
-
-        if not combined_diff_output:
-            util.append_to_buffer(buffer_num, "\nAI content is identical to the original files or returned empty diff.")
-            return "AI content is identical to the original files or returned empty diff."
-
-        # Append Separator and Diff
-        separator_block = f"\n{_DIFF_SEPARATOR}\n"
-        diff_text = "\n".join(combined_diff_output)
-        util.append_to_buffer(buffer_num, separator_block + diff_text)
-
-        # Switch filetype to diff for syntax highlighting
-        # We use setbufvar to avoid switching windows
-        vim.command(f"call setbufvar({buffer_num}, '&filetype', 'diff')")
-
-        return "Diff generated."
-    except Exception as e:
-        util.append_to_buffer(buffer_num, f"\nError generating diff: {e}")
-        return f"Error generating or displaying diff: {e}"
 
 def show_diff():
     """

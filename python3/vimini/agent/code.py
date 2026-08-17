@@ -343,3 +343,5 @@ class CodeSession(CommSession):
                 "project_root": project_root
             }
             self.send_response(req_id, conn, result=result)
+        finally:
+            self.running = False
