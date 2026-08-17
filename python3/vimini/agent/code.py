@@ -115,6 +115,7 @@ class CodeSession(CommSession):
 
         project_root = params.get("project_root") if isinstance(params, dict) else None
         file_paths_to_include = params.get("file_paths_to_include", []) if isinstance(params, dict) else []
+        buffers = params.get("buffers", []) if isinstance(params, dict) else []
         task_instruction = params.get("task_instruction", "") if isinstance(params, dict) else ""
         buffer_num = params.get("buffer_num") if isinstance(params, dict) else None
 
@@ -146,6 +147,7 @@ class CodeSession(CommSession):
                 client,
                 file_paths_to_include=file_paths_to_include,
                 project_root=project_root,
+                buffers=buffers,
                 display_cb=lambda msg, **kwargs: logger.info(msg)
             ) or []
             context_file_names = [f.display_name for f in uploaded_files]

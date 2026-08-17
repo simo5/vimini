@@ -92,7 +92,7 @@ def autocomplete():
     if _original_cursor_hl:
         return
 
-    job_id = util.reserve_next_job_id(job_name)
+    job_id = util.reserve_next_job_id("Autocomplete")
     _current_autocomplete_job_id = job_id
 
     buffer_content = list(vim.current.buffer)

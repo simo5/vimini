@@ -1,7 +1,7 @@
 import vim
 import json
 import os
-from vimini import util
+from vimini import util, context
 from vimini.code import _DIFF_SEPARATOR, _process_x_diff_chunks
 
 WAITING_MSG = "Waiting for prompt (CTRL-W q to exit)"
@@ -357,7 +357,7 @@ def _send_prompt(prompt, buffer):
         "id": _to_str(buffer.vars["vimini_job_id"]),
         "method": "chat",
         "params": {
-            "prompt": prompt
+            "prompt": prompt,
         }
     }
 

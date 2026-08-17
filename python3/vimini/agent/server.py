@@ -171,7 +171,6 @@ def handle_incoming_request(req_id, method, params, result_queue, conn):
             daemon=True
         )
         t.start()
-        t.join()
 
 class AgentServer:
     def __init__(self, socket_path=None):

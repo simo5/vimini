@@ -107,6 +107,35 @@ def find_context_files(file_paths_to_include=None):
 
     return files_to_upload
 
+def get_buffer_contents(file_paths_to_include=None):
+    """
+    Returns a list of dicts containing buffer/file paths and their current text contents.
+    """
+    files_to_upload = find_context_files(file_paths_to_include)
+    buffers_data = []
+    project_root = util.get_git_repo_root() or os.getcwd()
+    for file_path, buf_number in files_to_upload:
+        content = None
+        if buf_number is not None and buf_number in vim.buffers:
+            try:
+                buf = vim.buffers[buf_number]
+                content = "\n".join(buf[:])
+            except Exception:
+                pass
+        if content is None and os.path.exists(file_path):
+            try:
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    content = f.read()
+            except Exception:
+                pass
+        if content is not None:
+            rel_path = os.path.relpath(file_path, project_root) if os.path.isabs(file_path) else file_path
+            buffers_data.append({
+                "path": rel_path,
+                "content": content
+            })
+    return buffers_data
+
 def upload_context_files(client, file_paths_to_include=None):
     """
     Uploads files to use as context. This includes files from open buffers and

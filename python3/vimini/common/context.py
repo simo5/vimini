@@ -6,7 +6,7 @@ from google.genai import types
 from vimini.common.util import get_git_repo_root, get_project_root, get_relative_path
 
 
-def upload_context_files(logger, client, file_paths_to_include=None, project_root=None, display_cb=None):
+def upload_context_files(logger, client, file_paths_to_include=None, project_root=None, buffers=None, display_cb=None):
     """
     Uploads files to use as context. Re-uploads files if they have been
     modified since the last upload.
@@ -26,19 +26,37 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
 
     _msg("Checking context files...")
 
-    if not file_paths_to_include:
+    if file_paths_to_include is None:
+        file_paths_to_include = []
+    if buffers is None:
+        buffers = []
+
+    raw_items = list(file_paths_to_include) + list(buffers)
+
+    if not raw_items:
         _msg("No context files found.", history=True)
         return None
 
     items_to_check = []
     seen = set()
-    for item in file_paths_to_include:
+    for item in raw_items:
         if not item:
             continue
-        if isinstance(item, tuple):
-            fp, content = item
+        if isinstance(item, dict):
+            fp = item.get("file_path") or item.get("path") or item.get("name")
+            content = item.get("content")
+        elif isinstance(item, (tuple, list)):
+            fp = item[0]
+            content = item[1] if len(item) > 1 else None
         else:
-            fp, content = item, None
+            fp = item
+            content = None
+
+        if not fp:
+            continue
+
+        if isinstance(content, list):
+            content = "\n".join(content)
 
         abs_path = os.path.abspath(fp)
         if abs_path not in seen:

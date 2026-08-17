@@ -126,7 +126,16 @@ def code(prompt, verbose=False, temperature=None):
 
         original_buffer = vim.current.buffer
 
-        if original_buffer.name:
+        is_real_file = False
+        if original_buffer.name and os.path.exists(original_buffer.name) and os.path.isfile(original_buffer.name):
+            try:
+                buftype = original_buffer.options['buftype'] if 'buftype' in original_buffer.options else ''
+                if not buftype:
+                    is_real_file = True
+            except Exception:
+                is_real_file = True
+
+        if is_real_file:
             main_file_name = os.path.relpath(original_buffer.name, project_root) if os.path.isabs(original_buffer.name) else original_buffer.name
             task_instruction = f"Your primary task is to modify the file named '{main_file_name}'."
         else:
@@ -159,6 +168,12 @@ def code(prompt, verbose=False, temperature=None):
 
         util.display_message("Processing via agent... (Async)")
 
+        try:
+            buffers = context.get_buffer_contents(file_paths_to_include)
+        except Exception as e:
+            util.log_info(f"Error getting buffer contents for code prompt: {e}")
+            buffers = []
+
         req = {
             "jsonrpc": "2.0",
             "id": str(job_id),
@@ -169,6 +184,7 @@ def code(prompt, verbose=False, temperature=None):
                 "temperature": temperature,
                 "project_root": project_root,
                 "file_paths_to_include": file_paths_to_include,
+                "buffers": buffers,
                 "task_instruction": task_instruction,
                 "buffer_num": code_buffer_num
             }
@@ -237,7 +253,16 @@ def code(prompt, verbose=False, temperature=None):
 
     original_buffer = vim.current.buffer
 
-    if original_buffer.name:
+    is_real_file = False
+    if original_buffer.name and os.path.exists(original_buffer.name) and os.path.isfile(original_buffer.name):
+        try:
+            buftype = original_buffer.options['buftype'] if 'buftype' in original_buffer.options else ''
+            if not buftype:
+                is_real_file = True
+        except Exception:
+            is_real_file = True
+
+    if is_real_file:
         main_file_name = os.path.relpath(original_buffer.name, project_root) if os.path.isabs(original_buffer.name) else original_buffer.name
         task_instruction = f"Your primary task is to modify the file named '{main_file_name}'."
     else:
