@@ -1,9 +1,8 @@
 import os
 import json
 import logging
-import subprocess
-import tempfile
 import re
+import difflib
 from google import genai
 from google.genai import types
 from vimini.agent.comms import CommSession
@@ -119,8 +118,6 @@ class CodeSession(CommSession):
         file_paths_to_include = params.get("file_paths_to_include", []) if isinstance(params, dict) else []
         buffers = params.get("buffers", []) if isinstance(params, dict) else []
         task_instruction = params.get("task_instruction", "") if isinstance(params, dict) else ""
-        buffer_num = params.get("buffer_num") if isinstance(params, dict) else None
-
         try:
             client = genai.Client(api_key=api_key) if api_key else genai.Client()
 
@@ -218,7 +215,6 @@ class CodeSession(CommSession):
                                     self.send_response(req_id, conn, result={
                                         "status": "thought",
                                         "thought": thought_chunk,
-                                        "buffer_num": buffer_num
                                     })
                             elif hasattr(part, 'text') and part.text:
                                 text_chunk = part.text
@@ -227,7 +223,6 @@ class CodeSession(CommSession):
                                     self.send_response(req_id, conn, result={
                                         "status": "chunk",
                                         "text": text_chunk,
-                                        "buffer_num": buffer_num
                                     })
                 elif hasattr(chunk, 'text') and chunk.text:
                     text_chunk = chunk.text
@@ -236,7 +231,6 @@ class CodeSession(CommSession):
                         self.send_response(req_id, conn, result={
                             "status": "chunk",
                             "text": text_chunk,
-                            "buffer_num": buffer_num
                         })
 
             try:
@@ -251,7 +245,6 @@ class CodeSession(CommSession):
                     "status": "error",
                     "error": err_msg,
                     "raw_json": json_aggregator,
-                    "buffer_num": buffer_num,
                     "project_root": project_root,
                     "upload_errors": upload_errors
                 })
@@ -290,40 +283,30 @@ class CodeSession(CommSession):
                             logger.error(err_msg)
                             upload_errors.append(err_msg)
 
-                    with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_orig, \
-                         tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_ai:
-                        f_orig.write(original_content)
-                        f_ai.write(ai_generated_code)
-                        orig_filepath = f_orig.name
-                        ai_filepath = f_ai.name
+                    orig_lines = original_content.splitlines()
+                    ai_lines = ai_generated_code.splitlines()
 
-                    try:
-                        source_path = orig_filepath if file_exists else "/dev/null"
-                        cmd = ["diff", "-u", source_path, ai_filepath]
-                        diff_result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-                        if diff_result.returncode <= 1:
-                            diff_lines = diff_result.stdout.split("\n")
-                            if len(diff_lines) > 2 or original_content or ai_generated_code:
-                                combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
-                                if not file_exists:
-                                    combined_diff_output.append("new file mode 100644")
-                                    combined_diff_output.append("--- /dev/null")
-                                    combined_diff_output.append(f"+++ b/{relative_path}")
-                                else:
-                                    combined_diff_output.append(f"--- a/{relative_path}")
-                                    combined_diff_output.append(f"+++ b/{relative_path}")
-                                combined_diff_output.extend(diff_lines[2:])
-                    finally:
-                        if os.path.exists(orig_filepath):
-                            os.remove(orig_filepath)
-                        if os.path.exists(ai_filepath):
-                            os.remove(ai_filepath)
+                    from_path = f"a/{relative_path}" if file_exists else "/dev/null"
+                    to_path = f"b/{relative_path}"
+
+                    diff_lines = list(difflib.unified_diff(
+                        orig_lines,
+                        ai_lines,
+                        fromfile=from_path,
+                        tofile=to_path,
+                        lineterm=""
+                    ))
+
+                    if diff_lines:
+                        combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
+                        if not file_exists:
+                            combined_diff_output.append("new file mode 100644")
+                        combined_diff_output.extend(diff_lines)
 
             diff_text = "\n".join(combined_diff_output) if combined_diff_output else ""
 
             result = {
                 "status": "completed",
-                "buffer_num": buffer_num,
                 "project_root": project_root,
                 "verbose": verbose,
                 "files": files_to_process,
@@ -337,7 +320,6 @@ class CodeSession(CommSession):
             result = {
                 "status": "error",
                 "error": str(e),
-                "buffer_num": buffer_num,
                 "project_root": project_root
             }
             self.send_response(req_id, conn, result=result)

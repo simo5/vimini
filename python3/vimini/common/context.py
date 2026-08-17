@@ -54,6 +54,9 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
         if not fp:
             continue
 
+        if not content:
+            content = None
+
         if isinstance(content, list):
             content = "\n".join(content)
 

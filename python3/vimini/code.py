@@ -149,7 +149,7 @@ def code(prompt, verbose=False, temperature=None):
         if buffer_content.strip():
             task_instruction += f"\n\nAdditional context from the current active buffer:\n{buffer_content}\n"
 
-    context_file_names = sorted([os.path.basename(f) for f in file_paths_to_include])
+    context_file_names = sorted([os.path.relpath(f, project_root) for f in file_paths_to_include])
 
     job_name = f"Code: {prompt}"
     job_id = str(util.reserve_next_job_id(job_name))
@@ -191,7 +191,6 @@ def code(prompt, verbose=False, temperature=None):
             "file_paths_to_include": file_paths_to_include,
             "buffers": buffers,
             "task_instruction": task_instruction,
-            "buffer_num": code_buffer_num
         }
     }
 
