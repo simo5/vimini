@@ -75,7 +75,7 @@ def handle_channel_response(req_id, result):
         json_text = _STREAM_JSON_STORE.pop(req_id, "")
         files_to_process = result.get("files", [])
         diff_output = result.get("diff_output", "")
-        project_root = result.get("project_root") or util.get_git_repo_root() or vim.eval("getcwd()")
+        project_root = result.get("project_root") or util.get_git_repo_root() or os.getcwd()
 
         if buf_num:
             _BUFFER_DATA_STORE[buf_num] = {
@@ -120,16 +120,16 @@ def code(prompt, verbose=False, temperature=None):
     file_paths_to_include = []
     for b in vim.buffers:
         if b.name and os.path.exists(b.name):
-            file_paths_to_include.append(os.path.abspath(b.name))
+            file_paths_to_include.append(os.path.realpath(b.name))
 
     try:
         context_files_list = vim.eval("get(g:, 'context_files', [])")
         if isinstance(context_files_list, list):
             for f in context_files_list:
                 if os.path.isabs(f):
-                    file_paths_to_include.append(os.path.abspath(f))
+                    file_paths_to_include.append(os.path.realpath(f))
                 else:
-                    file_paths_to_include.append(os.path.abspath(os.path.join(project_root, f)))
+                    file_paths_to_include.append(os.path.realpath(os.path.join(project_root, f)))
     except Exception:
         pass
 
@@ -380,9 +380,9 @@ def apply_patch(diff_content, project_root=None, silent=False):
                 except Exception:
                     pass
 
-            normalized_target_path = os.path.abspath(absolute_path)
+            normalized_target_path = os.path.realpath(absolute_path)
             for buf in vim.buffers:
-                if buf.name and os.path.abspath(buf.name) == normalized_target_path:
+                if buf.name and os.path.realpath(buf.name) == normalized_target_path:
                     # Reload buffer if visible
                     win_nr = vim.eval(f"bufwinnr({buf.number})")
                     if int(win_nr) > 0:

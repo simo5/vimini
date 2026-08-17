@@ -309,9 +309,9 @@ def apply():
     modified_files = _apply_changes(changes, file_ranges, project_root)
 
     for absolute_path in modified_files:
-        normalized_target_path = os.path.abspath(absolute_path)
+        normalized_target_path = os.path.realpath(absolute_path)
         for buf in vim.buffers:
-            if buf.name and os.path.abspath(buf.name) == normalized_target_path:
+            if buf.name and os.path.realpath(buf.name) == normalized_target_path:
                 vim.command(f'checktime {buf.number}')
                 break
 

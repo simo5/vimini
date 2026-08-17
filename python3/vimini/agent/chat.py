@@ -67,7 +67,7 @@ agent_tools = [
 def list_directory(directory_path="."):
     try:
         project_root = get_project_root()
-        target_path = os.path.abspath(os.path.join(project_root, directory_path))
+        target_path = os.path.realpath(os.path.join(project_root, directory_path))
 
         try:
             if os.path.commonpath([project_root, target_path]) != project_root:
@@ -95,7 +95,7 @@ def list_directory(directory_path="."):
 def read_file(filepath):
     try:
         project_root = get_project_root()
-        target_path = os.path.abspath(os.path.join(project_root, filepath))
+        target_path = os.path.realpath(os.path.join(project_root, filepath))
 
         try:
             if os.path.commonpath([project_root, target_path]) != project_root:
@@ -134,7 +134,7 @@ def validate_patch_is_safe(temp_file_path):
             if path_part.startswith('a/') or path_part.startswith('b/'):
                 path_part = path_part[2:]
 
-            target_path = os.path.abspath(os.path.join(project_root, path_part))
+            target_path = os.path.realpath(os.path.join(project_root, path_part))
             try:
                 if os.path.commonpath([project_root, target_path]) != project_root:
                     return False, f"You are not permitted to modify files outside the project: {path_part}"

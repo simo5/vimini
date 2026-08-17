@@ -71,10 +71,10 @@ def find_context_files(file_paths_to_include=None):
         open_buffers_by_path = {}
         for b in vim.buffers:
             if b.name and os.path.exists(b.name):
-                open_buffers_by_path[os.path.abspath(b.name)] = b.number
+                open_buffers_by_path[os.path.realpath(b.name)] = b.number
 
         for file_path in file_paths_to_include:
-            abs_path = os.path.abspath(file_path)
+            abs_path = os.path.realpath(file_path)
             if os.path.exists(abs_path) and abs_path not in seen_file_paths:
                 buf_num = open_buffers_by_path.get(abs_path)
                 files_to_upload.append((abs_path, buf_num))
@@ -84,7 +84,7 @@ def find_context_files(file_paths_to_include=None):
     # First, add all file-backed buffers. This gives them priority.
     for b in vim.buffers:
         if b.name and os.path.exists(b.name):
-            abs_path = os.path.abspath(b.name)
+            abs_path = os.path.realpath(b.name)
             if abs_path not in seen_file_paths:
                 files_to_upload.append((abs_path, b.number))
                 seen_file_paths.add(abs_path)
@@ -99,7 +99,7 @@ def find_context_files(file_paths_to_include=None):
         pass # Not in vim or variable doesn't exist.
 
     for file_path in context_files_list:
-        abs_path = os.path.abspath(file_path)
+        abs_path = os.path.realpath(file_path)
         if os.path.exists(abs_path) and abs_path not in seen_file_paths:
             # This file should be read from disk.
             files_to_upload.append((abs_path, None))
@@ -220,7 +220,7 @@ def context_files_command():
     global _VIMINI_PENDING_CONTEXT_FILES
     try:
         # 1. Get paths and existing context files
-        current_path = os.path.abspath(vim.eval('getcwd()'))
+        current_path = os.path.realpath(vim.eval('getcwd()'))
         project_root = util.get_git_repo_root() or current_path
 
         try:
@@ -367,7 +367,7 @@ def toggle_context_file():
             if not os.path.isdir(new_path):
                 new_path = current_path
 
-            new_path = os.path.abspath(new_path)
+            new_path = os.path.realpath(new_path)
 
             # Re-render the buffer for the new path
             context_files_list = _VIMINI_PENDING_CONTEXT_FILES
@@ -607,8 +607,8 @@ def list_directory(directory_path="."):
     Does not allow listing files above the current working directory.
     """
     try:
-        current_root = os.path.abspath(vim.eval('getcwd()'))
-        target_path = os.path.abspath(os.path.join(current_root, directory_path))
+        current_root = os.path.realpath(vim.eval('getcwd()'))
+        target_path = os.path.realpath(os.path.join(current_root, directory_path))
 
         if os.path.commonpath([current_root, target_path]) != current_root:
             return "Error: Cannot list directories above the current working directory."
@@ -643,8 +643,8 @@ def read_file(filepath):
     or its subdirectories can be read.
     """
     try:
-        current_root = os.path.abspath(vim.eval('getcwd()'))
-        target_path = os.path.abspath(os.path.join(current_root, filepath))
+        current_root = os.path.realpath(vim.eval('getcwd()'))
+        target_path = os.path.realpath(os.path.join(current_root, filepath))
 
         if os.path.commonpath([current_root, target_path]) != current_root:
             return "Error: Cannot read files above the current working directory."

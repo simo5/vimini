@@ -2,7 +2,7 @@ import os
 import sys
 
 # Ensure python3 root directory is in sys.path when executed directly
-python_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+python_root = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if python_root not in sys.path:
     sys.path.insert(0, python_root)
 
@@ -400,7 +400,7 @@ def stop_agent_server():
 def start_agent_server():
     global _agent_process
     stop_agent_server()
-    server_script = os.path.abspath(__file__)
+    server_script = os.path.realpath(__file__)
     _agent_process = subprocess.Popen([sys.executable, server_script])
     pid = _agent_process.pid
     socket_path = get_socket_path(pid)

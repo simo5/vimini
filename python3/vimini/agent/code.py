@@ -92,6 +92,15 @@ class CodeSession(CommSession):
             temperature = default_temperature
 
         project_root = params.get("project_root")
+        if not project_root:
+            err_msg = "Project root is missing or empty. Operation aborted."
+            logger.error(err_msg)
+            self.send_response(req_id, conn, result={
+                "status": "error",
+                "error": err_msg
+            })
+            return
+
         file_paths_to_include = params.get("file_paths_to_include", [])
         buffers = params.get("buffers", [])
         task_instruction = params.get("task_instruction", "")
@@ -240,19 +249,16 @@ class CodeSession(CommSession):
 
                 file_type = file_op.get("file_type", "text/plain")
 
-                if project_root:
-                    real_root = os.path.abspath(project_root)
-                    absolute_path = os.path.abspath(os.path.join(real_root, api_path)) if not os.path.isabs(api_path) else os.path.abspath(api_path)
-                    if not (absolute_path == real_root or absolute_path.startswith(real_root + os.sep)):
-                        err_msg = f"Attempted path traversal outside project root: {api_path}"
-                        logger.error(err_msg)
-                        processing_errors.append(err_msg)
-                        continue
-                else:
-                    absolute_path = os.path.abspath(api_path)
+                real_root = os.path.realpath(project_root)
+                absolute_path = os.path.realpath(os.path.join(real_root, api_path)) if not os.path.isabs(api_path) else os.path.realpath(api_path)
+                if not (absolute_path == real_root or absolute_path.startswith(real_root + os.sep)):
+                    err_msg = f"Attempted path traversal outside project root: {api_path}"
+                    logger.error(err_msg)
+                    processing_errors.append(err_msg)
+                    continue
 
                 file_exists = os.path.exists(absolute_path)
-                relative_path = os.path.relpath(absolute_path, project_root) if project_root else api_path
+                relative_path = os.path.relpath(absolute_path, project_root)
 
                 if file_type == "text/x-diff":
                     fixed_lines = _process_x_diff_chunks(ai_generated_code, relative_path, file_exists)
@@ -285,8 +291,6 @@ class CodeSession(CommSession):
 
                     if diff_lines:
                         combined_diff_output.append(f"diff --git a/{relative_path} b/{relative_path}")
-                        if not file_exists:
-                            combined_diff_output.append("new file mode 100644")
                         combined_diff_output.extend(diff_lines)
 
             diff_text = "\n".join(combined_diff_output) if combined_diff_output else ""

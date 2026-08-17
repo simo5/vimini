@@ -353,7 +353,7 @@ def set_logging(log_file=None):
             log_file = os.path.expanduser(os.path.expandvars(log_file))
 
             # Ensure the directory for the log file exists.
-            log_dir = os.path.dirname(os.path.abspath(log_file))
+            log_dir = os.path.dirname(os.path.realpath(log_file))
             if log_dir and not os.path.exists(log_dir):
                 os.makedirs(log_dir, exist_ok=True)
 
