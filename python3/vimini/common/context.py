@@ -37,8 +37,7 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
         _msg("No context files found.", history=True)
         return None
 
-    items_to_check = []
-    seen = set()
+    items_map = {}
     for item in raw_items:
         if not item:
             continue
@@ -58,14 +57,19 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
         if isinstance(content, list):
             content = "\n".join(content)
 
-        abs_path = os.path.abspath(fp)
-        if abs_path not in seen:
-            seen.add(abs_path)
-            items_to_check.append((abs_path, content))
+        if project_root and not os.path.isabs(fp):
+            abs_path = os.path.abspath(os.path.join(project_root, fp))
+        else:
+            abs_path = os.path.abspath(fp)
 
-    if not items_to_check:
+        if abs_path not in items_map or content is not None:
+            items_map[abs_path] = content
+
+    if not items_map:
         _msg("No context files found.", history=True)
         return None
+
+    items_to_check = list(items_map.items())
 
     logger.info(f"Considering context files: {[path for path, _ in items_to_check]}")
 

@@ -37,6 +37,13 @@ def handle_channel_response(req_id, result):
         return
     buf_num = buf.number
 
+    if status in ("thought", "chunk"):
+        if buf and "[->G]" in buf.name:
+            try:
+                buf.name = buf.name.replace("[->G]", "[<-G]")
+            except Exception:
+                pass
+
     if status == "thought":
         thought_text = result.get("thought", "")
         verbose = result.get("verbose")
@@ -142,7 +149,7 @@ def code(prompt, verbose=False, temperature=None):
 
     util.new_split()
     base_buffer_name = f"[{job_id}] Vimini Code"
-    safe_name = f"{base_buffer_name} [->G?]".replace(" ", "\\ ")
+    safe_name = f"{base_buffer_name} [->G]".replace(" ", "\\ ")
     vim.command(f"file {safe_name}")
     vim.command("setlocal buftype=nofile")
     vim.command("setlocal bufhidden=wipe")
