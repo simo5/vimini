@@ -164,21 +164,33 @@ def handle_channel_message(msg):
     util.log_info(f"Received channel message: {msg}")
     if not isinstance(msg, dict):
         return
-    error = msg.get("error")
-    if error:
-        err_msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
-        util.display_message(f"Error: {err_msg}", error=True)
-        req_id = msg.get("id")
-        if req_id:
-            from vimini.chat import handle_channel_response as chat_handle
-            from vimini.code import handle_channel_response as code_handle
-            chat_handle(str(req_id), {"status": "error", "error": err_msg})
-            code_handle(str(req_id), {"status": "error", "error": err_msg})
-        return
+
     req_id = msg.get("id")
+    method = msg.get("method")
+    error = msg.get("error")
     result = msg.get("result")
+
+    if error is not None:
+        err_msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
+        err_result = {"status": "error", "error": err_msg}
+        if method == "autocomplete":
+            from vimini.autocomplete import handle_channel_response
+            handle_channel_response(req_id, err_result)
+        elif method == "code":
+            from vimini.code import handle_channel_response
+            handle_channel_response(req_id, err_result)
+        elif method == "chat":
+            from vimini.chat import handle_channel_response
+            handle_channel_response(req_id, err_result)
+        elif method == "commit":
+            util.display_message(f"Error: {err_msg}", error=True)
+        elif method == "list_models":
+            util.display_message(f"Error: {err_msg}", error=True)
+        else:
+            util.display_message(f"Error: {err_msg}", error=True)
+        return
+
     if isinstance(result, dict):
-        method = result.get("method")
         if method == "autocomplete":
             from vimini.autocomplete import handle_channel_response
             handle_channel_response(req_id, result)
@@ -221,6 +233,7 @@ def reload_vimini():
         from vimini import util as old_util
         api_key_file = old_util._API_KEY_FILE
         model = old_util._MODEL
+        job_counter = old_util._JOB_COUNTER
         log_file = None
         if old_util._LOGGER and old_util._LOGGER.handlers:
             import logging
@@ -230,7 +243,8 @@ def reload_vimini():
                     break
     except Exception:
         api_key_file = os.path.expanduser('~/.config/gemini.token')
-        model = vim.eval("get(g:, 'vimini_model', 'gemini-2.5-flash')")
+        model = vim.eval("get(g:, 'vimini_model', 'gemini-3.6-flash')")
+        job_counter = 0
         log_file = vim.eval("get(g:, 'vimini_log_file', '')")
         if not log_file or vim.eval("get(g:, 'vimini_logging', 'off')") != 'on':
             log_file = None
@@ -244,8 +258,9 @@ def reload_vimini():
     from vimini import main
     main.initialize(api_key_file=api_key_file, model=model, logfile=log_file)
 
-    # Use the freshly imported util to display the message
+    # Use the freshly imported util to display the message and restore _JOB_COUNTER
     from vimini import util as new_util
+    new_util._JOB_COUNTER = job_counter
     new_util.display_message("Vimini Python modules reloaded.", history=True)
 
 def list_models():

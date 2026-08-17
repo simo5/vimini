@@ -71,14 +71,14 @@ def execute_function(req_id, method, params, result_queue, conn):
         if method == "setup":
             if isinstance(params, dict):
                 AGENT_CONFIG.update(params)
-            result = {"status": "ok", "method": "setup"}
+            result = {"status": "ok"}
         elif method == "list_models":
             api_key = load_api_key(AGENT_CONFIG)
             from google import genai
             client = genai.Client(api_key=api_key) if api_key else genai.Client()
             models_iter = client.models.list()
             models = [m.name for m in models_iter]
-            result = {"status": "ok", "method": method, "models": models}
+            result = {"status": "ok", "models": models}
         elif method == "commit":
             api_key = load_api_key(AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
@@ -100,7 +100,6 @@ def execute_function(req_id, method, params, result_queue, conn):
             )
             result = {
                 "status": "ok",
-                "method": "commit",
                 "text": response.text,
                 "repo_path": params.get("repo_path") if isinstance(params, dict) else None,
                 "diff_stat_output": params.get("diff_stat_output") if isinstance(params, dict) else None,
@@ -128,16 +127,16 @@ def execute_function(req_id, method, params, result_queue, conn):
             )
             result = {
                 "status": "ok",
-                "method": "autocomplete",
                 "text": response.text
             }
         else:
-            result = {"status": "ok", "method": method}
+            result = {"status": "ok"}
         response = [
             0,
             {
                 "id": req_id,
                 "jsonrpc": "2.0",
+                "method": method,
                 "result": result
             }
         ]
@@ -148,6 +147,7 @@ def execute_function(req_id, method, params, result_queue, conn):
             {
                 "id": req_id,
                 "jsonrpc": "2.0",
+                "method": method,
                 "error": {"code": -32603, "message": str(e)}
             }
         ]

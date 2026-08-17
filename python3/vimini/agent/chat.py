@@ -151,6 +151,7 @@ def validate_patch_is_safe(temp_file_path):
 class ChatSession(CommSession):
     def __init__(self, req_id, result_queue, agent_config=None, request=None):
         super().__init__(req_id, result_queue, agent_config=agent_config, request=request)
+        self.method = "chat"
         self.client = None
         self.session = None
 
@@ -158,7 +159,7 @@ class ChatSession(CommSession):
         if isinstance(params, dict) and params.get("terminate"):
             logger.info(f"Terminating ChatSession for req_id: {self.req_id}")
             self.running = False
-            self.send_response(req_id, conn, result={"status": "terminated", "method": "chat"})
+            self.send_response(req_id, conn, result={"status": "terminated"})
             return
 
         prompt = params.get("prompt", "") if isinstance(params, dict) else ""
@@ -196,7 +197,7 @@ class ChatSession(CommSession):
             )
 
         if not prompt:
-            self.send_response(req_id, conn, result={"status": "ok", "method": "chat", "text": ""})
+            self.send_response(req_id, conn, result={"status": "ok", "text": ""})
             return
 
         def process_prompt_stream(current_prompt, current_req_id):
@@ -213,9 +214,9 @@ class ChatSession(CommSession):
                             modified_text += part.text
 
                     if modified_text:
-                        self.send_response(current_req_id, conn, result={"status": "chunk", "method": "chat", "text": modified_text})
+                        self.send_response(current_req_id, conn, result={"status": "chunk", "text": modified_text})
                 elif chunk.text:
-                    self.send_response(current_req_id, conn, result={"status": "chunk", "method": "chat", "text": chunk.text})
+                    self.send_response(current_req_id, conn, result={"status": "chunk", "text": chunk.text})
 
             if pending_tool_calls:
                 responses = []
@@ -245,7 +246,6 @@ class ChatSession(CommSession):
                         req_msg = f"\n[Agent requested tool execution: apply_patch. Patch saved to temp file: {temp_file_path}]\n"
                         self.send_response(current_req_id, conn, result={
                             "status": "tool_use_requested",
-                            "method": "chat",
                             "tool": tool_call.name,
                             "temp_file": temp_file_path,
                             "text": req_msg
@@ -255,7 +255,6 @@ class ChatSession(CommSession):
                         req_msg = f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n"
                         self.send_response(current_req_id, conn, result={
                             "status": "tool_use_requested",
-                            "method": "chat",
                             "tool": tool_call.name,
                             "args": args_dict,
                             "text": req_msg
@@ -277,7 +276,7 @@ class ChatSession(CommSession):
                     if isinstance(next_params, dict) and next_params.get("terminate"):
                         logger.info(f"Terminating ChatSession for req_id: {self.req_id}")
                         self.running = False
-                        self.send_response(current_req_id, conn, result={"status": "terminated", "method": "chat"})
+                        self.send_response(current_req_id, conn, result={"status": "terminated"})
                         return
 
                     is_approved = False
@@ -340,4 +339,4 @@ class ChatSession(CommSession):
                 process_prompt_stream(responses, next_req_id)
 
         process_prompt_stream(prompt, req_id)
-        self.send_response(req_id, conn, result={"status": "done", "method": "chat"})
+        self.send_response(req_id, conn, result={"status": "done"})

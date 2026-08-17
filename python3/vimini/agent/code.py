@@ -95,12 +95,13 @@ def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
 class CodeSession(CommSession):
     def __init__(self, req_id, result_queue, agent_config=None, request=None):
         super().__init__(req_id, result_queue, agent_config=agent_config, request=request)
+        self.method = "code"
 
     def _process_command(self, req_id, params, conn):
         if isinstance(params, dict) and params.get("terminate"):
             logger.info(f"Terminating CodeSession for req_id: {self.req_id}")
             self.running = False
-            self.send_response(req_id, conn, result={"status": "terminated", "method": "code"})
+            self.send_response(req_id, conn, result={"status": "terminated"})
             return
 
         agent_config = self.agent_config or {}
@@ -216,7 +217,6 @@ class CodeSession(CommSession):
                                 if thought_chunk:
                                     self.send_response(req_id, conn, result={
                                         "status": "thought",
-                                        "method": "code",
                                         "thought": thought_chunk,
                                         "buffer_num": buffer_num
                                     })
@@ -226,7 +226,6 @@ class CodeSession(CommSession):
                                     json_aggregator += text_chunk
                                     self.send_response(req_id, conn, result={
                                         "status": "chunk",
-                                        "method": "code",
                                         "text": text_chunk,
                                         "buffer_num": buffer_num
                                     })
@@ -236,7 +235,6 @@ class CodeSession(CommSession):
                         json_aggregator += text_chunk
                         self.send_response(req_id, conn, result={
                             "status": "chunk",
-                            "method": "code",
                             "text": text_chunk,
                             "buffer_num": buffer_num
                         })
@@ -251,7 +249,6 @@ class CodeSession(CommSession):
                 logger.error(f"Error parsing JSON in CodeSession for req_id {req_id}: {parse_err}")
                 self.send_response(req_id, conn, result={
                     "status": "error",
-                    "method": "code",
                     "error": err_msg,
                     "raw_json": json_aggregator,
                     "buffer_num": buffer_num,
@@ -326,7 +323,6 @@ class CodeSession(CommSession):
 
             result = {
                 "status": "completed",
-                "method": "code",
                 "buffer_num": buffer_num,
                 "project_root": project_root,
                 "verbose": verbose,
@@ -340,7 +336,6 @@ class CodeSession(CommSession):
             logger.error(f"Error in CodeSession for req_id {req_id}: {e}", exc_info=True)
             result = {
                 "status": "error",
-                "method": "code",
                 "error": str(e),
                 "buffer_num": buffer_num,
                 "project_root": project_root
