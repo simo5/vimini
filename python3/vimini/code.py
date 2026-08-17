@@ -37,6 +37,10 @@ def handle_channel_response(req_id, result):
         return
     buf_num = buf.number
 
+    errs = result.get("processing_errors")
+    if errs:
+        util.append_to_buffer("**Processing Errors**\n" + "\n".join(errs))
+
     if status == "thought":
         if "[->G]" in buf.name:
             buf.name = buf.name.replace("[->G]", "[<-G]")

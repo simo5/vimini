@@ -32,30 +32,15 @@ def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
         if current_hunk_header is None:
             return
 
-        minus_count = 0
-        plus_count = 0
-        for hl in current_hunk_data:
-            if hl.startswith('-'):
-                minus_count += 1
-            elif hl.startswith('+'):
-                plus_count += 1
-            elif hl.startswith('\\'):
-                pass
-            else:
-                minus_count += 1
-                plus_count += 1
+        minus_count = sum(1 for hl in current_hunk_data if hl.startswith('-') or not hl.startswith(('+', '\\')))
+        plus_count = sum(1 for hl in current_hunk_data if hl.startswith('+') or not hl.startswith(('-', '\\')))
 
         m = re.match(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$', current_hunk_header)
         if m:
-            start_minus = m.group(1)
-            start_plus = m.group(2)
-            rest = m.group(3)
-
-            new_minus_str = f"{start_minus},{minus_count}" if minus_count != 1 else start_minus
-            new_plus_str = f"{start_plus},{plus_count}" if plus_count != 1 else start_plus
-
-            fixed_header = f"@@ -{new_minus_str} +{new_plus_str} @@{rest}"
-            fixed_lines.append(fixed_header)
+            start_minus, start_plus, rest = m.group(1), m.group(2), m.group(3)
+            new_minus = f"{start_minus},{minus_count}" if minus_count != 1 else start_minus
+            new_plus = f"{start_plus},{plus_count}" if plus_count != 1 else start_plus
+            fixed_lines.append(f"@@ -{new_minus} +{new_plus} @@{rest}")
         else:
             fixed_lines.append(current_hunk_header)
 
@@ -64,27 +49,18 @@ def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
         current_hunk_data = []
 
     for line in lines:
-        if line.startswith("@@ "):
+        if line.startswith(("@@ ", "diff --git", "--- ", "+++ ")):
             flush_hunk()
+
+        if line.startswith("@@ "):
             current_hunk_header = line
         elif current_hunk_header is not None:
             current_hunk_data.append(line)
         else:
             if line.startswith("--- "):
-                path = line[4:].strip()
-                if path == "/dev/null":
-                    fixed_lines.append(line)
-                else:
-                    if not file_exists:
-                        fixed_lines.append("--- /dev/null")
-                    else:
-                        fixed_lines.append(f"--- a/{relative_path}")
+                fixed_lines.append(line if line[4:].strip() == "/dev/null" else f"--- {'/dev/null' if not file_exists else 'a/' + relative_path}")
             elif line.startswith("+++ "):
-                path = line[4:].strip()
-                if path == "/dev/null":
-                    fixed_lines.append(line)
-                else:
-                    fixed_lines.append(f"+++ b/{relative_path}")
+                fixed_lines.append(line if line[4:].strip() == "/dev/null" else f"+++ b/{relative_path}")
             else:
                 fixed_lines.append(line)
 
@@ -97,7 +73,8 @@ class CodeSession(CommSession):
         self.method = "code"
 
     def _process_command(self, req_id, params, conn):
-        if isinstance(params, dict) and params.get("terminate"):
+        params = params if isinstance(params, dict) else {}
+        if params.get("terminate"):
             logger.info(f"Terminating CodeSession for req_id: {self.req_id}")
             self.running = False
             self.send_response(req_id, conn, result={"status": "terminated"})
@@ -108,16 +85,16 @@ class CodeSession(CommSession):
         model = agent_config.get("model")
         default_temperature = agent_config.get("temperature")
 
-        prompt = params.get("prompt") if isinstance(params, dict) else ""
-        verbose = params.get("verbose", False) if isinstance(params, dict) else False
-        temperature = params.get("temperature") if isinstance(params, dict) else None
+        prompt = params.get("prompt", "")
+        verbose = params.get("verbose", False)
+        temperature = params.get("temperature")
         if temperature is None:
             temperature = default_temperature
 
-        project_root = params.get("project_root") if isinstance(params, dict) else None
-        file_paths_to_include = params.get("file_paths_to_include", []) if isinstance(params, dict) else []
-        buffers = params.get("buffers", []) if isinstance(params, dict) else []
-        task_instruction = params.get("task_instruction", "") if isinstance(params, dict) else ""
+        project_root = params.get("project_root")
+        file_paths_to_include = params.get("file_paths_to_include", [])
+        buffers = params.get("buffers", [])
+        task_instruction = params.get("task_instruction", "")
         try:
             client = genai.Client(api_key=api_key) if api_key else genai.Client()
 
@@ -150,7 +127,7 @@ class CodeSession(CommSession):
                 display_cb=lambda msg, **kwargs: logger.info(msg)
             ) or []
             context_file_names = [f.display_name for f in uploaded_files]
-            upload_errors = []
+            processing_errors = []
 
             file_list_str = "\n".join(f"- {name}" for name in sorted(context_file_names))
             context_files_section = ""
@@ -224,14 +201,17 @@ class CodeSession(CommSession):
                                         "status": "chunk",
                                         "text": text_chunk,
                                     })
-                elif hasattr(chunk, 'text') and chunk.text:
-                    text_chunk = chunk.text
-                    if text_chunk:
-                        json_aggregator += text_chunk
-                        self.send_response(req_id, conn, result={
-                            "status": "chunk",
-                            "text": text_chunk,
-                        })
+                elif hasattr(chunk, 'text'):
+                    try:
+                        text_chunk = chunk.text
+                        if text_chunk:
+                            json_aggregator += text_chunk
+                            self.send_response(req_id, conn, result={
+                                "status": "chunk",
+                                "text": text_chunk,
+                            })
+                    except Exception:
+                        pass
 
             try:
                 parsed_json = json.loads(json_aggregator)
@@ -246,7 +226,7 @@ class CodeSession(CommSession):
                     "error": err_msg,
                     "raw_json": json_aggregator,
                     "project_root": project_root,
-                    "upload_errors": upload_errors
+                    "processing_errors": processing_errors
                 })
                 return
 
@@ -260,8 +240,14 @@ class CodeSession(CommSession):
 
                 file_type = file_op.get("file_type", "text/plain")
 
-                if project_root and not os.path.isabs(api_path):
-                    absolute_path = os.path.abspath(os.path.join(project_root, api_path))
+                if project_root:
+                    real_root = os.path.abspath(project_root)
+                    absolute_path = os.path.abspath(os.path.join(real_root, api_path)) if not os.path.isabs(api_path) else os.path.abspath(api_path)
+                    if not (absolute_path == real_root or absolute_path.startswith(real_root + os.sep)):
+                        err_msg = f"Attempted path traversal outside project root: {api_path}"
+                        logger.error(err_msg)
+                        processing_errors.append(err_msg)
+                        continue
                 else:
                     absolute_path = os.path.abspath(api_path)
 
@@ -281,7 +267,7 @@ class CodeSession(CommSession):
                         except Exception as e:
                             err_msg = f"Error reading file {absolute_path}: {e}"
                             logger.error(err_msg)
-                            upload_errors.append(err_msg)
+                            processing_errors.append(err_msg)
 
                     orig_lines = original_content.splitlines()
                     ai_lines = ai_generated_code.splitlines()
@@ -308,11 +294,9 @@ class CodeSession(CommSession):
             result = {
                 "status": "completed",
                 "project_root": project_root,
-                "verbose": verbose,
                 "files": files_to_process,
                 "diff_output": diff_text,
-                "diff_lines": combined_diff_output,
-                "upload_errors": upload_errors
+                "processing_errors": processing_errors
             }
             self.send_response(req_id, conn, result=result)
         except Exception as e:
