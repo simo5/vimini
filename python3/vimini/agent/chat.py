@@ -273,7 +273,13 @@ class ChatSession(CommSession):
 
                     logger.info(f"Received tool response from user: {next_params}")
 
-                    is_approved = True
+                    if isinstance(next_params, dict) and next_params.get("terminate"):
+                        logger.info(f"Terminating ChatSession for req_id: {self.req_id}")
+                        self.running = False
+                        self.send_response(current_req_id, conn, result={"status": "terminated", "method": "chat"})
+                        return
+
+                    is_approved = False
                     if isinstance(next_params, dict):
                         if "approved" in next_params:
                             is_approved = bool(next_params["approved"])
@@ -281,8 +287,8 @@ class ChatSession(CommSession):
                             is_approved = bool(next_params["approval"])
                         elif "prompt" in next_params and isinstance(next_params["prompt"], str):
                             p = next_params["prompt"].strip().lower()
-                            if p in ("no", "n", "reject", "rejected", "cancel", "deny"):
-                                is_approved = False
+                            if p in ("yes", "y", "approve", "approved", "ok"):
+                                is_approved = True
 
                     if tool_call.name == 'list_directory':
                         if is_approved:
