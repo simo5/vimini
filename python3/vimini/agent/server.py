@@ -58,6 +58,7 @@ def load_api_key(agent_config):
                     return f.read().strip()
             except Exception as e:
                 logger.error(f"Error reading API key file '{expanded_path}': {e}")
+                raise RuntimeError(f"Error reading API key file '{expanded_path}': {e}")
     return agent_config.get("api_key")
 
 def execute_function(req_id, method, params, result_queue, conn):

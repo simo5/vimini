@@ -168,6 +168,12 @@ def handle_channel_message(msg):
     if error:
         err_msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
         util.display_message(f"Error: {err_msg}", error=True)
+        req_id = msg.get("id")
+        if req_id:
+            from vimini.chat import handle_channel_response as chat_handle
+            from vimini.code import handle_channel_response as code_handle
+            chat_handle(str(req_id), {"status": "error", "error": err_msg})
+            code_handle(str(req_id), {"status": "error", "error": err_msg})
         return
     req_id = msg.get("id")
     result = msg.get("result")

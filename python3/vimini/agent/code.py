@@ -289,7 +289,9 @@ class CodeSession(CommSession):
                             with open(absolute_path, "r", encoding="utf-8") as f:
                                 original_content = f.read()
                         except Exception as e:
-                            logger.error(f"Error reading file {absolute_path}: {e}")
+                            err_msg = f"Error reading file {absolute_path}: {e}"
+                            logger.error(err_msg)
+                            upload_errors.append(err_msg)
 
                     with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_orig, \
                          tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8") as f_ai:

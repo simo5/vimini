@@ -35,9 +35,9 @@ def _get_buffer(buf_num):
 
 def _display_send_buffer(buffer):
     try:
-        if buffer.vars['vimini_waiting']:
+        if buffer.vars.get('vimini_waiting', False):
             return
-        prompt_str = _to_str(buffer.vars['vimini_send_buffer'])
+        prompt_str = _to_str(buffer.vars.get('vimini_send_buffer', ''))
         msg = f"Prompt: {prompt_str}"
         safe_msg = msg.replace("'", "''")
         vim.command("redraw")
@@ -51,9 +51,9 @@ def _on_key_code(buf_num, code=None):
 
     try:
         buffer = _get_buffer(buf_num)
-        if buffer is None or buffer.vars['vimini_waiting']:
+        if buffer is None or buffer.vars.get('vimini_waiting', False):
             return
-        curr = _to_str(buffer.vars['vimini_send_buffer'])
+        curr = _to_str(buffer.vars.get('vimini_send_buffer', ''))
         buffer.vars['vimini_send_buffer'] = curr + chr(code)
         _display_send_buffer(buffer)
     except Exception as e:
@@ -62,9 +62,9 @@ def _on_key_code(buf_num, code=None):
 def _on_backspace(buf_num):
     try:
         buffer = _get_buffer(buf_num)
-        if buffer is None or buffer.vars['vimini_waiting']:
+        if buffer is None or buffer.vars.get('vimini_waiting', False):
             return
-        curr = _to_str(buffer.vars['vimini_send_buffer'])
+        curr = _to_str(buffer.vars.get('vimini_send_buffer', ''))
         if curr:
             buffer.vars['vimini_send_buffer'] = curr[:-1]
             _display_send_buffer(buffer)
@@ -74,9 +74,9 @@ def _on_backspace(buf_num):
 def _on_enter(buf_num):
     try:
         buffer = _get_buffer(buf_num)
-        if buffer is None or buffer.vars['vimini_waiting']:
+        if buffer is None or buffer.vars.get('vimini_waiting', False):
             return
-        prompt = _to_str(buffer.vars['vimini_send_buffer'])
+        prompt = _to_str(buffer.vars.get('vimini_send_buffer', ''))
         buffer.vars['vimini_send_buffer'] = ""
         _display_send_buffer(buffer)
         if prompt.strip():
@@ -100,7 +100,7 @@ def _enable_chat_mappings(buf_num):
 def _on_buf_enter(*args):
     try:
         buffer = vim.current.buffer
-        if not buffer.vars['vimini_waiting']:
+        if not buffer.vars.get('vimini_waiting', False):
             _enable_chat_mappings(buffer.number)
         _display_send_buffer(buffer)
     except Exception as e:
@@ -134,7 +134,7 @@ def _on_chat_buffer_closed(buf_num):
         if buffer is None:
             return
         buffer.vars["vimini_waiting"] = False
-        req_id = _to_str(buffer.vars["vimini_job_id"])
+        req_id = _to_str(buffer.vars.get("vimini_job_id", ""))
         send_chat_termination(req_id)
         util.display_message("Chat session has been terminated.", history=True)
     except Exception as e:
@@ -321,6 +321,13 @@ def handle_channel_response(req_id, result):
     elif status == "terminated":
         buffer.vars["vimini_waiting"] = False
 
+    elif status == "error":
+        buffer.vars["vimini_waiting"] = False
+        err_msg = result.get("error", "Unknown error")
+        _write_to_buffer(buffer, [f"\n[Error: {err_msg}]", "", WAITING_MSG])
+        if vim.current.buffer.number == buffer.number:
+            _display_send_buffer(buffer)
+
 def _send_prompt(prompt, buffer):
     if prompt.startswith(":"):
         try:
@@ -354,7 +361,7 @@ def _send_prompt(prompt, buffer):
 
     req = {
         "jsonrpc": "2.0",
-        "id": _to_str(buffer.vars["vimini_job_id"]),
+        "id": _to_str(buffer.vars.get("vimini_job_id", "")),
         "method": "chat",
         "params": {
             "prompt": prompt,

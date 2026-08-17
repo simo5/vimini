@@ -37,14 +37,9 @@ def handle_channel_response(req_id, result):
         return
     buf_num = buf.number
 
-    if status in ("thought", "chunk"):
-        if buf and "[->G]" in buf.name:
-            try:
-                buf.name = buf.name.replace("[->G]", "[<-G]")
-            except Exception:
-                pass
-
     if status == "thought":
+        if "[->G]" in buf.name:
+            buf.name = buf.name.replace("[->G]", "[<-G]")
         thought_text = result.get("thought", "")
         verbose = result.get("verbose")
         if verbose is None:
@@ -56,6 +51,18 @@ def handle_channel_response(req_id, result):
             util.append_to_buffer(buf_num, thought_text)
 
     elif status == "chunk":
+        spin_map = {
+            "[->G]": "[<-G]",
+            "[<-G]": "[<-\\]",
+            "[<-\\]": "[<-|]",
+            "[<-|]": "[<-/]",
+            "[<-/]": "[<-G]",
+        }
+        for spin in spin_map.items():
+            if spin[0] in buf.name:
+                buf.name = buf.name.replace(spin[0], spin[1])
+                break
+
         chunk_text = result.get("text", "")
         if req_id is not None:
             _STREAM_JSON_STORE[req_id] = _STREAM_JSON_STORE.get(req_id, "") + chunk_text
