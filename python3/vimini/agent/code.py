@@ -7,6 +7,7 @@ import re
 from google import genai
 from google.genai import types
 from vimini.agent.comms import CommSession
+from vimini.agent.server import load_api_key
 from vimini.common.context import upload_context_files
 
 logger = logging.getLogger('vimini_agent')
@@ -103,7 +104,7 @@ class CodeSession(CommSession):
             return
 
         agent_config = self.agent_config or {}
-        api_key = agent_config.get("api_key")
+        api_key = load_api_key(agent_config)
         model = agent_config.get("model")
         default_temperature = agent_config.get("temperature")
 

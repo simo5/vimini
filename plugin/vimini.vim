@@ -6,23 +6,8 @@ if exists('g:loaded_vimini')
 endif
 let g:loaded_vimini = 1
 
-" Default configuration
-" Configuration: API Key
-" Priority:
-" 1. g:vimini_api_key
-" 2. ~/.vimini/api_key file
-let s:api_key = get(g:, 'vimini_api_key', '')
-if empty(s:api_key)
-  let s:api_key_path = expand('~/.config/gemini.token')
-  if filereadable(s:api_key_path)
-    try
-      let s:api_key = trim(readfile(s:api_key_path)[0])
-    catch
-      " Handle empty file case
-      let s:api_key = ''
-    endtry
-  endif
-endif
+" Configuration: API Key file path
+let s:api_key_file = expand('~/.config/gemini.token')
 
 " Configuration: Model name
 let g:vimini_model = get(g:, 'vimini_model', 'gemini-3.6-flash')
@@ -71,10 +56,10 @@ try:
     sys.path.insert(0, python_root_dir)
 
     from vimini import main
-    api_key = vim.eval('s:api_key')
+    api_key_file = vim.eval('s:api_key_file')
     model = vim.eval('g:vimini_model')
     log_file = vim.eval('g:vimini_log_file') if vim.eval('g:vimini_logging') == 'on' else None
-    main.initialize(api_key=api_key, model=model, logfile=log_file)
+    main.initialize(api_key_file=api_key_file, model=model, logfile=log_file)
     socket_path = main.start_agent()
     if socket_path:
         vim.command(f"let s:socket_path = '{socket_path}'")

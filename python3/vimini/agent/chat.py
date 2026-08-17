@@ -9,6 +9,7 @@ from google import genai
 from google.genai import types
 from vimini.common.util import get_project_root
 from vimini.agent.comms import CommSession
+from vimini.agent.server import load_api_key
 
 logger = logging.getLogger('vimini_agent')
 
@@ -161,8 +162,8 @@ class ChatSession(CommSession):
             return
 
         prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-        agent_config = self.agent_config
-        api_key = agent_config.get("api_key")
+        agent_config = self.agent_config or {}
+        api_key = load_api_key(agent_config)
         model = agent_config.get("model")
 
         if prompt:

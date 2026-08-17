@@ -46,6 +46,20 @@ def get_socket_path(pid=None):
         pid = os.getpid()
     return os.path.join(get_var_dir(), f"agent.{pid}")
 
+def load_api_key(agent_config):
+    if not agent_config or not isinstance(agent_config, dict):
+        return None
+    api_key_file = agent_config.get("api_key_file")
+    if api_key_file:
+        expanded_path = os.path.expanduser(api_key_file)
+        if os.path.exists(expanded_path):
+            try:
+                with open(expanded_path, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
+            except Exception as e:
+                logger.error(f"Error reading API key file '{expanded_path}': {e}")
+    return agent_config.get("api_key")
+
 def execute_function(req_id, method, params, result_queue, conn):
     """
     Worker function executed inside spawned thread.
@@ -58,14 +72,14 @@ def execute_function(req_id, method, params, result_queue, conn):
                 AGENT_CONFIG.update(params)
             result = {"status": "ok", "method": "setup"}
         elif method == "list_models":
-            api_key = AGENT_CONFIG.get("api_key")
+            api_key = load_api_key(AGENT_CONFIG)
             from google import genai
             client = genai.Client(api_key=api_key) if api_key else genai.Client()
             models_iter = client.models.list()
             models = [m.name for m in models_iter]
             result = {"status": "ok", "method": method, "models": models}
         elif method == "commit":
-            api_key = AGENT_CONFIG.get("api_key")
+            api_key = load_api_key(AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
             temperature = AGENT_CONFIG.get("temperature")
@@ -93,7 +107,7 @@ def execute_function(req_id, method, params, result_queue, conn):
                 "assistant": params.get("assistant") if isinstance(params, dict) else True
             }
         elif method == "autocomplete":
-            api_key = AGENT_CONFIG.get("api_key")
+            api_key = load_api_key(AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
             temperature = AGENT_CONFIG.get("temperature")

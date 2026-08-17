@@ -11,19 +11,19 @@ from vimini.ripgrep import apply as ripgrep_apply
 from vimini.chat import chat
 from vimini.context import context_files_command, toggle_context_file, show_context_lists, confirm_context_files, files_command, restore_context_files
 
-def initialize(api_key, model, logfile=None):
+def initialize(api_key_file, model, logfile=None):
     """
-    Initializes the plugin with the user's API key, model name, and
+    Initializes the plugin with the user's API key file path, model name, and
     optional logfile path.
     This function is called from the plugin's Vimscript entry point.
     """
-    util._API_KEY = api_key
+    util._API_KEY_FILE = api_key_file
     util._MODEL = model
     util._GENAI_CLIENT = None # Reset client if key/model changes.
     util.set_logging(logfile)
     restore_context_files()
-    if not util._API_KEY:
-        util.display_message("API key not found. Please set g:vimini_api_key or store it in ~/.config/gemini.token.", error=True)
+    if not util.get_api_key():
+        util.display_message("API key not found. Please store it in ~/.config/gemini.token.", error=True)
 
 def send_setup():
     """
@@ -39,7 +39,7 @@ def send_setup():
         "id": "setup",
         "method": "setup",
         "params": {
-            "api_key": util._API_KEY,
+            "api_key_file": util._API_KEY_FILE,
             "model": util._MODEL,
             "temperature": temperature
         }
@@ -204,7 +204,7 @@ def logging(logfile=None):
 def reload_vimini():
     """
     Reloads the vimini python modules to pick up changes from disk.
-    Also re-initializes the plugin to preserve the API key and settings.
+    Also re-initializes the plugin to preserve the API key file and settings.
     """
     import sys
     import os
@@ -213,7 +213,7 @@ def reload_vimini():
     # Save initialization parameters before deleting modules
     try:
         from vimini import util as old_util
-        api_key = old_util._API_KEY
+        api_key_file = old_util._API_KEY_FILE
         model = old_util._MODEL
         log_file = None
         if old_util._LOGGER and old_util._LOGGER.handlers:
@@ -223,15 +223,7 @@ def reload_vimini():
                     log_file = handler.baseFilename
                     break
     except Exception:
-        api_key = vim.eval("get(g:, 'vimini_api_key', '')")
-        if not api_key:
-            token_path = os.path.expanduser('~/.config/gemini.token')
-            if os.path.exists(token_path):
-                try:
-                    with open(token_path, 'r') as f:
-                        api_key = f.read().strip()
-                except Exception:
-                    pass
+        api_key_file = os.path.expanduser('~/.config/gemini.token')
         model = vim.eval("get(g:, 'vimini_model', 'gemini-2.5-flash')")
         log_file = vim.eval("get(g:, 'vimini_log_file', '')")
         if not log_file or vim.eval("get(g:, 'vimini_logging', 'off')") != 'on':
@@ -244,7 +236,7 @@ def reload_vimini():
 
     # Re-import main and re-initialize
     from vimini import main
-    main.initialize(api_key=api_key, model=model, logfile=log_file)
+    main.initialize(api_key_file=api_key_file, model=model, logfile=log_file)
 
     # Use the freshly imported util to display the message
     from vimini import util as new_util

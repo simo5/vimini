@@ -1,4 +1,4 @@
-Vimini: Google Gemini Integration for Vim
+# Vimini: Google Gemini Integration for Vim
 
 Vimini is a Vim plugin that provides seamless integration with Google's
 Gemini (Generative AI) models, allowing you to interact with AI directly
@@ -65,15 +65,9 @@ repository path once published.)*
 Vimini requires your Google Gemini API key and allows for several
 customizations.
 
-1.  **API Key (`g:vimini_api_key`)**:
-    You can set your API key directly in your `.vimrc` or `init.vim`:
-    ```vim
-    let g:vimini_api_key = 'YOUR_API_KEY_HERE'
-    ```
-    **Alternatively**, Vimini will also look for the API key in a file
-    named `~/.config/gemini.token`. This is the recommended and more
-    secure approach. Just place your API key (and nothing else) into
-    that file:
+1.  **API Key (`~/.config/gemini.token`)**:
+    Vimini loads your Google Gemini API key from `~/.config/gemini.token`.
+    Place your API key (and nothing else) into that file:
     ```
     # ~/.config/gemini.token
     YOUR_API_KEY_HERE

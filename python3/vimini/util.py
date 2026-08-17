@@ -5,8 +5,8 @@ import queue
 from google import genai
 from google.genai import types
 
-# Module-level variables to store the API key, model name, and client instance.
-_API_KEY = None
+# Module-level variables to store the API key file, model name, and client instance.
+_API_KEY_FILE = None
 _MODEL = None
 _MODEL_NAME = None
 _GENAI_CLIENT = None # Global, lazily-initialized client.
@@ -38,19 +38,31 @@ def send_channel_request(req_dict, silent=False):
             display_message(f"Error sending channel request: {e}", error=True)
         return False
 
+def get_api_key():
+    if _API_KEY_FILE:
+        expanded_path = os.path.expanduser(_API_KEY_FILE)
+        if os.path.exists(expanded_path):
+            try:
+                with open(expanded_path, 'r', encoding='utf-8') as f:
+                    return f.read().strip()
+            except Exception:
+                pass
+    return None
+
 def get_client():
     """
     Lazily initializes and returns the global genai.Client instance.
     """
     global _GENAI_CLIENT
     if _GENAI_CLIENT is None:
-        if not _API_KEY:
-            vim.command("echoerr '[Vimini] API key not set. Please run :ViminiInit'")
+        api_key = get_api_key()
+        if not api_key:
+            vim.command("echoerr '[Vimini] API key not found. Please store it in ~/.config/gemini.token'")
             return None
         try:
             vim.command("echo '[Vimini] Initializing API client...'")
             vim.command("redraw")
-            _GENAI_CLIENT = genai.Client(api_key=_API_KEY)
+            _GENAI_CLIENT = genai.Client(api_key=api_key)
             vim.command("echo ''") # Clear the message
         except Exception as e:
             vim.command(f"echoerr '[Vimini] Error creating API client: {e}'")
