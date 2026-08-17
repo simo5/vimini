@@ -496,7 +496,8 @@ def apply_code(job_id=None):
 
     if apply_patch(diff_content, project_root):
         try:
-            if diff_buffer.vars.get("vimini_is_chat_patch", 0) == 1:
+            is_chat_patch = int(_to_str(diff_buffer.vars.get("vimini_is_chat_patch", 0)) or 0)
+            if is_chat_patch == 1:
                 diff_buffer.vars["vimini_patch_handled"] = 1
                 req_id = _to_str(diff_buffer.vars["vimini_chat_job_id"])
                 from vimini.chat import send_agent_approval
