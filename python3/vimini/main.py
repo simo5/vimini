@@ -141,14 +141,8 @@ def handle_channel_message(msg):
             util.log_info("Agent server setup completed.")
         elif method == "list_models":
             models = result.get("models", [])
-            util.display_message("")
-            model_list = ["Available Models:"]
-            for model in models:
-                model_list.append(f"- {model}")
-
-            util.new_split()
-            vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
-            vim.current.buffer[:] = model_list
+            from vimini.models import show_models_list
+            show_models_list(models)
         elif method == "chat":
             from vimini.chat import handle_channel_response
             handle_channel_response(req_id, result)

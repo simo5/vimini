@@ -48,6 +48,13 @@ class CommSession(threading.Thread):
                 continue
             except Exception as e:
                 logger.error(f"Error processing command in session {self.req_id}: {e}", exc_info=True)
+                try:
+                    self.send_response(req_id, conn, result={
+                        "status": "error",
+                        "error": str(e)
+                    })
+                except Exception:
+                    pass
 
     def _process_command(self, req_id, params, conn):
         raise NotImplementedError("Subclasses must implement _process_command")

@@ -520,7 +520,14 @@ def handle_channel_response(req_id, result):
     elif status == "error":
         _set_waiting(buffer, False)
         err_msg = result.get("error", "Unknown error")
-        _write_to_buffer(buffer, [f"\n[Error: {err_msg}]", "", WAITING_MSG])
+        error_lines = [""]
+        for line in str(err_msg).split('\n'):
+            if line.startswith("Error: ") or line.startswith("[Error:"):
+                error_lines.append(line)
+            else:
+                error_lines.append(f"Error: {line}")
+        error_lines.extend(["Please prompt again to retry later.", "", WAITING_MSG])
+        _write_to_buffer(buffer, error_lines)
         _open_prompt_window(req_id)
 
 def _send_prompt(prompt, buffer):
@@ -581,7 +588,7 @@ def _send_prompt(prompt, buffer):
 
     if not util.send_channel_request(req, False):
         _set_waiting(buffer, False)
-        _write_to_buffer(buffer, ["", "[Error: Agent channel is not open]", "", WAITING_MSG])
+        _write_to_buffer(buffer, ["", "Error: Agent channel is not open", "Please prompt again to retry later.", "", WAITING_MSG])
         _open_prompt_window(_to_str(buffer.vars.get("vimini_job_id", "")))
     else:
         util.display_message("Command has been sent and waiting for chat response")
@@ -604,9 +611,12 @@ def chat():
     vim.command("highlight default ViminiWaiting ctermfg=Green guifg=Green")
     vim.command("highlight default ViminiPrompt ctermfg=DarkBlue guifg=DarkBlue")
     vim.command("highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic")
+    vim.command("highlight default ViminiError ctermfg=Red guifg=Red cterm=italic gui=italic")
     vim.command("syntax match ViminiWaiting '^\\(Welcome.*\\|Waiting for prompt.*\\)'")
     vim.command("syntax match ViminiPrompt '^< .*'")
     vim.command("syntax match ViminiService '^Agent Requested: .*'")
+    vim.command("syntax match ViminiError '^\\(\\[Error:.*\\|Error:.*\\)'")
+    vim.command("syntax match ViminiError '^Please prompt again to retry later.*'")
     vim.command(f"autocmd BufUnload <buffer> py3 from vimini.chat import _on_chat_buffer_closed; _on_chat_buffer_closed({buf_num})")
     vim.command(f"autocmd BufEnter <buffer> py3 from vimini.chat import _on_chat_buf_enter; _on_chat_buf_enter({buf_num})")
 

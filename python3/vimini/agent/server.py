@@ -61,7 +61,12 @@ def execute_function(req_id, method, params, result_queue, conn):
         elif method == "list_models":
             client = get_client(config=AGENT_CONFIG)
             models_iter = client.models.list()
-            models = [m.name for m in models_iter]
+            models = []
+            for m in models_iter:
+                models.append({
+                    "name": m.name,
+                    "display_name": getattr(m, "display_name", m.name)
+                })
             result = {"status": "ok", "models": models}
         elif method == "commit":
             client = get_client(config=AGENT_CONFIG)

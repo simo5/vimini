@@ -131,6 +131,7 @@ class ChatSession(CommSession):
         self.client = None
         self.session = None
         self.project_root = None
+        self.chat_history = None
 
     def execute_project_tool(self, tool, current_req_id, conn):
         tool_label = "build" if tool == "build_code" else "test"
@@ -279,40 +280,58 @@ class ChatSession(CommSession):
                 ),
                 disable_function_calling=False
             )
-            self.session = self.client.chats.create(
-                model=model,
-                config=agent_config_obj
-            )
+
+            kwargs = {
+                "model": model,
+                "config": agent_config_obj
+            }
+            if self.chat_history is not None:
+                kwargs["history"] = self.chat_history
+            self.session = self.client.chats.create(**kwargs)
 
         if not prompt:
             self.send_response(req_id, conn, result={"status": "ok", "text": ""})
             return
 
         def process_prompt_stream(current_prompt, current_req_id):
-            response_stream = self.session.send_message_stream(current_prompt)
             pending_tool_calls = []
-            for chunk in response_stream:
-                if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
-                    modified_text = ""
-                    for part in chunk.candidates[0].content.parts:
-                        if hasattr(part, 'function_call') and part.function_call:
-                            tool_call = part.function_call
-                            pending_tool_calls.append(tool_call)
-                        elif getattr(part, 'thought', False):
-                            thought_chunk = getattr(part, 'text', '') or ''
-                            if thought_chunk:
-                                self.send_response(current_req_id, conn, result={
-                                    "status": "thought",
-                                    "thought": thought_chunk,
-                                    "verbose": verbose
-                                })
-                        elif hasattr(part, 'text') and part.text:
-                            modified_text += part.text
+            try:
+                response_stream = self.session.send_message_stream(current_prompt)
+                for chunk in response_stream:
+                    if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+                        modified_text = ""
+                        for part in chunk.candidates[0].content.parts:
+                            if hasattr(part, 'function_call') and part.function_call:
+                                tool_call = part.function_call
+                                pending_tool_calls.append(tool_call)
+                            elif getattr(part, 'thought', False):
+                                thought_chunk = getattr(part, 'text', '') or ''
+                                if thought_chunk:
+                                    self.send_response(current_req_id, conn, result={
+                                        "status": "thought",
+                                        "thought": thought_chunk,
+                                        "verbose": verbose
+                                    })
+                            elif hasattr(part, 'text') and part.text:
+                                modified_text += part.text
 
-                    if modified_text:
-                        self.send_response(current_req_id, conn, result={"status": "chunk", "text": modified_text})
-                elif chunk.text:
-                    self.send_response(current_req_id, conn, result={"status": "chunk", "text": chunk.text})
+                        if modified_text:
+                            self.send_response(current_req_id, conn, result={"status": "chunk", "text": modified_text})
+                    elif chunk.text:
+                        self.send_response(current_req_id, conn, result={"status": "chunk", "text": chunk.text})
+            except Exception as e:
+                logger.error(f"Error in ChatSession for req_id {current_req_id}: {e}", exc_info=True)
+                self.send_response(current_req_id, conn, result={
+                    "status": "error",
+                    "error": str(e)
+                })
+                if self.session:
+                    try:
+                        self.chat_history = self.session.get_history()
+                    except Exception:
+                        pass
+                self.session = None
+                return False
 
             if pending_tool_calls:
                 responses = []
@@ -404,7 +423,7 @@ class ChatSession(CommSession):
                         logger.info(f"Terminating ChatSession for req_id: {self.req_id}")
                         self.running = False
                         self.send_response(current_req_id, conn, result={"status": "terminated"})
-                        return
+                        return False
 
                     is_approved = False
                     if isinstance(next_params, dict):
@@ -483,7 +502,16 @@ class ChatSession(CommSession):
                             response={'result': result_text}
                         ))
 
-                process_prompt_stream(responses, next_req_id)
+                return process_prompt_stream(responses, next_req_id)
 
-        process_prompt_stream(prompt, req_id)
+            return True
+
+        if not process_prompt_stream(prompt, req_id):
+            return
+        try:
+            self.chat_history = self.session.get_history()
+        except Exception:
+            pass
+        if not self.running:
+            return
         self.send_response(req_id, conn, result={"status": "done"})
