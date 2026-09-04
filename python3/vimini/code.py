@@ -516,7 +516,7 @@ def apply_code(job_id=None):
         if is_chat_patch:
             diff_buffer.vars["vimini_patch_handled"] = 1
             from vimini.chat import send_agent_approval
-            send_agent_approval(False, chat_job_id, error=f"Patch failed to apply: {err_msg}\nPlease verify that the patch is properly formatted and retry.")
+            send_agent_approval(False, chat_job_id, error=f"Patch failed to apply: {err_msg}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
             util.display_message("Patch failed to apply. Reported error to agent to retry.", history=True)
             if diff_buffer.number in _BUFFER_DATA_STORE:
                 del _BUFFER_DATA_STORE[diff_buffer.number]
@@ -529,7 +529,7 @@ def apply_code(job_id=None):
         if is_chat_patch:
             diff_buffer.vars["vimini_patch_handled"] = 1
             from vimini.chat import send_agent_approval
-            send_agent_approval(False, chat_job_id, error="Patch failed to apply: Diff is empty.\nPlease verify that the patch is properly formatted and retry.")
+            send_agent_approval(False, chat_job_id, error="Patch failed to apply: Diff is empty.\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
             util.display_message("Patch failed to apply (empty diff). Reported error to agent to retry.", history=True)
         else:
             util.display_message("Diff is empty. Nothing to apply.", history=True)
@@ -560,7 +560,7 @@ def apply_code(job_id=None):
             try:
                 diff_buffer.vars["vimini_patch_handled"] = 1
                 from vimini.chat import send_agent_approval
-                send_agent_approval(False, chat_job_id, error=f"Patch failed to apply:\n{patch_err}\nPlease verify that the patch is properly formatted and retry.")
+                send_agent_approval(False, chat_job_id, error=f"Patch failed to apply:\n{patch_err}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
                 util.display_message("Patch failed to apply. Reported error to agent to retry.", history=True)
             except Exception as e:
                 util.log_info(f"Error sending agent failure from apply_code: {e}")

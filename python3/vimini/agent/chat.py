@@ -16,7 +16,8 @@ from vimini.common.util import (
     validate_tool_call,
     list_directory,
     parse_tool_command_config,
-    read_file
+    read_file,
+    generate_diff_for_file
 )
 from vimini.agent.comms import CommSession
 from vimini.common.genai import get_client, load_api_key, create_generation_config
@@ -165,19 +166,27 @@ def get_agent_tools(project_root=None):
             function_declarations=[
                 types.FunctionDeclaration(
                     name='apply_patch',
-                    description='Applies a unified diff patch to modify files. '
-                        'Ensure the patch paths are relative to the project root '
-                        'directory. Assume patch -p1 will be used. '
-                        'Include sufficient unmodified context lines for the patch to apply cleanly.',
+                    description='Applies file modifications or creates new files. '
+                        'You can provide the entire file contents using file_path and file_content '
+                        '(strongly preferred, as a clean unified diff is generated locally to show the user), '
+                        'or provide a unified diff patch via diff_content. '
+                        'Ensure file paths are relative to the project root directory.',
                     parameters=types.Schema(
                         type=types.Type.OBJECT,
                         properties={
+                            'file_path': types.Schema(
+                                type=types.Type.STRING,
+                                description='The path to the file to modify or create, relative to the project root.'
+                            ),
+                            'file_content': types.Schema(
+                                type=types.Type.STRING,
+                                description='The complete, entire content of the file. A unified diff will be generated locally against the existing file.'
+                            ),
                             'diff_content': types.Schema(
                                 type=types.Type.STRING,
-                                description='The unified diff patch to apply.'
+                                description='The unified diff patch to apply (optional if file_path and file_content are provided).'
                             )
-                        },
-                        required=['diff_content']
+                        }
                     )
                 ),
                 types.FunctionDeclaration(
@@ -445,8 +454,8 @@ class ChatSession(CommSession):
                     "Follow these guidelines for optimal performance ONLY when "
                     "acting as a coding agent:\n"
                     "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory` and `read_file` tools to understand the repository structure and exact file contents. Never assume or guess code.\n"
-                    "2. **Use the Patch Tool Correctly:** To modify files, use the `apply_patch` tool. Provide a valid unified diff. Use file paths relative to the project root. Ensure your diff includes sufficient unmodified context lines for reliable application.\n"
-                    "3. **Patch Reliability:** `apply_patch` should ideally be the final action in your response. If a patch fails due to a formatting or context mismatch, do not blindly retry the exact same patch. First, re-read the file to obtain the up-to-date content, then formulate a corrected diff.\n"
+                    "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` (strongly preferred, as a unified diff will be generated locally to show the user) or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
+                    "3. **Patch Reliability:** `apply_patch` should ideally be the final action in your response. If a patch fails due to a formatting or context mismatch, do not blindly retry the exact same patch. Re-read the file to obtain up-to-date content and send the entire file contents using `file_path` and `file_content`.\n"
                     f"{build_test_guideline}\n"
                     "5. **Limit Retries:** Avoid multiple calls to `apply_patch` for the same file in a single response. If an apply_patch command is refused, do not retry and instead prompt the user for more instructions.\n"
                     "6. **Be Concise:** Provide brief, clear explanations. Avoid unnecessary conversational filler."
@@ -514,7 +523,62 @@ class ChatSession(CommSession):
                     temp_file_path = None
                     logger.info(f"Chat[{req_id}]: tool use requested: {tool_call.name}")
                     if tool_call.name == 'apply_patch':
+                        files_to_diff = []
+                        if "files" in args_dict and isinstance(args_dict["files"], list):
+                            for f_item in args_dict["files"]:
+                                if isinstance(f_item, dict):
+                                    f_path = f_item.get("file_path") or f_item.get("filepath")
+                                    f_content = f_item.get("file_content") if "file_content" in f_item else f_item.get("content")
+                                    if f_path is not None and f_content is not None:
+                                        files_to_diff.append((f_path, f_content))
+
+                        file_path = args_dict.get('file_path') or args_dict.get('filepath')
+                        file_content = args_dict.get('file_content') if 'file_content' in args_dict else args_dict.get('content')
                         diff_content = args_dict.get('diff_content', '')
+
+                        if not files_to_diff and file_path and file_content is not None:
+                            files_to_diff.append((file_path, file_content))
+
+                        # If full content was mistakenly provided in diff_content along with file_path
+                        if not files_to_diff and file_path and diff_content:
+                            stripped_diff = diff_content.lstrip()
+                            if not (stripped_diff.startswith("diff --git") or stripped_diff.startswith("--- ") or stripped_diff.startswith("@@ ")) and "\n@@ " not in diff_content:
+                                files_to_diff.append((file_path, diff_content))
+                                diff_content = ""
+
+                        if files_to_diff:
+                            diff_parts = []
+                            diff_errors = []
+                            for f_path, f_content in files_to_diff:
+                                f_diff, err = generate_diff_for_file(f_path, f_content, self.project_root)
+                                if err:
+                                    diff_errors.append(err)
+                                elif f_diff:
+                                    diff_parts.append(f_diff)
+
+                            if diff_errors:
+                                responses.append(types.Part.from_function_response(
+                                    name=tool_call.name,
+                                    response={'result': f"Patch generation failed:\n" + "\n".join(diff_errors)}
+                                ))
+                                continue
+
+                            if not diff_parts:
+                                responses.append(types.Part.from_function_response(
+                                    name=tool_call.name,
+                                    response={'result': "The provided file content is identical to the existing file; no modifications were detected."}
+                                ))
+                                continue
+
+                            diff_content = "".join(diff_parts)
+
+                        if not diff_content:
+                            responses.append(types.Part.from_function_response(
+                                name=tool_call.name,
+                                response={'result': "Patch failed: Neither valid 'file_content' (with 'file_path') nor 'diff_content' was provided."}
+                            ))
+                            continue
+
                         with tempfile.NamedTemporaryFile(mode='w', suffix='.diff', delete=False, encoding='utf-8') as f:
                             f.write(diff_content)
                             temp_file_path = f.name
@@ -532,10 +596,13 @@ class ChatSession(CommSession):
                             ))
                             continue
 
-                        req_msg = f"\n[Agent requested tool execution: apply_patch. Patch saved to temp file: {temp_file_path}]\n"
+                        target_desc = ", ".join(f[0] for f in files_to_diff) if files_to_diff else (file_path or "")
+                        desc_str = f" for {target_desc}" if target_desc else ""
+                        req_msg = f"\n[Agent requested tool execution: apply_patch{desc_str}. Patch saved to temp file: {temp_file_path}]\n"
                         self.send_response(current_req_id, conn, result={
                             "status": "tool_use_requested",
                             "tool": tool_call.name,
+                            "file_path": target_desc,
                             "temp_file": temp_file_path,
                             "text": req_msg
                         })
@@ -653,8 +720,8 @@ class ChatSession(CommSession):
 
                         error_msg = next_params.get("error") if isinstance(next_params, dict) else None
                         if error_msg:
-                            if "verify that the patch is properly formatted and retry" not in error_msg.lower():
-                                patch_result = f"Patch failed to apply:\n{error_msg}\nPlease verify that the patch is properly formatted and retry."
+                            if "retry" not in error_msg.lower():
+                                patch_result = f"Patch failed to apply:\n{error_msg}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry."
                             else:
                                 patch_result = error_msg
                         elif is_approved:

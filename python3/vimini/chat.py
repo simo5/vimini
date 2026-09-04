@@ -276,7 +276,7 @@ def _on_patch_buffer_closed(req_id):
 def _open_patch_buffer(temp_file, req_id):
     if not temp_file or not os.path.exists(temp_file):
         util.display_message("Error: Patch temp file does not exist.", error=True)
-        send_agent_approval(False, req_id, error="Patch temp file does not exist. Please verify that the patch is properly formatted and retry.")
+        send_agent_approval(False, req_id, error="Patch temp file does not exist. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
         return
 
     diff_content = ""
@@ -286,12 +286,12 @@ def _open_patch_buffer(temp_file, req_id):
     except Exception as e:
         util.log_info(f"Error reading patch temp file: {e}")
         util.display_message(f"Error reading patch temp file: {e}", error=True)
-        send_agent_approval(False, req_id, error=f"Error reading patch temp file: {e}. Please verify that the patch is properly formatted and retry.")
+        send_agent_approval(False, req_id, error=f"Error reading patch temp file: {e}. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
         return
 
     if not diff_content.strip():
         util.display_message("Error: Patch content is empty.", error=True)
-        send_agent_approval(False, req_id, error="Patch content is empty. Please verify that the patch is properly formatted and retry.")
+        send_agent_approval(False, req_id, error="Patch content is empty. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
         return
 
     try:
@@ -470,7 +470,9 @@ def handle_channel_response(req_id, result):
         temp_file = result.get("temp_file")
 
         if tool == "apply_patch":
-            req_line = f"\nAgent Requested: apply_patch({temp_file})"
+            file_path = result.get("file_path")
+            target_str = f" for {file_path}" if file_path else f"({temp_file})"
+            req_line = f"\nAgent Requested: apply_patch{target_str}"
         elif tool in ("build_code", "test_code"):
             cmd = result.get("command")
             cmd_str = f": {cmd}" if cmd else ""

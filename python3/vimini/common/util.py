@@ -5,6 +5,7 @@ import json
 import subprocess
 import re
 import shlex
+import difflib
 
 PROJECTS_DIR = os.path.expanduser("~/.var/vimini/projects")
 CURRENT_PROJECT_DATA_VERSION = "0.1"
@@ -729,3 +730,71 @@ def read_file(filepath, project_root=None):
             return f.read()
     except Exception as e:
         return f"Error reading file: {e}"
+
+def generate_diff_for_file(file_path, file_content, project_root=None):
+    """
+    Generates a unified diff comparing the existing file on disk with file_content.
+    Returns (diff_text, error_message).
+    - If there is an error, diff_text is None and error_message is a string.
+    - If there are no changes, diff_text is "" and error_message is None.
+    - If there are changes, diff_text is a unified diff string and error_message is None.
+    """
+    if not file_path:
+        return None, "Missing file path."
+
+    if not project_root:
+        project_root = get_project_root()
+    else:
+        project_root = os.path.realpath(project_root)
+
+    if os.path.isabs(file_path):
+        target_path = os.path.realpath(file_path)
+    else:
+        target_path = os.path.realpath(os.path.join(project_root, file_path))
+
+    try:
+        if os.path.commonpath([project_root, target_path]) != project_root:
+            return None, f"Security error: Cannot modify files outside project directory: {file_path}"
+    except ValueError:
+        return None, f"Security error: Path resolution failed for {file_path}."
+
+    if os.path.exists(target_path) and os.path.isdir(target_path):
+        return None, f"Target path '{file_path}' is a directory, not a regular file."
+
+    relative_path = os.path.relpath(target_path, project_root).replace(os.sep, '/')
+    file_exists = os.path.exists(target_path)
+
+    original_content = ""
+    if file_exists:
+        try:
+            with open(target_path, "r", encoding="utf-8", errors="replace") as f:
+                original_content = f.read()
+        except Exception as e:
+            return None, f"Error reading existing file '{file_path}': {e}"
+
+    if file_content is None:
+        file_content = ""
+
+    orig_lines = original_content.splitlines()
+    new_lines = file_content.splitlines()
+
+    if file_exists and orig_lines == new_lines:
+        return "", None
+
+    from_path = f"a/{relative_path}" if file_exists else "/dev/null"
+    to_path = f"b/{relative_path}"
+
+    diff_lines = list(difflib.unified_diff(
+        orig_lines,
+        new_lines,
+        fromfile=from_path,
+        tofile=to_path,
+        lineterm=""
+    ))
+
+    if not diff_lines:
+        return "", None
+
+    diff_header = f"diff --git a/{relative_path} b/{relative_path}"
+    diff_text = "\n".join([diff_header] + diff_lines) + "\n"
+    return diff_text, None
