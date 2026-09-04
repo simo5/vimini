@@ -12,7 +12,10 @@ from vimini.common.util import (
     get_project_name,
     get_project_config,
     get_project_data_file_path,
+    get_project_tool_config,
+    validate_tool_call,
     list_directory,
+    parse_tool_command_config,
     read_file
 )
 from vimini.agent.comms import CommSession
@@ -20,70 +23,205 @@ from vimini.common.genai import get_client, load_api_key, create_generation_conf
 
 logger = logging.getLogger('vimini_agent')
 
-agent_tools = [
-    types.Tool(
-        function_declarations=[
-            types.FunctionDeclaration(
-                name='apply_patch',
-                description='Applies a unified diff patch to modify files. '
-                    'Ensure the patch paths are relative to the project root '
-                    'directory. Assume patch -p1 will be used. '
-                    'Include sufficient unmodified context lines for the patch to apply cleanly.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        'diff_content': types.Schema(
+def generate_tool_declaration_schema(tool_label, tool_config):
+    """
+    Generates (description, parameters_schema) for build_code or test_code
+    based on the parsed tool_config.
+    """
+    tool_action = "Compiles or builds the code in the project" if tool_label == "build" else "Runs the project test suite"
+
+    if not tool_config:
+        return (
+            f"{tool_action}. (No {tool_label} command is currently configured in project options).",
+            types.Schema(type=types.Type.OBJECT)
+        )
+
+    if tool_config["type"] == "simple":
+        cmd = tool_config["command"]
+        desc = (
+            f"{tool_action}.\n"
+            f"Configured command: '{cmd}'.\n"
+            f"This command accepts no options or arguments. Call this tool with an empty object {{}}."
+        )
+        return (
+            desc,
+            types.Schema(type=types.Type.OBJECT, properties={})
+        )
+
+    if tool_config["type"] == "alternatives":
+        alts = tool_config.get("alternatives", [])
+        alt_lines = []
+        cmd_enum = []
+        for alt in alts:
+            cmd = alt["command"]
+            cmd_enum.append(cmd)
+            alt_lines.append(f"- '{cmd}': {alt.get('description', f'Execute {cmd}')}")
+
+        desc = (
+            f"{tool_action}.\n"
+            f"Select one of the following alternative commands to execute. "
+            f"These alternative commands are all-or-nothing and do not accept any additional flags or arguments.\n"
+            f"Available commands:\n" + "\n".join(alt_lines)
+        )
+        params = types.Schema(
+            type=types.Type.OBJECT,
+            properties={
+                "command": types.Schema(
+                    type=types.Type.STRING,
+                    enum=cmd_enum,
+                    description="The exact alternative command to run. Must be one of the allowed choices."
+                )
+            },
+            required=["command"]
+        )
+        return desc, params
+
+    if tool_config["type"] == "command_with_options":
+        base_cmd = tool_config.get("command", "")
+        options = tool_config.get("options", [])
+        properties = {}
+        required = []
+        opt_lines = []
+
+        for opt in options:
+            name = opt["name"]
+            opt_type = opt["type"]
+            opt_desc = opt.get("description", "")
+            choices = opt.get("choices")
+
+            if opt_type == "option":
+                flag = opt["flag"]
+                has_value = opt["has_value"]
+                if not has_value:
+                    full_desc = f"Boolean flag '{flag}' (no value). Set to true to include this flag. {opt_desc}".strip()
+                    properties[name] = types.Schema(
+                        type=types.Type.BOOLEAN,
+                        description=full_desc
+                    )
+                    opt_lines.append(f"- {name} (flag '{flag}', boolean): {opt_desc}")
+                else:
+                    if choices:
+                        full_desc = f"Flag '{flag} <choice>'. Allowed values: {choices}. {opt_desc}".strip()
+                        properties[name] = types.Schema(
                             type=types.Type.STRING,
-                            description='The unified diff patch to apply.'
+                            enum=choices,
+                            description=full_desc
                         )
-                    },
-                    required=['diff_content']
-                )
-            ),
-            types.FunctionDeclaration(
-                name='read_file',
-                description='Reads the content of a file. Only files within the current working directory or its subdirectories can be read.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        'filepath': types.Schema(
+                        opt_lines.append(f"- {name} (flag '{flag}', choices: {choices}): {opt_desc}")
+                    else:
+                        full_desc = f"Flag '{flag} <value>'. Free-form string argument. {opt_desc}".strip()
+                        properties[name] = types.Schema(
                             type=types.Type.STRING,
-                            description='Path to the file to read.'
+                            description=full_desc
                         )
-                    },
-                    required=['filepath']
+                        opt_lines.append(f"- {name} (flag '{flag}', string value): {opt_desc}")
+            else:
+                # Argument
+                if choices:
+                    full_desc = f"Positional argument (single string). Allowed values: {choices}. {opt_desc}".strip()
+                    properties[name] = types.Schema(
+                        type=types.Type.STRING,
+                        enum=choices,
+                        description=full_desc
+                    )
+                    opt_lines.append(f"- {name} (argument, choices: {choices}): {opt_desc}")
+                else:
+                    full_desc = f"Positional argument (single string). {opt_desc}".strip()
+                    properties[name] = types.Schema(
+                        type=types.Type.STRING,
+                        description=full_desc
+                    )
+                    opt_lines.append(f"- {name} (argument, string): {opt_desc}")
+
+            if opt.get("required"):
+                required.append(name)
+
+        summary_text = "\n".join(opt_lines) if opt_lines else "(No options configured)"
+        desc = (
+            f"{tool_action}.\n"
+            f"Base command: '{base_cmd}'.\n"
+            f"Available options and arguments:\n{summary_text}\n"
+            f"Usage rules: You may pass any of the available options or arguments defined above within their valid schema. "
+            f"Boolean flags should be true or false. Options with values and positional arguments must each be a single string argument."
+        )
+        params = types.Schema(
+            type=types.Type.OBJECT,
+            properties=properties,
+            required=required if required else None
+        )
+        return desc, params
+
+    return (f"{tool_action}.", types.Schema(type=types.Type.OBJECT))
+
+def get_agent_tools(project_root=None):
+    build_config = get_project_tool_config("build", start_dir=project_root)
+    test_config = get_project_tool_config("test", start_dir=project_root)
+
+    build_desc, build_schema = generate_tool_declaration_schema("build", build_config)
+    test_desc, test_schema = generate_tool_declaration_schema("test", test_config)
+
+    return [
+        types.Tool(
+            function_declarations=[
+                types.FunctionDeclaration(
+                    name='apply_patch',
+                    description='Applies a unified diff patch to modify files. '
+                        'Ensure the patch paths are relative to the project root '
+                        'directory. Assume patch -p1 will be used. '
+                        'Include sufficient unmodified context lines for the patch to apply cleanly.',
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            'diff_content': types.Schema(
+                                type=types.Type.STRING,
+                                description='The unified diff patch to apply.'
+                            )
+                        },
+                        required=['diff_content']
+                    )
+                ),
+                types.FunctionDeclaration(
+                    name='read_file',
+                    description='Reads the content of a file. Only files within the current working directory or its subdirectories can be read.',
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            'filepath': types.Schema(
+                                type=types.Type.STRING,
+                                description='Path to the file to read.'
+                            )
+                        },
+                        required=['filepath']
+                    )
+                ),
+                types.FunctionDeclaration(
+                    name='list_directory',
+                    description='Reads the list of files and directories in a given path. Cannot list above the current working directory.',
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            'directory_path': types.Schema(
+                                type=types.Type.STRING,
+                                description='The relative path to the directory to list. Defaults to "." for the current directory.'
+                            )
+                        }
+                    )
+                ),
+                types.FunctionDeclaration(
+                    name='build_code',
+                    description=build_desc,
+                    parameters=build_schema
+                ),
+                types.FunctionDeclaration(
+                    name='test_code',
+                    description=test_desc,
+                    parameters=test_schema
                 )
-            ),
-            types.FunctionDeclaration(
-                name='list_directory',
-                description='Reads the list of files and directories in a given path. Cannot list above the current working directory.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        'directory_path': types.Schema(
-                            type=types.Type.STRING,
-                            description='The relative path to the directory to list. Defaults to "." for the current directory.'
-                        )
-                    }
-                )
-            ),
-            types.FunctionDeclaration(
-                name='build_code',
-                description='Compiles or builds the code in the project.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT
-                )
-            ),
-            types.FunctionDeclaration(
-                name='test_code',
-                description='Runs the project test suite.',
-                parameters=types.Schema(
-                    type=types.Type.OBJECT
-                )
-            )
-        ]
-    )
-]
+            ]
+        )
+    ]
+
+agent_tools = get_agent_tools()
 
 
 def validate_patch_is_safe(temp_file_path, project_root=None):
@@ -133,10 +271,9 @@ class ChatSession(CommSession):
         self.project_root = None
         self.chat_history = None
 
-    def execute_project_tool(self, tool, current_req_id, conn):
+    def execute_project_tool(self, tool, cmd, current_req_id, conn):
         tool_label = "build" if tool == "build_code" else "test"
         project_root = self.project_root or get_project_root()
-        cmd = get_project_config(f"{tool_label}-command", start_dir=project_root)
 
         if not cmd:
             project_name = get_project_name(project_root)
@@ -240,25 +377,61 @@ class ChatSession(CommSession):
         if not self.session:
             self.client = get_client(config=agent_config)
             compilation_needed = get_project_config("compilation-needed", start_dir=self.project_root, default=False)
-            if compilation_needed:
+            build_config = get_project_tool_config("build", start_dir=self.project_root)
+            test_config = get_project_tool_config("test", start_dir=self.project_root)
+
+            tools_info = []
+            if build_config:
+                if build_config["type"] == "alternatives":
+                    alts_str = ", ".join(repr(a["command"]) for a in build_config.get("alternatives", []))
+                    tools_info.append(f"- `build_code`: Alternative build commands available: {alts_str}. Select one via `command` parameter (all-or-nothing, no extra options).")
+                elif build_config["type"] == "command_with_options":
+                    opts_str = ", ".join(f"{opt['name']} ({opt.get('flag', opt['name'])})" for opt in build_config.get("options", []))
+                    tools_info.append(f"- `build_code`: Base command: '{build_config['command']}'. Available options/arguments: {opts_str or 'none'}.")
+                else:
+                    tools_info.append(f"- `build_code`: Simple command '{build_config['command']}'. Accepts no options.")
+            elif not compilation_needed:
+                tools_info.append("- `build_code`: Not configured and compilation is not needed.")
+
+            if test_config:
+                if test_config["type"] == "alternatives":
+                    alts_str = ", ".join(repr(a["command"]) for a in test_config.get("alternatives", []))
+                    tools_info.append(f"- `test_code`: Alternative test commands available: {alts_str}. Select one via `command` parameter (all-or-nothing, no extra options).")
+                elif test_config["type"] == "command_with_options":
+                    opts_str = ", ".join(f"{opt['name']} ({opt.get('flag', opt['name'])})" for opt in test_config.get("options", []))
+                    tools_info.append(f"- `test_code`: Base command: '{test_config['command']}'. Available options/arguments: {opts_str or 'none'}.")
+                else:
+                    tools_info.append(f"- `test_code`: Simple command '{test_config['command']}'. Accepts no options.")
+            else:
+                tools_info.append("- `test_code`: No test command configured.")
+
+            tools_summary = "\n".join(tools_info)
+
+            if compilation_needed or build_config:
                 build_test_guideline = (
                     "4. **Build and Test Tools:** Test and build tools may be expensive "
                     "and should be invoked only if the user instructions include a "
                     "request to build or test changes. You can use `build_code` to "
                     "compile/build the project and `test_code` to execute the project "
-                    "test suite to verify code changes or diagnose errors."
+                    f"test suite to verify code changes or diagnose errors.\n"
+                    f"Configured tools:\n{tools_summary}\n"
+                    "When calling `build_code` or `test_code`, you MUST strictly adhere to the defined schema and allowed options. Unrecognized parameters or invalid values will cause the command to be rejected. "
+                    "Do not attempt to work around command execution control by trying to add command execution in tests that is not actually testing the code."
                 )
             else:
                 build_test_guideline = (
                     "4. **Build and Test Tools:** Test and build tools may be expensive "
                     "and should be invoked only if the user instructions include a "
                     "request to build or test changes. This project does not require "
-                    "compilation and therefore the `build_code` tool should not be executed. "
-                    "You can use `test_code` to execute the project test suite to verify "
-                    "code changes or diagnose errors."
+                    f"compilation and therefore the `build_code` tool should not be executed. "
+                    f"You can use `test_code` to execute the project test suite to verify code changes or diagnose errors.\n"
+                    f"Configured tools:\n{tools_summary}\n"
+                    "When calling `test_code`, you MUST strictly adhere to the defined schema and allowed options. Unrecognized parameters or invalid values will cause the command to be rejected. "
+                    "Do not attempt to work around command execution control by trying to add command execution in tests that is not actually testing the code."
                 )
+            current_tools = get_agent_tools(self.project_root)
             agent_config_obj = create_generation_config(
-                tools=agent_tools,
+                tools=current_tools,
                 temperature=temperature,
                 verbose=verbose,
                 system_instruction=(
@@ -368,8 +541,8 @@ class ChatSession(CommSession):
                         })
                     elif tool_call.name in ('build_code', 'test_code'):
                         tool_label = "build" if tool_call.name == "build_code" else "test"
-                        cmd = get_project_config(f"{tool_label}-command", start_dir=self.project_root)
-                        if not cmd:
+                        tool_config = get_project_tool_config(tool_label, start_dir=self.project_root)
+                        if not tool_config:
                             project_name = get_project_name(self.project_root)
                             project_file_path = get_project_data_file_path(project_name, self.project_root) or "~/.var/vimini/projects/<project_name>"
                             config_key = f"{tool_label}-command"
@@ -387,12 +560,27 @@ class ChatSession(CommSession):
                                 response={'result': f"The tool '{tool_call.name}' is not available for this project because no {tool_label} command is configured in project options."}
                             ))
                             continue
-                        cmd_info = f": {cmd}" if cmd else ""
+
+                        is_valid, res_or_err = validate_tool_call(tool_label, args_dict, tool_config)
+                        if not is_valid:
+                            logger.warning(f"Tool {tool_call.name} rejected schema check: {res_or_err}")
+                            self.send_response(current_req_id, conn, result={
+                                "status": "chunk",
+                                "text": f"\n[Agent {tool_label} command rejected due to schema error:\n{res_or_err}]\n"
+                            })
+                            responses.append(types.Part.from_function_response(
+                                name=tool_call.name,
+                                response={'result': f"Command rejected: {res_or_err}"}
+                            ))
+                            continue
+
+                        composed_cmd = res_or_err
+                        cmd_info = f": {composed_cmd}"
                         req_msg = f"\n[Agent requested tool execution: {tool_call.name}{cmd_info}]\n"
                         self.send_response(current_req_id, conn, result={
                             "status": "tool_use_requested",
                             "tool": tool_call.name,
-                            "command": cmd,
+                            "command": composed_cmd,
                             "args": args_dict,
                             "text": req_msg
                         })
@@ -481,7 +669,7 @@ class ChatSession(CommSession):
                     elif tool_call.name in ('build_code', 'test_code'):
                         tool_label = "build" if tool_call.name == "build_code" else "test"
                         if is_approved:
-                            result_text = self.execute_project_tool(tool_call.name, current_req_id, conn)
+                            result_text = self.execute_project_tool(tool_call.name, composed_cmd, current_req_id, conn)
                         else:
                             self.send_response(current_req_id, conn, result={
                                 "status": "chunk",

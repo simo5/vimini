@@ -5,6 +5,7 @@ import logging
 from . import util
 from vimini.common.util import (
     load_project_data,
+    create_default_project_data,
     save_project_data,
     get_project_data_file_path
 )
@@ -15,7 +16,10 @@ from vimini.common.context import upload_context_files as _common_upload_context
 def save_project_context_files(files):
     try:
         project_root = util.get_git_repo_root() or os.getcwd()
-        data = load_project_data(start_dir=project_root)
+        try:
+            data = load_project_data(start_dir=project_root)
+        except Exception:
+            data = create_default_project_data()
         data["files"] = files
         if save_project_data(data, start_dir=project_root):
             file_path = get_project_data_file_path(start_dir=project_root)
@@ -27,7 +31,14 @@ def restore_context_files():
     try:
         project_root = util.get_git_repo_root() or os.getcwd()
         file_path = get_project_data_file_path(start_dir=project_root)
-        data = load_project_data(start_dir=project_root)
+        if not file_path or not os.path.exists(file_path):
+            return
+        from vimini.config import load_project_config_or_prompt
+        try:
+            data = load_project_config_or_prompt(project_root=project_root)
+        except Exception:
+            return
+
         restored_files = data.get("files", [])
         if isinstance(restored_files, list) and restored_files:
             vim.command(f"let g:context_files = {json.dumps(restored_files)}")

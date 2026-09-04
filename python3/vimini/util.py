@@ -84,15 +84,16 @@ def get_model_name():
 
     return _MODEL_NAME
 
-def new_split():
-    """Creates a new split using the user's preferred method."""
-    try:
-        split_method = vim.eval("get(g:, 'vimini_split_method', 'vertical')")
-    except (vim.error, AttributeError):
-        split_method = 'vertical' # Fallback for non-vim environments
+def new_split(split_method=None):
+    """Creates a new split using the user's preferred method or the specified split_method."""
+    if split_method is None:
+        try:
+            split_method = vim.eval("get(g:, 'vimini_split_method', 'vertical')")
+        except (vim.error, AttributeError):
+            split_method = 'vertical' # Fallback for non-vim environments
 
-    if split_method == 'horizontal':
-        vim.command('new')
+    if str(split_method).lower() in ('horizontal', 'below', 'belowright'):
+        vim.command('belowright new')
     else:
         vim.command('vnew')
 
