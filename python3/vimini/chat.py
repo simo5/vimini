@@ -6,8 +6,8 @@ from vimini import util, context
 from vimini.common.util import get_project_config
 from vimini.code import _DIFF_SEPARATOR, _process_x_diff_chunks
 
-WAITING_MSG = "Waiting for prompt (CTRL-W q to exit)"
-WELCOME_MSG = "Welcome to Vimini! Waiting for prompt (CTRL-W q to exit)"
+WAITING_MSG = "Waiting for prompt (p to open prompt buffer)"
+WELCOME_MSG = f"Welcome to Vimini! {WAITING_MSG}"
 HINT_MSG = "Press <Esc><CR> or <C-s> to submit prompt"
 
 Q_prefix = "< "
@@ -121,12 +121,25 @@ def _open_prompt_window(req_id):
     except Exception as e:
         util.log_info(f"Error opening prompt window: {e}")
 
-def _on_chat_buf_enter(buf_num):
+def _focus_prompt_window(req_id=None):
     try:
-        buffer = _get_buffer(buf_num)
+        for w in vim.windows:
+            if w.buffer.name and os.path.basename(w.buffer.name) == "Prompt":
+                if req_id is not None:
+                    p_req = _to_str(w.buffer.vars.get("vimini_prompt_req_id", ""))
+                    if p_req and p_req != str(req_id):
+                        continue
+                vim.current.window = w
+                vim.command("startinsert!")
+                return True
+    except Exception as e:
+        util.log_info(f"Error focusing prompt window: {e}")
+    return False
+
+def _open_prompt_from_chat(buf_num=None):
+    try:
+        buffer = _get_buffer(buf_num) if buf_num is not None else vim.current.buffer
         if buffer is None:
-            return
-        if vim.current.buffer.number != buffer.number:
             return
         is_waiting = bool(buffer.vars.get("vimini_waiting", False))
         if is_waiting:
@@ -136,8 +149,15 @@ def _on_chat_buf_enter(buf_num):
             return
         if not _prompt_window_exists(req_id):
             _open_prompt_window(req_id)
+        else:
+            _focus_prompt_window(req_id)
     except Exception as e:
-        util.log_info(f"Error in _on_chat_buf_enter: {e}")
+        util.log_info(f"Error in _open_prompt_from_chat: {e}")
+
+open_prompt_from_chat = _open_prompt_from_chat
+
+def _on_chat_buf_enter(buf_num):
+    pass
 
 def submit_prompt(prompt_buf_num=None, prompt_text=None):
     try:
@@ -494,7 +514,6 @@ def handle_channel_response(req_id, result):
         if text:
             _write_to_buffer(buffer, text, append_to_last=True)
         _write_to_buffer(buffer, ["", WAITING_MSG])
-        _open_prompt_window(req_id)
 
     elif status == "terminated":
         _set_waiting(buffer, False)
@@ -510,7 +529,6 @@ def handle_channel_response(req_id, result):
                 error_lines.append(f"Error: {line}")
         error_lines.extend(["Please prompt again to retry later.", "", WAITING_MSG])
         _write_to_buffer(buffer, error_lines)
-        _open_prompt_window(req_id)
 
 def _send_prompt(prompt, buffer):
     if prompt.startswith(":"):
@@ -520,7 +538,7 @@ def _send_prompt(prompt, buffer):
             util.display_message(f"Error: {e}", error=True)
         return
 
-    if len(buffer) > 0 and buffer[-1] in (WAITING_MSG, WELCOME_MSG):
+    if len(buffer) > 0 and (buffer[-1] in (WAITING_MSG, WELCOME_MSG) or "Waiting for prompt" in buffer[-1]):
         buffer.options["modifiable"] = 1
         try:
             if len(buffer) == 1:
@@ -571,7 +589,6 @@ def _send_prompt(prompt, buffer):
     if not util.send_channel_request(req, False):
         _set_waiting(buffer, False)
         _write_to_buffer(buffer, ["", "Error: Agent channel is not open", "Please prompt again to retry later.", "", WAITING_MSG])
-        _open_prompt_window(_to_str(buffer.vars.get("vimini_job_id", "")))
     else:
         util.display_message("Command has been sent and waiting for chat response")
 
@@ -600,7 +617,7 @@ def chat():
     vim.command("syntax match ViminiError '^\\(\\[Error:.*\\|Error:.*\\)'")
     vim.command("syntax match ViminiError '^Please prompt again to retry later.*'")
     vim.command(f"autocmd BufUnload <buffer> py3 from vimini.chat import _on_chat_buffer_closed; _on_chat_buffer_closed({buf_num})")
-    vim.command(f"autocmd BufEnter <buffer> py3 from vimini.chat import _on_chat_buf_enter; _on_chat_buf_enter({buf_num})")
+    vim.command(f"nnoremap <buffer><silent> p :py3 from vimini.chat import _open_prompt_from_chat; _open_prompt_from_chat({buf_num})<CR>")
 
     buffer.vars["vimini_job_id"] = req_id
     _set_waiting(buffer, False)
