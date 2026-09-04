@@ -8,7 +8,7 @@ from vimini.code import _DIFF_SEPARATOR, _process_x_diff_chunks
 
 WAITING_MSG = "Waiting for prompt (CTRL-W q to exit)"
 WELCOME_MSG = "Welcome to Vimini! Waiting for prompt (CTRL-W q to exit)"
-HINT_MSG = "Press Enter twice to submit prompt"
+HINT_MSG = "Press <Esc><CR> or <C-s> to submit prompt"
 
 Q_prefix = "< "
 A_prefix = "> "
@@ -69,33 +69,6 @@ def _prompt_window_exists(req_id=None):
             pass
     return False
 
-def _check_prompt_buffer(buf_num):
-    try:
-        prompt_buf = _get_buffer(buf_num)
-        if prompt_buf is None:
-            return
-
-        if bool(prompt_buf.vars.get("vimini_submitting", False)):
-            return
-
-        lines = list(prompt_buf[:])
-        if lines and lines[0].strip() == HINT_MSG:
-            lines = lines[1:]
-
-        has_text = False
-        for i, line in enumerate(lines):
-            if line.strip():
-                has_text = True
-            elif has_text:
-                if i < len(lines) - 1:
-                    prompt_text = "\n".join(lines[:i]).strip()
-                    if prompt_text:
-                        prompt_buf.vars["vimini_submitting"] = True
-                        submit_prompt(buf_num, prompt_text=prompt_text)
-                    return
-    except Exception as e:
-        util.log_info(f"Error in _check_prompt_buffer: {e}")
-
 def _open_prompt_window(req_id):
     try:
         chat_buf = _find_chat_buffer(req_id)
@@ -131,9 +104,16 @@ def _open_prompt_window(req_id):
         prompt_buf[:] = [HINT_MSG, ""]
 
         vim.command("highlight default ViminiPromptHint ctermfg=Green guifg=Green cterm=italic gui=italic")
-        vim.command("syntax match ViminiPromptHint '^Press Enter twice to submit prompt$'")
+        vim.command("syntax match ViminiPromptHint '^Press .* to submit prompt$'")
 
-        vim.command(f"autocmd TextChanged,TextChangedI,TextChangedP,InsertLeave <buffer> py3 from vimini.chat import _check_prompt_buffer; _check_prompt_buffer({prompt_buf_num})")
+        # Buffer-local mappings to submit prompt
+        vim.command(f"nnoremap <buffer><silent> <CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
+        vim.command(f"inoremap <buffer><silent> <C-s> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
+        vim.command(f"nnoremap <buffer><silent> <C-s> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
+        vim.command(f"inoremap <buffer><silent> <C-x><CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
+        vim.command(f"inoremap <buffer><silent> <C-CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
+        vim.command(f"nnoremap <buffer><silent> <C-CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
+
         vim.command("autocmd BufEnter <buffer> startinsert!")
 
         vim.current.window.cursor = (2, 0)
