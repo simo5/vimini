@@ -44,7 +44,7 @@ You can install Vimini using your preferred Vim plugin manager.
 1.  Add the following line to your `.vimrc` or `init.vim`:
     ```vim
     call plug#begin()
-    Plug 'your-github-username/vimini.vim' " Replace with the actual repo path
+    Plug 'simo5/vimini'
     call plug#end()
     ```
 2.  Run `:PlugInstall` in Vim.
@@ -53,12 +53,9 @@ You can install Vimini using your preferred Vim plugin manager.
 
 1.  Add the following to your `init.lua` (for Neovim) or `plugins.lua`:
     ```lua
-    use 'your-github-username/vimini.vim' " Replace with the actual repo path
+    use 'simo5/vimini'
     ```
 2.  Run `:PackerSync` or `:PackerInstall` in Neovim.
-
-*(Note: Replace `your-github-username/vimini.vim` with the actual
-repository path once published.)*
 
 ## Configuration
 
