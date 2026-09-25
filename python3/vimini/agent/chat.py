@@ -724,9 +724,13 @@ class ChatSession(CommSession):
                             except Exception:
                                 pass
 
+                        feedback = next_params.get("feedback") or next_params.get("reason") if isinstance(next_params, dict) else None
                         error_msg = next_params.get("error") if isinstance(next_params, dict) else None
-                        if error_msg:
-                            if "retry" not in error_msg.lower():
+
+                        if feedback:
+                            patch_result = f"Apply patch command was denied by the user with the following feedback:\n{feedback}"
+                        elif error_msg:
+                            if "retry" not in error_msg.lower() and "denied" not in error_msg.lower():
                                 patch_result = f"Patch failed to apply:\n{error_msg}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry."
                             else:
                                 patch_result = error_msg
