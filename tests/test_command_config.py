@@ -6,7 +6,9 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 # Ensure python3 root is in sys.path
-sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..', 'python3')))
+sys.path.insert(
+    0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "python3"))
+)
 
 from vimini.common.util import (
     parse_tool_command_config,
@@ -14,7 +16,7 @@ from vimini.common.util import (
     upgrade_project_data,
     load_project_data,
     save_project_data,
-    create_default_project_data
+    create_default_project_data,
 )
 from vimini.agent.chat import generate_tool_declaration_schema
 from vimini.config import (
@@ -23,8 +25,9 @@ from vimini.config import (
     load_project_config_or_prompt,
     validate_config_json_content,
     _format_command_tree,
-    _truncate_72
+    _truncate_72,
 )
+
 
 def test_parse_tool_command_config_simple():
     assert parse_tool_command_config(None) is None
@@ -45,7 +48,11 @@ def test_parse_tool_command_config_alternatives_list():
 
     raw_dicts = [
         {"command": "make test", "name": "unit", "description": "Run unit tests"},
-        {"command": "make integration", "name": "integration", "description": "Run integration tests"}
+        {
+            "command": "make integration",
+            "name": "integration",
+            "description": "Run integration tests",
+        },
     ]
     res2 = parse_tool_command_config(raw_dicts)
     assert res2["type"] == "alternatives"
@@ -58,8 +65,8 @@ def test_parse_tool_command_config_alternatives_dict():
         "description": "Select build target",
         "alternatives": [
             {"command": "ninja quick", "name": "quick"},
-            {"command": "ninja full", "name": "full"}
-        ]
+            {"command": "ninja full", "name": "full"},
+        ],
     }
     res = parse_tool_command_config(raw)
     assert res["type"] == "alternatives"
@@ -72,11 +79,32 @@ def test_parse_tool_command_config_options_and_arguments():
         "command": "pytest",
         "description": "Run test suite",
         "options": [
-            {"name": "verbose", "flag": "-v", "type": "option", "has_value": False, "description": "Verbose"},
-            {"name": "keyword", "flag": "-k", "type": "option", "has_value": True, "description": "Filter by keyword"},
-            {"name": "log_level", "flag": "--log-level", "type": "option", "choices": ["DEBUG", "INFO", "WARNING"]},
-            {"name": "test_path", "type": "argument", "description": "Test target file"}
-        ]
+            {
+                "name": "verbose",
+                "flag": "-v",
+                "type": "option",
+                "has_value": False,
+                "description": "Verbose",
+            },
+            {
+                "name": "keyword",
+                "flag": "-k",
+                "type": "option",
+                "has_value": True,
+                "description": "Filter by keyword",
+            },
+            {
+                "name": "log_level",
+                "flag": "--log-level",
+                "type": "option",
+                "choices": ["DEBUG", "INFO", "WARNING"],
+            },
+            {
+                "name": "test_path",
+                "type": "argument",
+                "description": "Test target file",
+            },
+        ],
     }
     res = parse_tool_command_config(raw)
     assert res["type"] == "command_with_options"
@@ -109,8 +137,8 @@ def test_validate_alternatives():
         "type": "alternatives",
         "alternatives": [
             {"command": "cargo build", "name": "debug"},
-            {"command": "cargo build --release", "name": "release"}
-        ]
+            {"command": "cargo build --release", "name": "release"},
+        ],
     }
     # Selecting via command
     valid, cmd = validate_tool_call("build", {"command": "cargo build"}, cfg)
@@ -133,7 +161,9 @@ def test_validate_alternatives():
     assert "No command selected" in err
 
     # Extra options rejected (all-or-nothing)
-    valid, err = validate_tool_call("build", {"command": "cargo build", "verbose": True}, cfg)
+    valid, err = validate_tool_call(
+        "build", {"command": "cargo build", "verbose": True}, cfg
+    )
     assert valid is False
     assert "all-or-nothing and do not accept additional options" in err
 
@@ -143,37 +173,49 @@ def test_validate_command_with_options_and_arguments():
         "type": "command_with_options",
         "command": "pytest",
         "options": [
-            {"name": "verbose", "flag": "-v", "type": "option", "has_value": False, "description": "Verbose"},
-            {"name": "keyword", "flag": "-k", "type": "option", "has_value": True, "description": "Keyword filter"},
-            {"name": "log_level", "flag": "--log-level", "type": "option", "has_value": True, "choices": ["DEBUG", "INFO", "WARNING"]},
-            {"name": "test_path", "type": "argument", "description": "Target test file"}
-        ]
+            {
+                "name": "verbose",
+                "flag": "-v",
+                "type": "option",
+                "has_value": False,
+                "description": "Verbose",
+            },
+            {
+                "name": "keyword",
+                "flag": "-k",
+                "type": "option",
+                "has_value": True,
+                "description": "Keyword filter",
+            },
+            {
+                "name": "log_level",
+                "flag": "--log-level",
+                "type": "option",
+                "has_value": True,
+                "choices": ["DEBUG", "INFO", "WARNING"],
+            },
+            {
+                "name": "test_path",
+                "type": "argument",
+                "description": "Target test file",
+            },
+        ],
     }
 
     # Valid call with flag and argument
-    args = {
-        "verbose": True,
-        "keyword": "test_auth",
-        "test_path": "tests/test_login.py"
-    }
+    args = {"verbose": True, "keyword": "test_auth", "test_path": "tests/test_login.py"}
     valid, cmd = validate_tool_call("test", args, cfg)
     assert valid is True
     assert cmd == "pytest -v -k test_auth tests/test_login.py"
 
     # Flag with False should be omitted
-    args2 = {
-        "verbose": False,
-        "test_path": "tests/test_login.py"
-    }
+    args2 = {"verbose": False, "test_path": "tests/test_login.py"}
     valid, cmd = validate_tool_call("test", args2, cfg)
     assert valid is True
     assert cmd == "pytest tests/test_login.py"
 
     # Value with spaces quoted properly
-    args3 = {
-        "keyword": "foo and bar",
-        "test_path": "tests/my test.py"
-    }
+    args3 = {"keyword": "foo and bar", "test_path": "tests/my test.py"}
     valid, cmd = validate_tool_call("test", args3, cfg)
     assert valid is True
     assert "-k 'foo and bar'" in cmd
@@ -206,10 +248,22 @@ def test_generate_tool_declaration_schema():
         "command": "cargo test",
         "description": "Run cargo tests",
         "options": [
-            {"name": "release", "flag": "--release", "type": "option", "has_value": False, "description": "Release mode"},
-            {"name": "package", "flag": "--package", "type": "option", "has_value": True, "description": "Package name"},
-            {"name": "filter", "type": "argument", "description": "Test name filter"}
-        ]
+            {
+                "name": "release",
+                "flag": "--release",
+                "type": "option",
+                "has_value": False,
+                "description": "Release mode",
+            },
+            {
+                "name": "package",
+                "flag": "--package",
+                "type": "option",
+                "has_value": True,
+                "description": "Package name",
+            },
+            {"name": "filter", "type": "argument", "description": "Test name filter"},
+        ],
     }
     desc, schema = generate_tool_declaration_schema("test", cfg)
     assert "cargo test" in desc
@@ -224,18 +278,16 @@ def test_generate_tool_declaration_schema():
 
 
 def test_generate_tool_declaration_schema_format():
-    cfg = {
-        "type": "simple",
-        "command": "black .",
-        "description": "Run black formatter"
-    }
+    cfg = {"type": "simple", "command": "black .", "description": "Run black formatter"}
     desc, schema = generate_tool_declaration_schema("format", cfg)
     assert "Formats the code in the project" in desc
     assert "black ." in desc
 
 
 def test_comment_stripping_and_json_parsing():
-    raw_input = CONFIG_JSON_HELP_HEADER + """
+    raw_input = (
+        CONFIG_JSON_HELP_HEADER
+        + """
     {
       # This is a comment inside JSON if someone adds one
       "command": "pytest",
@@ -245,8 +297,11 @@ def test_comment_stripping_and_json_parsing():
       ]
     }
     """
+    )
     # Strip comment lines
-    clean_lines = [line for line in raw_input.splitlines() if not line.strip().startswith('#')]
+    clean_lines = [
+        line for line in raw_input.splitlines() if not line.strip().startswith("#")
+    ]
     clean_content = "\n".join(clean_lines).strip()
 
     parsed = json.loads(clean_content)
@@ -261,8 +316,8 @@ def test_upgrade_project_data_normalizes_string_commands_to_dict():
         "configuration": {
             "build-command": "cargo build",
             "test-command": "cargo test",
-            "format-command": "black ."
-        }
+            "format-command": "black .",
+        },
     }
     upgraded = upgrade_project_data(raw)
     cfg = upgraded["configuration"]
@@ -288,16 +343,16 @@ def test_format_command_tree_and_72_char_cutoff():
                 "type": "option",
                 "choices": ["CHOICE_A", "CHOICE_B", "CHOICE_C", "CHOICE_D"],
                 "has_value": True,
-                "description": "This is an extremely long option description designed to test line truncation at 72 characters"
+                "description": "This is an extremely long option description designed to test line truncation at 72 characters",
             },
             {
                 "name": "verbose",
                 "flag": "-v",
                 "type": "option",
                 "has_value": False,
-                "description": "Verbose mode"
-            }
-        ]
+                "description": "Verbose mode",
+            },
+        ],
     }
 
     lines = _format_command_tree("test-command", cmd_dict)
@@ -325,7 +380,10 @@ def test_validate_config_json_content():
     assert "description" in err.lower()
 
     # Valid command with description and options
-    parsed, err = validate_config_json_content("test-command", '{"command": "pytest", "description": "Run tests", "options": []}')
+    parsed, err = validate_config_json_content(
+        "test-command",
+        '{"command": "pytest", "description": "Run tests", "options": []}',
+    )
     assert err is None
     assert parsed["command"] == "pytest"
     assert parsed["description"] == "Run tests"
@@ -333,8 +391,12 @@ def test_validate_config_json_content():
 
 def test_empty_command_skeleton_prefill():
     from vimini import config
+
     # Test build-command prefill
-    config._VIMINI_PENDING_PROJECT_CONFIG = {"build-command": None, "test-command": None}
+    config._VIMINI_PENDING_PROJECT_CONFIG = {
+        "build-command": None,
+        "test-command": None,
+    }
 
     default_build = "make" if "build-command" == "build-command" else "make test"
     default_build_desc = "Build the project"
@@ -365,12 +427,16 @@ def test_config_command_buffer_options_and_vars(tmp_path):
     mock_win.cursor = (1, 0)
     mock_win.buffer = mock_buf
 
-    with patch.object(vim.current, "buffer", mock_buf), \
-         patch.object(vim.current, "window", mock_win), \
-         patch("vimini.util.new_split"), \
-         patch("vimini.util.get_git_repo_root", return_value=str(tmp_path)), \
-         patch("vimini.config.load_project_config_or_prompt", return_value={"configuration": {}}):
-
+    with (
+        patch.object(vim.current, "buffer", mock_buf),
+        patch.object(vim.current, "window", mock_win),
+        patch("vimini.util.new_split"),
+        patch("vimini.util.get_git_repo_root", return_value=str(tmp_path)),
+        patch(
+            "vimini.config.load_project_config_or_prompt",
+            return_value={"configuration": {}},
+        ),
+    ):
         vim.command.reset_mock()
         config.config_command()
 
@@ -407,8 +473,7 @@ def test_refresh_config_buffer_options(tmp_path):
 
     config._VIMINI_PENDING_PROJECT_CONFIG = {}
 
-    with patch.object(vim, "buffers", [target_buf]), \
-         patch.object(vim, "windows", []):
+    with patch.object(vim, "buffers", [target_buf]), patch.object(vim, "windows", []):
         vim.command.reset_mock()
         config._refresh_config_buffer(buf_nr=99)
 
@@ -438,8 +503,13 @@ def test_finalize_json_config_uses_buffer_vars(tmp_path):
     config._VIMINI_PENDING_PROJECT_CONFIG = {}
     config._JSON_EDITOR_STATE = {}
 
-    with patch.object(vim.current, "buffer", mock_buf), \
-         patch("vimini.config._refresh_config_buffer"):
+    with (
+        patch.object(vim.current, "buffer", mock_buf),
+        patch("vimini.config._refresh_config_buffer"),
+    ):
         config.finalize_json_config(is_wipeout=True)
 
-        assert config._VIMINI_PENDING_PROJECT_CONFIG.get("test-command") == {"command": "pytest", "description": "Run tests"}
+        assert config._VIMINI_PENDING_PROJECT_CONFIG.get("test-command") == {
+            "command": "pytest",
+            "description": "Run tests",
+        }

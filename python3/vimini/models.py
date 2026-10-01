@@ -3,6 +3,7 @@ from . import util
 
 _VIMINI_MODELS = []
 
+
 def show_models_list(models):
     global _VIMINI_MODELS
     _VIMINI_MODELS = models
@@ -11,7 +12,7 @@ def show_models_list(models):
         "| Vimini Available Models",
         "|----------------------------------------------------------------------",
         "| <CR>: switch model | q: close",
-        ""
+        "",
     ]
 
     current_model = util._MODEL
@@ -33,18 +34,20 @@ def show_models_list(models):
         buffer_lines.append(f"{prefix}{display}")
 
     util.new_split()
-    vim.command('file ViminiModels')
+    vim.command("file ViminiModels")
     buf = vim.current.buffer
     buf[:] = buffer_lines
 
-    vim.command('setlocal buftype=nofile noswapfile nomodifiable')
+    vim.command("setlocal buftype=nofile noswapfile nomodifiable")
 
     vim.command("syntax match ViminiModelCurrent '^\\s*\\*\\s*\\zs.*$'")
     vim.command("syntax match ViminiModelHeader '^|.*'")
     vim.command("highlight default link ViminiModelCurrent String")
     vim.command("highlight default link ViminiModelHeader Comment")
 
-    vim.command("nnoremap <buffer> <silent> <CR> :py3 from vimini.models import select_model; select_model()<CR>")
+    vim.command(
+        "nnoremap <buffer> <silent> <CR> :py3 from vimini.models import select_model; select_model()<CR>"
+    )
     vim.command("nnoremap <buffer> <silent> q :q<CR>")
 
     try:
@@ -64,6 +67,7 @@ def show_models_list(models):
     except vim.error:
         pass
 
+
 def select_model():
     try:
         buf = vim.current.buffer
@@ -71,7 +75,7 @@ def select_model():
         line_num, col = win.cursor
         line = buf[line_num - 1]
 
-        if not line or line.startswith('|'):
+        if not line or line.startswith("|"):
             return
 
         idx = line_num - 5
@@ -88,9 +92,10 @@ def select_model():
         vim.command(f"let g:vimini_model = '{model_name}'")
 
         from vimini import main
+
         main.send_setup()
 
-        vim.command('setlocal modifiable')
+        vim.command("setlocal modifiable")
         current_model = util._MODEL
         if current_model and current_model.startswith("models/"):
             current_model = current_model[7:]
@@ -109,8 +114,8 @@ def select_model():
             prefix = " * " if name == current_model else "   "
             buffer_lines.append(f"{prefix}{display}")
         buf[:] = buffer_lines
-        vim.command('setlocal nomodifiable')
-        vim.command('redraw')
+        vim.command("setlocal nomodifiable")
+        vim.command("redraw")
 
         util.display_message(f"Switched model to {model_name}")
 

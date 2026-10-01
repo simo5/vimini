@@ -4,15 +4,19 @@ import threading
 import queue
 from google import genai
 from google.genai import types
-from vimini.common.genai import get_client as create_genai_client, load_api_key, create_generation_config
+from vimini.common.genai import (
+    get_client as create_genai_client,
+    load_api_key,
+    create_generation_config,
+)
 
 # Module-level variables to store the API key file, model name, and client instance.
 _API_KEY_FILE = None
 _MODEL = None
 _MODEL_NAME = None
-_GENAI_CLIENT = None # Global, lazily-initialized client.
-_REPO_NAME_CACHE = None # Cache for the git repository directory name.
-_REPO_ROOT_CACHE = None # Cache for the git repository root path.
+_GENAI_CLIENT = None  # Global, lazily-initialized client.
+_REPO_NAME_CACHE = None  # Cache for the git repository directory name.
+_REPO_ROOT_CACHE = None  # Cache for the git repository root path.
 _LOGGER = None
 
 _STATUS_BUFFER_NAME = "Vimini Status"
@@ -24,23 +28,30 @@ _ACTIVE_JOBS = {}
 _JOB_NAMES = {}
 _JOB_CLIENTS = {}
 
+
 def send_channel_request(req_dict, silent=False):
-    if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
+    if not vim.eval(
+        "exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"
+    ):
         if not silent:
             display_message("Error: Agent server channel is not open.", error=True)
         return False
     try:
         log_info(f"Sending channel request: {req_dict}")
         safe_json = json.dumps(req_dict)
-        vim.command(f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))")
+        vim.command(
+            f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))"
+        )
         return True
     except Exception as e:
         if not silent:
             display_message(f"Error sending channel request: {e}", error=True)
         return False
 
+
 def get_api_key():
     return load_api_key(api_key_file=_API_KEY_FILE)
+
 
 def get_client():
     """
@@ -50,17 +61,20 @@ def get_client():
     if _GENAI_CLIENT is None:
         api_key = get_api_key()
         if not api_key:
-            vim.command("echoerr '[Vimini] API key not found. Please store it in ~/.config/gemini.token'")
+            vim.command(
+                "echoerr '[Vimini] API key not found. Please store it in ~/.config/gemini.token'"
+            )
             return None
         try:
             vim.command("echo '[Vimini] Initializing API client...'")
             vim.command("redraw")
             _GENAI_CLIENT = create_genai_client(api_key=api_key)
-            vim.command("echo ''") # Clear the message
+            vim.command("echo ''")  # Clear the message
         except Exception as e:
             vim.command(f"echoerr '[Vimini] Error creating API client: {e}'")
             return None
     return _GENAI_CLIENT
+
 
 def get_model_name():
     """
@@ -84,18 +98,20 @@ def get_model_name():
 
     return _MODEL_NAME
 
+
 def new_split(split_method=None):
     """Creates a new split using the user's preferred method or the specified split_method."""
     if split_method is None:
         try:
             split_method = vim.eval("get(g:, 'vimini_split_method', 'vertical')")
         except (vim.error, AttributeError):
-            split_method = 'vertical' # Fallback for non-vim environments
+            split_method = "vertical"  # Fallback for non-vim environments
 
-    if str(split_method).lower() in ('horizontal', 'below', 'belowright'):
-        vim.command('belowright new')
+    if str(split_method).lower() in ("horizontal", "below", "belowright"):
+        vim.command("belowright new")
     else:
-        vim.command('vnew')
+        vim.command("vnew")
+
 
 def get_git_repo_root():
     """
@@ -110,15 +126,12 @@ def get_git_repo_root():
         return None
 
     # Determine the root of the git repository from the current file's directory.
-    start_dir = os.path.dirname(current_file_path) or '.'
-    rev_parse_cmd = ['git', '-C', start_dir, 'rev-parse', '--show-toplevel']
+    start_dir = os.path.dirname(current_file_path) or "."
+    rev_parse_cmd = ["git", "-C", start_dir, "rev-parse", "--show-toplevel"]
 
     try:
         repo_path_result = subprocess.run(
-            rev_parse_cmd,
-            capture_output=True,
-            text=True,
-            check=False
+            rev_parse_cmd, capture_output=True, text=True, check=False
         )
     except Exception as e:
         message = "Git command not found or failed."
@@ -131,6 +144,7 @@ def get_git_repo_root():
         return None
 
     return repo_path_result.stdout.strip()
+
 
 def get_git_repo_name():
     """
@@ -155,6 +169,7 @@ def get_git_repo_name():
 
     return _REPO_NAME_CACHE
 
+
 def get_relative_path(file_path, repo_name=None, git_root=None):
     """
     Computes a path for a file relative to its git repository root,
@@ -167,7 +182,9 @@ def get_relative_path(file_path, repo_name=None, git_root=None):
         git_root = _REPO_ROOT_CACHE or get_git_repo_root()
 
     from vimini.common.util import get_relative_path as common_get_relative_path
+
     return common_get_relative_path(file_path, repo_name=repo_name, git_root=git_root)
+
 
 def get_absolute_path_from_api_path(api_path):
     """
@@ -179,21 +196,21 @@ def get_absolute_path_from_api_path(api_path):
 
     project_root = get_git_repo_root() or os.getcwd()
 
-    if ':' not in api_path:
+    if ":" not in api_path:
         # Fallback for paths without a prefix: assume relative to project root.
         return os.path.join(project_root, api_path)
 
-    prefix, relative_path = api_path.split(':', 1)
+    prefix, relative_path = api_path.split(":", 1)
 
     # This ensures the caches are populated
     repo_name = get_git_repo_name()
-    git_root = _REPO_ROOT_CACHE # Populated by get_git_repo_name()
+    git_root = _REPO_ROOT_CACHE  # Populated by get_git_repo_name()
 
     if git_root and prefix == repo_name.upper():
         return os.path.join(git_root, relative_path)
 
-    if prefix == 'HOME':
-        home_dir = os.path.expanduser('~')
+    if prefix == "HOME":
+        home_dir = os.path.expanduser("~")
         return os.path.join(home_dir, relative_path)
 
     # If the prefix doesn't match, it might be a new file within the project.
@@ -201,12 +218,16 @@ def get_absolute_path_from_api_path(api_path):
     # handles cases where the model returns a simple relative path for a new file.
     return os.path.join(project_root, api_path)
 
+
 def log_info(message):
     """Writes a message to the logger if it's enabled."""
     if _LOGGER:
         _LOGGER.info(str(message))
 
-def display_message(message, error=False, history=False, filename=None, line_number=None):
+
+def display_message(
+    message, error=False, history=False, filename=None, line_number=None
+):
     """
     Displays a message to the user in the Vim command line.
     If an error, it also writes the message to the log file if enabled.
@@ -233,7 +254,7 @@ def display_message(message, error=False, history=False, filename=None, line_num
             filename, line_number = None, None
 
     # Escape single quotes and newlines to prevent breaking the Vim command string.
-    safe_message = str(message).replace("'", '"').replace('\n', ' ').replace('\r', '')
+    safe_message = str(message).replace("'", '"').replace("\n", " ").replace("\r", "")
 
     prefix = f"[Vimini ({get_git_repo_name()})]"
     full_message = f"{prefix} {safe_message}"
@@ -260,9 +281,19 @@ def display_message(message, error=False, history=False, filename=None, line_num
     except vim.error as e:
         # Fallback in case the vim command fails. This is unlikely but good practice.
         print(f"Vimini Fallback: {full_message} (vim.command failed: {e})")
-        log_info(f"ERROR: {log_context}vim.command failed for message: '{full_message}'. Details: {e}")
+        log_info(
+            f"ERROR: {log_context}vim.command failed for message: '{full_message}'. Details: {e}"
+        )
 
-def create_generation_kwargs(contents, temperature=None, verbose=False, response_mime_type=None, response_schema=None, **kwargs):
+
+def create_generation_kwargs(
+    contents,
+    temperature=None,
+    verbose=False,
+    response_mime_type=None,
+    response_schema=None,
+    **kwargs,
+):
     """
     Creates a dictionary of keyword arguments for the Gemini API's
     generate_content and generate_content_stream methods.
@@ -283,14 +314,11 @@ def create_generation_kwargs(contents, temperature=None, verbose=False, response
         response_mime_type=response_mime_type,
         response_schema=response_schema,
         disable_function_calling=True,
-        **kwargs
+        **kwargs,
     )
 
-    return {
-        'model': _MODEL,
-        'contents': contents,
-        'config': generation_config
-    }
+    return {"model": _MODEL, "contents": contents, "config": generation_config}
+
 
 def is_buffer_modified(buffer=None):
     """
@@ -306,7 +334,8 @@ def is_buffer_modified(buffer=None):
         buffer = vim.current.buffer
 
     # The 'modified' option is a boolean (1 or 0) in Vim's buffer-local options.
-    return bool(buffer.options['modified'])
+    return bool(buffer.options["modified"])
+
 
 def set_logging(log_file=None):
     """
@@ -318,8 +347,8 @@ def set_logging(log_file=None):
     global _LOGGER
 
     # Use a named logger to avoid interfering with other plugins or Vim's root logger.
-    logger = logging.getLogger('vimini')
-    logger.setLevel(logging.INFO) # Set level regardless of handler
+    logger = logging.getLogger("vimini")
+    logger.setLevel(logging.INFO)  # Set level regardless of handler
 
     # Clear existing handlers to prevent log duplication on re-initialization
     if logger.hasHandlers():
@@ -339,10 +368,8 @@ def set_logging(log_file=None):
                 os.makedirs(log_dir, exist_ok=True)
 
             # Create a file handler to write to the log file.
-            handler = logging.FileHandler(log_file, mode='a', encoding='utf-8')
-            formatter = logging.Formatter(
-                '%(asctime)s - %(levelname)s - %(message)s'
-            )
+            handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+            formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
             handler.setFormatter(formatter)
             logger.addHandler(handler)
         else:
@@ -362,6 +389,7 @@ def set_logging(log_file=None):
         _LOGGER = logger
         display_message(f"Failed to initialize log file '{log_file}': {e}", error=True)
 
+
 def reserve_next_job_id(job_name="Unknown", client=None):
     """
     Reserves and returns the next available job ID.
@@ -373,7 +401,10 @@ def reserve_next_job_id(job_name="Unknown", client=None):
         _JOB_CLIENTS[_JOB_COUNTER] = client
     return _JOB_COUNTER
 
-def start_async_job(client, kwargs, callbacks, job_id=None, job_name="Unknown", target_func=None):
+
+def start_async_job(
+    client, kwargs, callbacks, job_id=None, job_name="Unknown", target_func=None
+):
     """
     Starts an asynchronous job to call the Gemini API.
 
@@ -410,49 +441,52 @@ def start_async_job(client, kwargs, callbacks, job_id=None, job_name="Unknown", 
     # Note: We do NOT clear _JOB_QUEUE here, to allow concurrent jobs.
 
     thread = threading.Thread(
-        target=_job_worker,
-        args=(client, kwargs, job_id, target_func),
-        daemon=True
+        target=_job_worker, args=(client, kwargs, job_id, target_func), daemon=True
     )
     thread.start()
 
     # Start the timer in Vim to poll the queue
     vim.command("call ViminiInternalStartJobTimer()")
 
+
 def continue_async_job(job_id, prompt, callbacks):
     """
     Continues an existing async job by sending additional prompts reusing the same client.
     """
     kwargs = create_generation_kwargs(contents=prompt)
-    start_async_job(None, kwargs, callbacks, job_id=job_id, job_name=f"Continue: {prompt[:30]}...")
+    start_async_job(
+        None, kwargs, callbacks, job_id=job_id, job_name=f"Continue: {prompt[:30]}..."
+    )
+
 
 def _handle_response_stream(job_id, response_stream):
     for chunk in response_stream:
-        if hasattr(chunk, 'candidates') and not chunk.candidates:
+        if hasattr(chunk, "candidates") and not chunk.candidates:
             continue
         # Handle cases where content is blocked or empty
         try:
             # Standard GenerateContentResponse parsing
-            if hasattr(chunk, 'candidates'):
+            if hasattr(chunk, "candidates"):
                 candidate = chunk.candidates[0]
                 if not candidate.content or not candidate.content.parts:
                     continue
                 for part in candidate.content.parts:
-                    if hasattr(part, 'thought_signature') and part.thought_signature:
+                    if hasattr(part, "thought_signature") and part.thought_signature:
                         continue
 
                     if not part.text:
                         continue
 
-                    is_thought = hasattr(part, 'thought') and part.thought
-                    msg_type = 'thought' if is_thought else 'chunk'
+                    is_thought = hasattr(part, "thought") and part.thought
+                    msg_type = "thought" if is_thought else "chunk"
                     _JOB_QUEUE.put((job_id, msg_type, part.text))
-            elif hasattr(chunk, 'text'):
-                 # Fallback for simple text chunks if structure varies
-                 _JOB_QUEUE.put((job_id, 'chunk', chunk.text))
+            elif hasattr(chunk, "text"):
+                # Fallback for simple text chunks if structure varies
+                _JOB_QUEUE.put((job_id, "chunk", chunk.text))
 
         except Exception:
-            pass # Skip problematic chunks
+            pass  # Skip problematic chunks
+
 
 def _job_worker(client, kwargs, job_id, target_func=None):
     try:
@@ -461,7 +495,7 @@ def _job_worker(client, kwargs, job_id, target_func=None):
             while True:
                 (next_count, response) = target_func(count, **kwargs)
                 if next_count == 0:
-                    _JOB_QUEUE.put((job_id, 'error', response))
+                    _JOB_QUEUE.put((job_id, "error", response))
                     break
                 count = next_count
                 if response:
@@ -471,10 +505,11 @@ def _job_worker(client, kwargs, job_id, target_func=None):
             response_stream = client.models.generate_content_stream(**kwargs)
             _handle_response_stream(job_id, response_stream)
 
-        _JOB_QUEUE.put((job_id, 'finish', None))
+        _JOB_QUEUE.put((job_id, "finish", None))
 
     except Exception as e:
-        _JOB_QUEUE.put((job_id, 'error', str(e)))
+        _JOB_QUEUE.put((job_id, "error", str(e)))
+
 
 def process_queue():
     """Called by Vim timer to process updates from the thread."""
@@ -491,33 +526,33 @@ def process_queue():
             # Job might have been removed or is stale
             continue
 
-        status_message = callbacks.get('status_message', "Processing...")
+        status_message = callbacks.get("status_message", "Processing...")
 
         # Prepend Job ID
         display_status = f"[{job_id}] {status_message}"
         callback_status = None
 
-        if msg_type == 'chunk':
-            if 'on_chunk' in callbacks:
-                callback_status = callbacks['on_chunk'](data)
+        if msg_type == "chunk":
+            if "on_chunk" in callbacks:
+                callback_status = callbacks["on_chunk"](data)
 
             if callback_status and isinstance(callback_status, str):
                 status_update = (f"[{job_id}] {callback_status}", False)
             else:
                 status_update = (display_status, False)
 
-        elif msg_type == 'thought':
-            if 'on_thought' in callbacks:
-                callback_status = callbacks['on_thought'](data)
+        elif msg_type == "thought":
+            if "on_thought" in callbacks:
+                callback_status = callbacks["on_thought"](data)
 
             if callback_status and isinstance(callback_status, str):
                 status_update = (f"[{job_id}] {callback_status}", False)
             else:
                 status_update = (display_status, False)
 
-        elif msg_type == 'error':
-            if 'on_error' in callbacks:
-                callback_status = callbacks['on_error'](data)
+        elif msg_type == "error":
+            if "on_error" in callbacks:
+                callback_status = callbacks["on_error"](data)
 
             if callback_status and isinstance(callback_status, str):
                 status_update = (f"[{job_id}] {callback_status}", True)
@@ -529,11 +564,11 @@ def process_queue():
             if job_id in _JOB_NAMES:
                 del _JOB_NAMES[job_id]
 
-        elif msg_type == 'finish':
+        elif msg_type == "finish":
             status_update = (f"[{job_id}] Finished.", False)
 
-            if 'on_finish' in callbacks:
-                callback_status = callbacks['on_finish']()
+            if "on_finish" in callbacks:
+                callback_status = callbacks["on_finish"]()
 
             if callback_status and isinstance(callback_status, str):
                 status_update = (f"[{job_id}] {callback_status}", False)
@@ -549,6 +584,7 @@ def process_queue():
     # If no more active jobs, stop the timer
     if not _ACTIVE_JOBS:
         vim.command("call ViminiInternalStopJobTimer()")
+
 
 def create_thoughts_buffer(job_id):
     """
@@ -567,7 +603,7 @@ def create_thoughts_buffer(job_id):
     filename = f"[{job_id}] Vimini Thoughts"
 
     # Escape spaces for the Vim command
-    safe_filename = filename.replace(' ', '\\ ')
+    safe_filename = filename.replace(" ", "\\ ")
 
     vim.command(f"file {safe_filename}")
     vim.command("setlocal buftype=nofile")
@@ -577,20 +613,23 @@ def create_thoughts_buffer(job_id):
 
     return vim.current.buffer.number
 
+
 def append_to_buffer(buffer_number, text):
     """Helper to append text to a buffer without switching windows if possible."""
-    if buffer_number == -1: return
+    if buffer_number == -1:
+        return
 
     buf = None
     for b in vim.buffers:
         if b.number == buffer_number:
             buf = b
             break
-    if not buf: return
+    if not buf:
+        return
 
     try:
         # Split text by newlines
-        lines = text.split('\n')
+        lines = text.split("\n")
 
         # Append to the last line
         if len(buf) > 0:
@@ -609,6 +648,7 @@ def append_to_buffer(buffer_number, text):
     except Exception:
         pass
 
+
 def append_job_summary(buffer_num, job_id, prompt, context_files):
     """
     Displays a nicely formatted summary in the specified buffer.
@@ -619,13 +659,7 @@ def append_job_summary(buffer_num, job_id, prompt, context_files):
         prompt (str): The user prompt.
         context_files (list): List of context file names.
     """
-    summary = [
-        f"# Request Summary (Job {job_id})",
-        "",
-        "## User Prompt",
-        prompt,
-        ""
-    ]
+    summary = [f"# Request Summary (Job {job_id})", "", "## User Prompt", prompt, ""]
 
     if context_files:
         summary.append("## Context Files")
@@ -636,6 +670,7 @@ def append_job_summary(buffer_num, job_id, prompt, context_files):
     summary.append("")
 
     append_to_buffer(buffer_num, "\n".join(summary))
+
 
 def show_status():
     log_info("show_status()")
@@ -661,18 +696,21 @@ def show_status():
             vim.command(f"buffer {buf.number}")
     else:
         new_split()
-        safe_name = target_name.replace(' ', '\\ ')
+        safe_name = target_name.replace(" ", "\\ ")
         vim.command(f"file {safe_name}")
         vim.command("setlocal buftype=nofile")
         vim.command("setlocal bufhidden=hide")
         vim.command("setlocal noswapfile")
         vim.command("setlocal filetype=text")
         # Add autocmd to restart timer when window is re-entered
-        vim.command("autocmd BufWinEnter <buffer> call ViminiInternalStartStatusTimer()")
+        vim.command(
+            "autocmd BufWinEnter <buffer> call ViminiInternalStartStatusTimer()"
+        )
         buf = vim.current.buffer
 
     update_status_buffer()
     vim.command("call ViminiInternalStartStatusTimer()")
+
 
 def update_status_buffer():
     # Find buffer
@@ -694,17 +732,13 @@ def update_status_buffer():
         # so it updates when we switch back to the tab with status window.
         return
 
-    lines = [
-        f"{_STATUS_BUFFER_NAME}",
-        "===========================",
-        ""
-    ]
+    lines = [f"{_STATUS_BUFFER_NAME}", "===========================", ""]
 
     if not _ACTIVE_JOBS:
         lines.append("No active jobs.")
     else:
         for job_id, callbacks in _ACTIVE_JOBS.items():
-            status = callbacks.get('status_message', 'Running...')
+            status = callbacks.get("status_message", "Running...")
             job_name = _JOB_NAMES.get(job_id, "Unknown")
             lines.append(f"Job ID: {job_id}")
             lines.append(f"Name: {job_name}")

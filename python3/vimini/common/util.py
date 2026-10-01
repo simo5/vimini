@@ -15,48 +15,49 @@ PROJECT_CONFIG_SCHEMA = {
         "label": "Build Command",
         "description": "Shell command, alternative commands, or command configuration with options to compile/build the project",
         "default": None,
-        "type": "string"
+        "type": "string",
     },
     "build-permission": {
         "label": "Build Permission",
         "description": "Execution permission for build command (Allow, Deny, or Ask)",
         "default": "Ask",
         "type": "choice",
-        "choices": ["Ask", "Allow", "Deny"]
+        "choices": ["Ask", "Allow", "Deny"],
     },
     "test-command": {
         "label": "Test Command",
         "description": "Shell command, alternative commands, or command configuration with options to run the project test suite",
         "default": None,
-        "type": "string"
+        "type": "string",
     },
     "test-permission": {
         "label": "Test Permission",
         "description": "Execution permission for test command (Allow, Deny, or Ask)",
         "default": "Ask",
         "type": "choice",
-        "choices": ["Ask", "Allow", "Deny"]
+        "choices": ["Ask", "Allow", "Deny"],
     },
     "format-command": {
         "label": "Format Command",
         "description": "Shell command, alternative commands, or command configuration with options to format code according to project guidelines",
         "default": None,
-        "type": "string"
+        "type": "string",
     },
     "format-permission": {
         "label": "Format Permission",
         "description": "Execution permission for format command (Allow, Deny, or Ask)",
         "default": "Allow",
         "type": "choice",
-        "choices": ["Ask", "Allow", "Deny"]
+        "choices": ["Ask", "Allow", "Deny"],
     },
     "compilation-needed": {
         "label": "Compilation Needed",
         "description": "Whether the project requires compilation (true/false, default false)",
         "default": False,
-        "type": "boolean"
-    }
+        "type": "boolean",
+    },
 }
+
 
 def get_git_repo_root(start_dir=None):
     """
@@ -67,16 +68,17 @@ def get_git_repo_root(start_dir=None):
         start_dir = os.getcwd()
     try:
         res = subprocess.run(
-            ['git', '-C', start_dir, 'rev-parse', '--show-toplevel'],
+            ["git", "-C", start_dir, "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
-            check=False
+            check=False,
         )
         if res.returncode == 0 and res.stdout.strip():
             return os.path.realpath(res.stdout.strip())
     except Exception:
         pass
     return None
+
 
 def get_project_root(start_dir=None):
     """
@@ -88,6 +90,7 @@ def get_project_root(start_dir=None):
     if repo_root:
         return repo_root
     return os.path.realpath(start_dir)
+
 
 def get_project_name(start_dir=None):
     """
@@ -101,6 +104,7 @@ def get_project_name(start_dir=None):
     name = os.path.basename(os.path.realpath(start_dir))
     return name if name else "temp"
 
+
 def get_project_data_file_path(project_name=None, start_dir=None):
     """
     Returns the path to the project data JSON file in ~/.var/vimini/projects.
@@ -111,6 +115,7 @@ def get_project_data_file_path(project_name=None, start_dir=None):
         return None
     return os.path.join(PROJECTS_DIR, project_name)
 
+
 def create_default_project_data():
     """
     Returns a new default project data dictionary.
@@ -119,16 +124,18 @@ def create_default_project_data():
     return {
         "version": CURRENT_PROJECT_DATA_VERSION,
         "configuration": config,
-        "files": []
+        "files": [],
     }
+
 
 def _parse_version(v):
     if not isinstance(v, str):
         return (0,)
     try:
-        return tuple(int(x) for x in v.strip().split('.'))
+        return tuple(int(x) for x in v.strip().split("."))
     except Exception:
         return (0,)
+
 
 def upgrade_project_data(raw_data):
     """
@@ -144,7 +151,9 @@ def upgrade_project_data(raw_data):
     elif isinstance(raw_data, dict):
         version = raw_data.get("version", CURRENT_PROJECT_DATA_VERSION)
         if _parse_version(version) > _parse_version(CURRENT_PROJECT_DATA_VERSION):
-            raise ValueError(f"Project configuration version '{version}' is higher than supported version '{CURRENT_PROJECT_DATA_VERSION}'.")
+            raise ValueError(
+                f"Project configuration version '{version}' is higher than supported version '{CURRENT_PROJECT_DATA_VERSION}'."
+            )
 
         config = raw_data.get("configuration", {})
         if not isinstance(config, dict):
@@ -166,34 +175,38 @@ def upgrade_project_data(raw_data):
                             continue
                     except Exception:
                         pass
-                config[cmd_key] = {
-                    "command": cmd_val.strip(),
-                    "description": ""
-                }
+                config[cmd_key] = {"command": cmd_val.strip(), "description": ""}
         files = raw_data.get("files", [])
         if not isinstance(files, list):
             files = []
         return {
             "version": CURRENT_PROJECT_DATA_VERSION,
             "configuration": config,
-            "files": files
+            "files": files,
         }
-    raise ValueError(f"Invalid project configuration format: expected dict or list, got {type(raw_data).__name__}")
+    raise ValueError(
+        f"Invalid project configuration format: expected dict or list, got {type(raw_data).__name__}"
+    )
+
 
 def load_project_data(project_name=None, start_dir=None):
     file_path = get_project_data_file_path(project_name, start_dir)
     if not file_path or not os.path.exists(file_path):
         return create_default_project_data()
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             raw_data = json.load(f)
         data = upgrade_project_data(raw_data)
         # Save if format was upgraded
-        if isinstance(raw_data, list) or (isinstance(raw_data, dict) and raw_data.get("version") != CURRENT_PROJECT_DATA_VERSION):
+        if isinstance(raw_data, list) or (
+            isinstance(raw_data, dict)
+            and raw_data.get("version") != CURRENT_PROJECT_DATA_VERSION
+        ):
             save_project_data(data, project_name, start_dir)
         return data
     except Exception:
         raise
+
 
 def save_project_data(data, project_name=None, start_dir=None):
     file_path = get_project_data_file_path(project_name, start_dir)
@@ -201,11 +214,12 @@ def save_project_data(data, project_name=None, start_dir=None):
         return False
     try:
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        with open(file_path, 'w', encoding='utf-8') as f:
+        with open(file_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return True
     except Exception:
         return False
+
 
 def get_project_config(key, project_name=None, start_dir=None, default=None):
     try:
@@ -234,10 +248,12 @@ def get_project_config(key, project_name=None, start_dir=None, default=None):
         return val
     return default
 
+
 def set_project_config(key, value, project_name=None, start_dir=None):
     data = load_project_data(project_name, start_dir)
     data["configuration"][key] = value
     return save_project_data(data, project_name, start_dir)
+
 
 def parse_tool_command_config(raw_config):
     """
@@ -265,7 +281,7 @@ def parse_tool_command_config(raw_config):
         stripped = raw_config.strip()
         if not stripped:
             return None
-        if stripped.startswith(('{', '[')):
+        if stripped.startswith(("{", "[")):
             try:
                 parsed = json.loads(stripped)
                 return parse_tool_command_config(parsed)
@@ -274,7 +290,7 @@ def parse_tool_command_config(raw_config):
         return {
             "type": "simple",
             "command": stripped,
-            "description": f"Shell command: {stripped}"
+            "description": f"Shell command: {stripped}",
         }
 
     if isinstance(raw_config, list):
@@ -282,50 +298,45 @@ def parse_tool_command_config(raw_config):
         for item in raw_config:
             if isinstance(item, str):
                 cmd = item.strip()
-                alts.append({
-                    "command": cmd,
-                    "name": cmd,
-                    "description": f"Execute: {cmd}"
-                })
+                alts.append(
+                    {"command": cmd, "name": cmd, "description": f"Execute: {cmd}"}
+                )
             elif isinstance(item, dict):
                 cmd = str(item.get("command", "")).strip()
                 name = str(item.get("name", cmd)).strip()
                 desc = str(item.get("description", f"Execute: {cmd}")).strip()
-                alts.append({
-                    "command": cmd,
-                    "name": name,
-                    "description": desc
-                })
+                alts.append({"command": cmd, "name": name, "description": desc})
         return {
             "type": "alternatives",
             "description": "Select one of the configured alternative commands (all-or-nothing)",
-            "alternatives": alts
+            "alternatives": alts,
         }
 
     if isinstance(raw_config, dict):
-        if "alternatives" in raw_config and isinstance(raw_config["alternatives"], list):
+        if "alternatives" in raw_config and isinstance(
+            raw_config["alternatives"], list
+        ):
             alts = []
             for item in raw_config["alternatives"]:
                 if isinstance(item, str):
                     cmd = item.strip()
-                    alts.append({
-                        "command": cmd,
-                        "name": cmd,
-                        "description": f"Execute: {cmd}"
-                    })
+                    alts.append(
+                        {"command": cmd, "name": cmd, "description": f"Execute: {cmd}"}
+                    )
                 elif isinstance(item, dict):
                     cmd = str(item.get("command", "")).strip()
                     name = str(item.get("name", cmd)).strip()
                     desc = str(item.get("description", f"Execute: {cmd}")).strip()
-                    alts.append({
-                        "command": cmd,
-                        "name": name,
-                        "description": desc
-                    })
+                    alts.append({"command": cmd, "name": name, "description": desc})
             return {
                 "type": "alternatives",
-                "description": str(raw_config.get("description", "Select one of the configured alternative commands (all-or-nothing)")),
-                "alternatives": alts
+                "description": str(
+                    raw_config.get(
+                        "description",
+                        "Select one of the configured alternative commands (all-or-nothing)",
+                    )
+                ),
+                "alternatives": alts,
             }
 
         base_cmd = str(raw_config.get("command", "")).strip()
@@ -345,7 +356,12 @@ def parse_tool_command_config(raw_config):
             if isinstance(item, str):
                 if item.startswith("-"):
                     item_name = item.lstrip("-").replace("-", "_")
-                    item = {"name": item_name, "flag": item, "type": "option", "has_value": False}
+                    item = {
+                        "name": item_name,
+                        "flag": item,
+                        "type": "option",
+                        "has_value": False,
+                    }
                 else:
                     item = {"name": item.replace("-", "_"), "type": "argument"}
             if not isinstance(item, dict):
@@ -361,13 +377,13 @@ def parse_tool_command_config(raw_config):
                 if flag:
                     name = flag.lstrip("-").replace("-", "_")
                 else:
-                    name = f"arg_{idx+1}"
+                    name = f"arg_{idx + 1}"
 
-            clean_name = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+            clean_name = re.sub(r"[^a-zA-Z0-9_]", "_", name)
             if clean_name and clean_name[0].isdigit():
                 clean_name = f"arg_{clean_name}"
             if not clean_name:
-                clean_name = f"opt_{idx+1}"
+                clean_name = f"opt_{idx + 1}"
 
             choices = item.get("choices")
             if choices and isinstance(choices, list):
@@ -384,36 +400,45 @@ def parse_tool_command_config(raw_config):
                 if has_val is None:
                     has_val = item.get("takes_value")
                 if has_val is None:
-                    has_val = True if (choices or item.get("value_type") == "string") else False
+                    has_val = (
+                        True
+                        if (choices or item.get("value_type") == "string")
+                        else False
+                    )
 
-                normalized_items.append({
-                    "name": clean_name,
-                    "raw_name": name,
-                    "type": "option",
-                    "flag": flag,
-                    "description": opt_desc,
-                    "has_value": bool(has_val),
-                    "choices": choices,
-                    "required": bool(item.get("required", False))
-                })
+                normalized_items.append(
+                    {
+                        "name": clean_name,
+                        "raw_name": name,
+                        "type": "option",
+                        "flag": flag,
+                        "description": opt_desc,
+                        "has_value": bool(has_val),
+                        "choices": choices,
+                        "required": bool(item.get("required", False)),
+                    }
+                )
             else:
-                normalized_items.append({
-                    "name": clean_name,
-                    "raw_name": name,
-                    "type": "argument",
-                    "description": opt_desc,
-                    "choices": choices,
-                    "required": bool(item.get("required", False))
-                })
+                normalized_items.append(
+                    {
+                        "name": clean_name,
+                        "raw_name": name,
+                        "type": "argument",
+                        "description": opt_desc,
+                        "choices": choices,
+                        "required": bool(item.get("required", False)),
+                    }
+                )
 
         return {
             "type": "command_with_options",
             "command": base_cmd,
             "description": desc,
-            "options": normalized_items
+            "options": normalized_items,
         }
 
     return None
+
 
 def get_project_tool_config(tool_label, project_name=None, start_dir=None):
     """
@@ -446,15 +471,18 @@ def get_project_tool_config(tool_label, project_name=None, start_dir=None):
 
     opts_val = config.get(f"{tool_label}-options")
     if opts_val is not None and isinstance(cmd_val, str):
-        return parse_tool_command_config({
-            "command": cmd_val,
-            "options": opts_val if isinstance(opts_val, list) else [opts_val]
-        })
+        return parse_tool_command_config(
+            {
+                "command": cmd_val,
+                "options": opts_val if isinstance(opts_val, list) else [opts_val],
+            }
+        )
 
     if cmd_val is not None:
         return parse_tool_command_config(cmd_val)
 
     return None
+
 
 def validate_tool_call(tool_label, args_dict, tool_config):
     """
@@ -470,9 +498,16 @@ def validate_tool_call(tool_label, args_dict, tool_config):
 
     # Case 1: Simple command (no options accepted)
     if tool_config["type"] == "simple":
-        non_empty = {k: v for k, v in args_dict.items() if v is not None and v is not False and v != ""}
+        non_empty = {
+            k: v
+            for k, v in args_dict.items()
+            if v is not None and v is not False and v != ""
+        }
         if non_empty:
-            return False, f"The configured {tool_label} command '{tool_config['command']}' accepts no options or arguments, but received: {list(non_empty.keys())}."
+            return (
+                False,
+                f"The configured {tool_label} command '{tool_config['command']}' accepts no options or arguments, but received: {list(non_empty.keys())}.",
+            )
         return True, tool_config["command"]
 
     # Case 2: Alternative commands (all-or-nothing, select one)
@@ -481,7 +516,11 @@ def validate_tool_call(tool_label, args_dict, tool_config):
         valid_commands = [alt["command"] for alt in allowed_alts]
         valid_names = [alt["name"] for alt in allowed_alts if alt.get("name")]
 
-        unexpected = [k for k in args_dict.keys() if k not in ("command", "selected_command", "cmd", "name")]
+        unexpected = [
+            k
+            for k in args_dict.keys()
+            if k not in ("command", "selected_command", "cmd", "name")
+        ]
         if unexpected:
             return False, (
                 f"Alternative commands are all-or-nothing and do not accept additional options or flags. "
@@ -503,7 +542,9 @@ def validate_tool_call(tool_label, args_dict, tool_config):
 
         matched_cmd = None
         for alt in allowed_alts:
-            if selected == alt["command"] or (alt.get("name") and selected == alt["name"]):
+            if selected == alt["command"] or (
+                alt.get("name") and selected == alt["name"]
+            ):
                 matched_cmd = alt["command"]
                 break
 
@@ -520,7 +561,9 @@ def validate_tool_call(tool_label, args_dict, tool_config):
         base_cmd = tool_config.get("command", "")
         configured_items = tool_config.get("options", [])
         name_map = {item["name"]: item for item in configured_items}
-        raw_name_map = {item["raw_name"]: item for item in configured_items if item.get("raw_name")}
+        raw_name_map = {
+            item["raw_name"]: item for item in configured_items if item.get("raw_name")
+        }
         flag_map = {item["flag"]: item for item in configured_items if item.get("flag")}
 
         errors = []
@@ -547,13 +590,19 @@ def validate_tool_call(tool_label, args_dict, tool_config):
             processed_args[item["name"]] = (item, v)
 
         if unrecognized:
-            allowed_names = sorted(list(set(list(name_map.keys()) + list(flag_map.keys()))))
-            errors.append(f"Unrecognized parameter(s): {unrecognized}. Allowed parameters: {allowed_names}.")
+            allowed_names = sorted(
+                list(set(list(name_map.keys()) + list(flag_map.keys())))
+            )
+            errors.append(
+                f"Unrecognized parameter(s): {unrecognized}. Allowed parameters: {allowed_names}."
+            )
 
         # Check required arguments
         for item in configured_items:
             if item.get("required") and item["name"] not in processed_args:
-                errors.append(f"Missing required argument '{item['name']}' ({item.get('description', '')}).")
+                errors.append(
+                    f"Missing required argument '{item['name']}' ({item.get('description', '')})."
+                )
 
         options_to_apply = []
         arguments_to_apply = []
@@ -575,7 +624,12 @@ def validate_tool_call(tool_label, args_dict, tool_config):
                             options_to_apply.append((item, None))
                     elif isinstance(val, str) and val.lower() in ("true", "1", "yes"):
                         options_to_apply.append((item, None))
-                    elif isinstance(val, str) and val.lower() in ("false", "0", "no", ""):
+                    elif isinstance(val, str) and val.lower() in (
+                        "false",
+                        "0",
+                        "no",
+                        "",
+                    ):
                         pass
                     elif val in (1,):
                         options_to_apply.append((item, None))
@@ -596,7 +650,9 @@ def validate_tool_call(tool_label, args_dict, tool_config):
 
                     val_str = str(val)
                     if "\n" in val_str or "\r" in val_str:
-                        errors.append(f"Value for option '{name}' cannot contain newline characters.")
+                        errors.append(
+                            f"Value for option '{name}' cannot contain newline characters."
+                        )
                         continue
 
                     choices = item.get("choices")
@@ -619,7 +675,9 @@ def validate_tool_call(tool_label, args_dict, tool_config):
 
                 val_str = str(val)
                 if "\n" in val_str or "\r" in val_str:
-                    errors.append(f"Value for argument '{name}' cannot contain newline characters.")
+                    errors.append(
+                        f"Value for argument '{name}' cannot contain newline characters."
+                    )
                     continue
 
                 choices = item.get("choices")
@@ -633,7 +691,9 @@ def validate_tool_call(tool_label, args_dict, tool_config):
                 arguments_to_apply.append((item, val_str))
 
         if errors:
-            err_msg = "Command rejected due to schema validation errors:\n" + "\n".join(f"- {e}" for e in errors)
+            err_msg = "Command rejected due to schema validation errors:\n" + "\n".join(
+                f"- {e}" for e in errors
+            )
             return False, err_msg
 
         # Compose command line
@@ -656,6 +716,7 @@ def validate_tool_call(tool_label, args_dict, tool_config):
 
     return False, f"Unknown configuration type for {tool_label} command."
 
+
 def get_relative_path(file_path, repo_name=None, git_root=None):
     """
     Computes a path for a file relative to its git repository root,
@@ -675,7 +736,7 @@ def get_relative_path(file_path, repo_name=None, git_root=None):
             return f"{repo_name.upper()}:{relative_path}"
         return relative_path
 
-    home_dir = os.path.expanduser('~')
+    home_dir = os.path.expanduser("~")
     # Check if the path is inside the home directory.
     if abs_path.startswith(home_dir):
         try:
@@ -688,6 +749,7 @@ def get_relative_path(file_path, repo_name=None, git_root=None):
 
     # Fallback for files not in git repo or home, or on different drives on Windows.
     return os.path.basename(abs_path)
+
 
 def list_directory(directory_path=".", project_root=None):
     try:
@@ -720,6 +782,7 @@ def list_directory(directory_path=".", project_root=None):
     except Exception as e:
         return f"Error listing directory: {e}"
 
+
 def read_file(filepath, project_root=None):
     try:
         if not project_root:
@@ -739,10 +802,11 @@ def read_file(filepath, project_root=None):
         if not os.path.isfile(target_path):
             return f"Error: Path '{filepath}' is not a regular file."
 
-        with open(target_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(target_path, "r", encoding="utf-8", errors="replace") as f:
             return f.read()
     except Exception as e:
         return f"Error reading file: {e}"
+
 
 def generate_diff_for_file(file_path, file_content, project_root=None):
     """
@@ -767,14 +831,17 @@ def generate_diff_for_file(file_path, file_content, project_root=None):
 
     try:
         if os.path.commonpath([project_root, target_path]) != project_root:
-            return None, f"Security error: Cannot modify files outside project directory: {file_path}"
+            return (
+                None,
+                f"Security error: Cannot modify files outside project directory: {file_path}",
+            )
     except ValueError:
         return None, f"Security error: Path resolution failed for {file_path}."
 
     if os.path.exists(target_path) and os.path.isdir(target_path):
         return None, f"Target path '{file_path}' is a directory, not a regular file."
 
-    relative_path = os.path.relpath(target_path, project_root).replace(os.sep, '/')
+    relative_path = os.path.relpath(target_path, project_root).replace(os.sep, "/")
     file_exists = os.path.exists(target_path)
 
     original_content = ""
@@ -797,13 +864,11 @@ def generate_diff_for_file(file_path, file_content, project_root=None):
     from_path = f"a/{relative_path}" if file_exists else "/dev/null"
     to_path = f"b/{relative_path}"
 
-    diff_lines = list(difflib.unified_diff(
-        orig_lines,
-        new_lines,
-        fromfile=from_path,
-        tofile=to_path,
-        lineterm=""
-    ))
+    diff_lines = list(
+        difflib.unified_diff(
+            orig_lines, new_lines, fromfile=from_path, tofile=to_path, lineterm=""
+        )
+    )
 
     if not diff_lines:
         return "", None

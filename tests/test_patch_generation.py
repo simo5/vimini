@@ -5,7 +5,9 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 # Ensure python3 root is in sys.path
-sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..', 'python3')))
+sys.path.insert(
+    0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "python3"))
+)
 
 from vimini.common.util import generate_diff_for_file
 from vimini.agent.chat import get_agent_tools, validate_patch_is_safe, ChatSession
@@ -17,7 +19,9 @@ def test_generate_diff_for_modified_file(tmp_path):
     test_file.write_text("def hello():\n    print('hello')\n")
 
     new_content = "def hello():\n    print('hello world')\n"
-    diff_text, err = generate_diff_for_file("hello.py", new_content, project_root=project_root)
+    diff_text, err = generate_diff_for_file(
+        "hello.py", new_content, project_root=project_root
+    )
 
     assert err is None
     assert diff_text is not None
@@ -31,7 +35,9 @@ def test_generate_diff_for_modified_file(tmp_path):
 def test_generate_diff_for_new_file(tmp_path):
     project_root = str(tmp_path)
     new_content = "print('new file')\n"
-    diff_text, err = generate_diff_for_file("new_module.py", new_content, project_root=project_root)
+    diff_text, err = generate_diff_for_file(
+        "new_module.py", new_content, project_root=project_root
+    )
 
     assert err is None
     assert diff_text is not None
@@ -47,7 +53,9 @@ def test_generate_diff_for_identical_file(tmp_path):
     content = "a = 1\nb = 2\n"
     test_file.write_text(content)
 
-    diff_text, err = generate_diff_for_file("same.py", content, project_root=project_root)
+    diff_text, err = generate_diff_for_file(
+        "same.py", content, project_root=project_root
+    )
     assert err is None
     assert diff_text == ""
 
@@ -56,7 +64,9 @@ def test_generate_diff_path_traversal_security(tmp_path):
     project_root = str(tmp_path / "project")
     os.makedirs(project_root, exist_ok=True)
 
-    diff_text, err = generate_diff_for_file("../../outside.py", "malicious", project_root=project_root)
+    diff_text, err = generate_diff_for_file(
+        "../../outside.py", "malicious", project_root=project_root
+    )
     assert diff_text is None
     assert "Security error" in err
 
@@ -66,7 +76,9 @@ def test_generate_diff_target_is_directory(tmp_path):
     sub_dir = tmp_path / "somedir"
     sub_dir.mkdir()
 
-    diff_text, err = generate_diff_for_file("somedir", "content", project_root=project_root)
+    diff_text, err = generate_diff_for_file(
+        "somedir", "content", project_root=project_root
+    )
     assert diff_text is None
     assert "directory" in err
 
@@ -76,7 +88,7 @@ def test_apply_patch_tool_declaration():
     apply_patch_tool = None
     for t in tools:
         for fn in t.function_declarations:
-            if fn.name == 'apply_patch':
+            if fn.name == "apply_patch":
                 apply_patch_tool = fn
                 break
 
@@ -103,7 +115,7 @@ def test_chat_session_apply_patch_with_file_content(tmp_path):
     mock_tool_call.name = "apply_patch"
     mock_tool_call.args = {
         "file_path": "test_script.py",
-        "file_content": "def run():\n    print('running')\n"
+        "file_content": "def run():\n    print('running')\n",
     }
 
     # Mock response stream containing the tool call
@@ -127,10 +139,7 @@ def test_chat_session_apply_patch_with_file_content(tmp_path):
     final_chunk.candidates = []
     final_chunk.text = "Done updating file."
 
-    mock_chat.send_message_stream.side_effect = [
-        [mock_chunk],
-        [final_chunk]
-    ]
+    mock_chat.send_message_stream.side_effect = [[mock_chunk], [final_chunk]]
     mock_client.chats.create.return_value = mock_chat
 
     session.client = mock_client
@@ -141,11 +150,16 @@ def test_chat_session_apply_patch_with_file_content(tmp_path):
 
     # Run _process_command
     with patch("os.remove") as mock_remove:
-        session._process_command("123", {"prompt": "Update test_script.py", "project_root": project_root}, None)
+        session._process_command(
+            "123",
+            {"prompt": "Update test_script.py", "project_root": project_root},
+            None,
+        )
 
     # Verify tool_use_requested was sent with the generated temp_file
     tool_requested_calls = [
-        call for call in session.send_response.call_args_list
+        call
+        for call in session.send_response.call_args_list
         if call.kwargs.get("result", {}).get("status") == "tool_use_requested"
     ]
     assert len(tool_requested_calls) == 1
@@ -173,7 +187,9 @@ def test_chat_session_apply_patch_identical_content(tmp_path):
     session.project_root = project_root
     session.send_response = MagicMock()
 
-    diff_text, err = generate_diff_for_file("unchanged.py", content, project_root=project_root)
+    diff_text, err = generate_diff_for_file(
+        "unchanged.py", content, project_root=project_root
+    )
     assert err is None
     assert diff_text == ""
 
@@ -183,7 +199,9 @@ def test_generate_diff_empty_content_empties_file(tmp_path):
     target_file = tmp_path / "to_empty.txt"
     target_file.write_text("line 1\nline 2\n")
 
-    diff_text, err = generate_diff_for_file("to_empty.txt", "", project_root=project_root)
+    diff_text, err = generate_diff_for_file(
+        "to_empty.txt", "", project_root=project_root
+    )
     assert err is None
     assert diff_text is not None
     assert "--- a/to_empty.txt" in diff_text
@@ -196,7 +214,9 @@ def test_generate_diff_absolute_path_inside_project(tmp_path):
     target_file = tmp_path / "abs_test.py"
     target_file.write_text("val = 1\n")
 
-    diff_text, err = generate_diff_for_file(str(target_file), "val = 2\n", project_root=project_root)
+    diff_text, err = generate_diff_for_file(
+        str(target_file), "val = 2\n", project_root=project_root
+    )
     assert err is None
     assert diff_text is not None
     assert "diff --git a/abs_test.py b/abs_test.py" in diff_text
@@ -219,7 +239,7 @@ def test_chat_session_apply_patch_with_multiple_files(tmp_path):
     mock_tool_call.args = {
         "files": [
             {"file_path": "a.py", "file_content": "a = 2\n"},
-            {"file_path": "b.py", "file_content": "b = 2\n"}
+            {"file_path": "b.py", "file_content": "b = 2\n"},
         ]
     }
 
@@ -244,10 +264,13 @@ def test_chat_session_apply_patch_with_multiple_files(tmp_path):
     session.cmd_queue.put(("789", {"approved": True}, None))
 
     with patch("os.remove"):
-        session._process_command("789", {"prompt": "Update both", "project_root": project_root}, None)
+        session._process_command(
+            "789", {"prompt": "Update both", "project_root": project_root}, None
+        )
 
     tool_requested_calls = [
-        call for call in session.send_response.call_args_list
+        call
+        for call in session.send_response.call_args_list
         if call.kwargs.get("result", {}).get("status") == "tool_use_requested"
     ]
     assert len(tool_requested_calls) == 1

@@ -5,18 +5,17 @@ import pytest
 from unittest.mock import MagicMock, patch
 
 # Ensure python3 root is in sys.path
-sys.path.insert(0, os.path.realpath(os.path.join(os.path.dirname(__file__), '..', 'python3')))
+sys.path.insert(
+    0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "python3"))
+)
 
 from vimini.common.util import (
     upgrade_project_data,
     load_project_data,
     save_project_data,
-    create_default_project_data
+    create_default_project_data,
 )
-from vimini.config import (
-    prompt_reset_config_dialog,
-    load_project_config_or_prompt
-)
+from vimini.config import prompt_reset_config_dialog, load_project_config_or_prompt
 
 
 def test_upgrade_project_data_errors():
@@ -66,7 +65,9 @@ def test_load_project_config_or_prompt(tmp_path):
 
         # User answers 'y' in dialog
         with patch("vimini.config.prompt_reset_config_dialog", return_value=True):
-            data = load_project_config_or_prompt(project_name="test_proj", project_root=str(tmp_path))
+            data = load_project_config_or_prompt(
+                project_name="test_proj", project_root=str(tmp_path)
+            )
             assert data["version"] == "0.1"
             # File on disk should have been reset to valid default data
             with open(config_file, "r", encoding="utf-8") as f:
@@ -78,4 +79,6 @@ def test_load_project_config_or_prompt(tmp_path):
         config_file.write_text("corrupted json {", encoding="utf-8")
         with patch("vimini.config.prompt_reset_config_dialog", return_value=False):
             with pytest.raises(Exception):
-                load_project_config_or_prompt(project_name="test_proj", project_root=str(tmp_path))
+                load_project_config_or_prompt(
+                    project_name="test_proj", project_root=str(tmp_path)
+                )

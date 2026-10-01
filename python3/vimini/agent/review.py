@@ -8,43 +8,46 @@ from vimini.agent.comms import CommSession
 from vimini.common.genai import get_client, create_generation_config
 from vimini.common.util import list_directory, read_file, get_project_root
 
-logger = logging.getLogger('vimini_agent')
+logger = logging.getLogger("vimini_agent")
 
 review_tools = [
     types.Tool(
         function_declarations=[
             types.FunctionDeclaration(
-                name='read_file',
-                description='Reads the content of a file. Only files within the current working directory or its subdirectories can be read. Use sparingly and only as needed.',
+                name="read_file",
+                description="Reads the content of a file. Only files within the current working directory or its subdirectories can be read. Use sparingly and only as needed.",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
-                        'filepath': types.Schema(
+                        "filepath": types.Schema(
                             type=types.Type.STRING,
-                            description='Path to the file to read.'
+                            description="Path to the file to read.",
                         )
                     },
-                    required=['filepath']
-                )
+                    required=["filepath"],
+                ),
             ),
             types.FunctionDeclaration(
-                name='list_directory',
-                description='Reads the list of files and directories in a given path. Cannot list above the current working directory. Use sparingly and only as needed.',
+                name="list_directory",
+                description="Reads the list of files and directories in a given path. Cannot list above the current working directory. Use sparingly and only as needed.",
                 parameters=types.Schema(
                     type=types.Type.OBJECT,
                     properties={
-                        'directory_path': types.Schema(
+                        "directory_path": types.Schema(
                             type=types.Type.STRING,
-                            description='The relative path to the directory to list. Defaults to "." for the current directory.'
+                            description='The relative path to the directory to list. Defaults to "." for the current directory.',
                         )
-                    }
-                )
-            )
+                    },
+                ),
+            ),
         ]
     )
 ]
 
-def _construct_review_prompt(prompt, review_content, content_source_description, security_focus):
+
+def _construct_review_prompt(
+    prompt, review_content, content_source_description, security_focus
+):
     """
     Constructs the prompt for the review.
     """
@@ -79,7 +82,18 @@ def _construct_review_prompt(prompt, review_content, content_source_description,
     )
     return prompt_text
 
-def _execute_review_stream(chat_session, initial_prompt, project_root, on_chunk=None, on_thought=None, on_tool_call=None, on_tool_result=None, check_running=None, max_turns=15):
+
+def _execute_review_stream(
+    chat_session,
+    initial_prompt,
+    project_root,
+    on_chunk=None,
+    on_thought=None,
+    on_tool_call=None,
+    on_tool_result=None,
+    check_running=None,
+    max_turns=15,
+):
     """
     Executes a review stream loop, handling tool calls (read_file, list_directory)
     automatically until completion or reaching max_turns limit.
@@ -97,20 +111,20 @@ def _execute_review_stream(chat_session, initial_prompt, project_root, on_chunk=
             if check_running and not check_running():
                 break
 
-            if hasattr(chunk, 'candidates') and chunk.candidates:
+            if hasattr(chunk, "candidates") and chunk.candidates:
                 candidate = chunk.candidates[0]
                 if candidate.content and candidate.content.parts:
                     for part in candidate.content.parts:
-                        if hasattr(part, 'function_call') and part.function_call:
+                        if hasattr(part, "function_call") and part.function_call:
                             pending_tool_calls.append(part.function_call)
-                        elif getattr(part, 'thought', False):
-                            thought_chunk = getattr(part, 'text', '') or ''
+                        elif getattr(part, "thought", False):
+                            thought_chunk = getattr(part, "text", "") or ""
                             if thought_chunk and on_thought:
                                 on_thought(thought_chunk)
-                        elif hasattr(part, 'text') and part.text:
+                        elif hasattr(part, "text") and part.text:
                             if on_chunk:
                                 on_chunk(part.text)
-            elif hasattr(chunk, 'text'):
+            elif hasattr(chunk, "text"):
                 try:
                     if chunk.text and on_chunk:
                         on_chunk(chunk.text)
@@ -122,7 +136,9 @@ def _execute_review_stream(chat_session, initial_prompt, project_root, on_chunk=
 
         turn += 1
         if max_turns is not None and turn > max_turns:
-            logger.warning(f"Review reached maximum tool iteration limit ({max_turns}).")
+            logger.warning(
+                f"Review reached maximum tool iteration limit ({max_turns})."
+            )
             break
 
         responses = []
@@ -133,23 +149,29 @@ def _execute_review_stream(chat_session, initial_prompt, project_root, on_chunk=
                 on_tool_call(tool_call.name, args_dict)
             elif on_chunk:
                 args_str = json.dumps(args_dict) if args_dict else ""
-                on_chunk(f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n")
+                on_chunk(
+                    f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n"
+                )
 
             try:
-                if tool_call.name == 'list_directory':
-                    dir_path = args_dict.get('directory_path', '.')
+                if tool_call.name == "list_directory":
+                    dir_path = args_dict.get("directory_path", ".")
                     raw_result = list_directory(dir_path, project_root=project_root)
-                elif tool_call.name == 'read_file':
-                    filepath = args_dict.get('filepath', '')
+                elif tool_call.name == "read_file":
+                    filepath = args_dict.get("filepath", "")
                     raw_result = read_file(filepath, project_root=project_root)
                 else:
                     raw_result = f"Unknown tool: {tool_call.name}"
             except Exception as e:
                 raw_result = f"Error executing {tool_call.name}: {e}"
 
-            is_error = raw_result.startswith(("Error", "Security error", "Unknown tool"))
+            is_error = raw_result.startswith(
+                ("Error", "Security error", "Unknown tool")
+            )
             if is_error:
-                logger.warning(f"Review tool call failed: {tool_call.name}({args_dict}) -> {raw_result}")
+                logger.warning(
+                    f"Review tool call failed: {tool_call.name}({args_dict}) -> {raw_result}"
+                )
 
             if on_tool_result:
                 on_tool_result(tool_call.name, args_dict, raw_result, is_error)
@@ -160,16 +182,20 @@ def _execute_review_stream(chat_session, initial_prompt, project_root, on_chunk=
             else:
                 result_text = raw_result
 
-            responses.append(types.Part.from_function_response(
-                name=tool_call.name,
-                response={'result': result_text}
-            ))
+            responses.append(
+                types.Part.from_function_response(
+                    name=tool_call.name, response={"result": result_text}
+                )
+            )
 
         current_input = responses
 
+
 class ReviewSession(CommSession):
     def __init__(self, req_id, result_queue, agent_config=None, request=None):
-        super().__init__(req_id, result_queue, agent_config=agent_config, request=request)
+        super().__init__(
+            req_id, result_queue, agent_config=agent_config, request=request
+        )
         self.method = "review"
 
     def _check_running(self, current_req_id, conn):
@@ -185,7 +211,9 @@ class ReviewSession(CommSession):
                 if isinstance(c_params, dict) and c_params.get("terminate"):
                     logger.info(f"Terminating ReviewSession for req_id: {self.req_id}")
                     self.running = False
-                    self.send_response(c_req_id, c_conn, result={"status": "terminated"})
+                    self.send_response(
+                        c_req_id, c_conn, result={"status": "terminated"}
+                    )
                     break
                 else:
                     unhandled_items.append(cmd_item)
@@ -238,20 +266,25 @@ class ReviewSession(CommSession):
                     break
                 patch_num = index + 1
                 status_msg = f"Reviewing commit {patch_num}/{total_commits}: {commit_sha[:7]}... (Async)"
-                self.send_response(req_id, conn, result={
-                    "status": "progress",
-                    "message": status_msg
-                })
+                self.send_response(
+                    req_id, conn, result={"status": "progress", "message": status_msg}
+                )
 
-                cmd_show = ['git', '-C', repo_path, 'show', commit_sha]
-                result_show = subprocess.run(cmd_show, capture_output=True, text=True, check=False)
+                cmd_show = ["git", "-C", repo_path, "show", commit_sha]
+                result_show = subprocess.run(
+                    cmd_show, capture_output=True, text=True, check=False
+                )
                 if result_show.returncode != 0:
                     err = (result_show.stderr or "git show failed.").strip()
-                    self.send_response(req_id, conn, result={
-                        "status": "progress",
-                        "message": f"Skipping {commit_sha[:7]}: {err}",
-                        "error": True
-                    })
+                    self.send_response(
+                        req_id,
+                        conn,
+                        result={
+                            "status": "progress",
+                            "message": f"Skipping {commit_sha[:7]}: {err}",
+                            "error": True,
+                        },
+                    )
                     continue
                 review_content_single = result_show.stdout
 
@@ -259,38 +292,49 @@ class ReviewSession(CommSession):
                     prompt,
                     review_content_single,
                     f"the output of `git show {commit_sha[:7]}`",
-                    security_focus
+                    security_focus,
                 )
 
                 generation_config = create_generation_config(
                     tools=review_tools,
                     temperature=temperature,
                     verbose=verbose,
-                    disable_function_calling=False
+                    disable_function_calling=False,
                 )
 
                 current_review_accumulator = []
                 try:
-                    chat = client.chats.create(
-                        model=model,
-                        config=generation_config
-                    )
+                    chat = client.chats.create(model=model, config=generation_config)
 
                     def on_batch_tool_call(tool_name, tool_args):
                         args_str = json.dumps(tool_args) if tool_args else ""
-                        self.send_response(req_id, conn, result={
-                            "status": "progress",
-                            "message": f"Commit {commit_sha[:7]} tool call: {tool_name}({args_str})"
-                        })
-
-                    def on_batch_tool_result(tool_name, tool_args, result_text, is_error):
-                        if is_error:
-                            err_line = result_text.strip().splitlines()[0] if result_text else "Tool execution failed"
-                            self.send_response(req_id, conn, result={
+                        self.send_response(
+                            req_id,
+                            conn,
+                            result={
                                 "status": "progress",
-                                "message": f"Commit {commit_sha[:7]} tool call failed: {err_line}",
-                                "error": True
-                            })
+                                "message": f"Commit {commit_sha[:7]} tool call: {tool_name}({args_str})",
+                            },
+                        )
+
+                    def on_batch_tool_result(
+                        tool_name, tool_args, result_text, is_error
+                    ):
+                        if is_error:
+                            err_line = (
+                                result_text.strip().splitlines()[0]
+                                if result_text
+                                else "Tool execution failed"
+                            )
+                            self.send_response(
+                                req_id,
+                                conn,
+                                result={
+                                    "status": "progress",
+                                    "message": f"Commit {commit_sha[:7]} tool call failed: {err_line}",
+                                    "error": True,
+                                },
+                            )
 
                     _execute_review_stream(
                         chat,
@@ -299,52 +343,83 @@ class ReviewSession(CommSession):
                         on_chunk=lambda text: current_review_accumulator.append(text),
                         on_tool_call=on_batch_tool_call,
                         on_tool_result=on_batch_tool_result,
-                        check_running=lambda: self._check_running(req_id, conn)
+                        check_running=lambda: self._check_running(req_id, conn),
                     )
 
                     if not self.running:
                         break
 
-                    subject_cmd = ['git', '-C', repo_path, 'log', '-1', '--pretty=%s', commit_sha]
-                    subject_result = subprocess.run(subject_cmd, capture_output=True, text=True, check=False)
-                    subject = subject_result.stdout.strip() if subject_result.returncode == 0 else "commit"
+                    subject_cmd = [
+                        "git",
+                        "-C",
+                        repo_path,
+                        "log",
+                        "-1",
+                        "--pretty=%s",
+                        commit_sha,
+                    ]
+                    subject_result = subprocess.run(
+                        subject_cmd, capture_output=True, text=True, check=False
+                    )
+                    subject = (
+                        subject_result.stdout.strip()
+                        if subject_result.returncode == 0
+                        else "commit"
+                    )
 
-                    sanitized_subject = re.sub(r'[^a-zA-Z0-9]+', '-', subject).strip('-').lower()
+                    sanitized_subject = (
+                        re.sub(r"[^a-zA-Z0-9]+", "-", subject).strip("-").lower()
+                    )
                     sanitized_subject = sanitized_subject[:50]
 
                     filename = f"{patch_num:04d}-{sanitized_subject}.review.txt"
                     filepath = os.path.join(target_dir, filename)
 
                     content = "".join(current_review_accumulator)
-                    with open(filepath, "w", encoding='utf-8') as f:
+                    with open(filepath, "w", encoding="utf-8") as f:
                         f.write(content)
 
-                    self.send_response(req_id, conn, result={
-                        "status": "progress",
-                        "message": f"Saved review to {filename}"
-                    })
+                    self.send_response(
+                        req_id,
+                        conn,
+                        result={
+                            "status": "progress",
+                            "message": f"Saved review to {filename}",
+                        },
+                    )
 
                 except Exception as e:
-                    logger.error(f"Error reviewing commit {commit_sha[:7]}: {e}", exc_info=True)
-                    self.send_response(req_id, conn, result={
-                        "status": "progress",
-                        "message": f"Error reviewing {commit_sha[:7]}: {e}",
-                        "error": True
-                    })
+                    logger.error(
+                        f"Error reviewing commit {commit_sha[:7]}: {e}", exc_info=True
+                    )
+                    self.send_response(
+                        req_id,
+                        conn,
+                        result={
+                            "status": "progress",
+                            "message": f"Error reviewing {commit_sha[:7]}: {e}",
+                            "error": True,
+                        },
+                    )
 
             if not self.running:
                 return
 
-            self.send_response(req_id, conn, result={
-                "status": "batch_completed",
-                "message": "All reviews completed and saved."
-            })
+            self.send_response(
+                req_id,
+                conn,
+                result={
+                    "status": "batch_completed",
+                    "message": "All reviews completed and saved.",
+                },
+            )
         except Exception as e:
-            logger.error(f"Error in batch ReviewSession for req_id {req_id}: {e}", exc_info=True)
-            self.send_response(req_id, conn, result={
-                "status": "error",
-                "error": str(e)
-            })
+            logger.error(
+                f"Error in batch ReviewSession for req_id {req_id}: {e}", exc_info=True
+            )
+            self.send_response(
+                req_id, conn, result={"status": "error", "error": str(e)}
+            )
         finally:
             self.running = False
 
@@ -370,44 +445,40 @@ class ReviewSession(CommSession):
             client = get_client(config=agent_config)
 
             prompt_text = _construct_review_prompt(
-                prompt,
-                review_content,
-                content_source_description,
-                security_focus
+                prompt, review_content, content_source_description, security_focus
             )
 
             generation_config = create_generation_config(
                 tools=review_tools,
                 temperature=temperature,
                 verbose=verbose,
-                disable_function_calling=False
+                disable_function_calling=False,
             )
 
-            chat = client.chats.create(
-                model=model,
-                config=generation_config
-            )
+            chat = client.chats.create(model=model, config=generation_config)
 
             def on_chunk(text):
-                self.send_response(req_id, conn, result={
-                    "status": "chunk",
-                    "text": text
-                })
+                self.send_response(
+                    req_id, conn, result={"status": "chunk", "text": text}
+                )
 
             def on_thought(thought_text):
-                self.send_response(req_id, conn, result={
-                    "status": "thought",
-                    "thought": thought_text
-                })
+                self.send_response(
+                    req_id, conn, result={"status": "thought", "thought": thought_text}
+                )
 
             def on_tool_call(tool_name, tool_args):
                 args_str = json.dumps(tool_args) if tool_args else ""
-                self.send_response(req_id, conn, result={
-                    "status": "tool_use_requested",
-                    "tool": tool_name,
-                    "args": tool_args,
-                    "text": f"\n[Agent requested tool execution: {tool_name}({args_str})]\n"
-                })
+                self.send_response(
+                    req_id,
+                    conn,
+                    result={
+                        "status": "tool_use_requested",
+                        "tool": tool_name,
+                        "args": tool_args,
+                        "text": f"\n[Agent requested tool execution: {tool_name}({args_str})]\n",
+                    },
+                )
 
             _execute_review_stream(
                 chat,
@@ -416,20 +487,19 @@ class ReviewSession(CommSession):
                 on_chunk=on_chunk,
                 on_thought=on_thought,
                 on_tool_call=on_tool_call,
-                check_running=lambda: self._check_running(req_id, conn)
+                check_running=lambda: self._check_running(req_id, conn),
             )
 
             if not self.running:
                 return
 
-            self.send_response(req_id, conn, result={
-                "status": "completed"
-            })
+            self.send_response(req_id, conn, result={"status": "completed"})
         except Exception as e:
-            logger.error(f"Error in ReviewSession for req_id {req_id}: {e}", exc_info=True)
-            self.send_response(req_id, conn, result={
-                "status": "error",
-                "error": str(e)
-            })
+            logger.error(
+                f"Error in ReviewSession for req_id {req_id}: {e}", exc_info=True
+            )
+            self.send_response(
+                req_id, conn, result={"status": "error", "error": str(e)}
+            )
         finally:
             self.running = False

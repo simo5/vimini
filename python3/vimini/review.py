@@ -8,10 +8,12 @@ from vimini import util
 
 _STREAM_FIRST_CHUNK_MAP = set()
 
+
 def _to_str(val):
     if isinstance(val, bytes):
-        return val.decode('utf-8', errors='replace')
+        return val.decode("utf-8", errors="replace")
     return str(val) if val is not None else ""
+
 
 def _find_buffer(req_id):
     try:
@@ -22,6 +24,7 @@ def _find_buffer(req_id):
     except Exception:
         pass
     return None
+
 
 def handle_channel_response(req_id, result):
     """
@@ -61,7 +64,7 @@ def handle_channel_response(req_id, result):
         verbose = result.get("verbose")
         if verbose is None:
             try:
-                verbose = (vim.eval("get(g:, 'vimini_thinking', 'on')") == 'on')
+                verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
             except Exception:
                 verbose = True
         if verbose and thought_text and buf_num:
@@ -114,23 +117,33 @@ def handle_channel_response(req_id, result):
             util.append_to_buffer(buf_num, f"\nError: {err_msg}")
         util.display_message(f"Error: {err_msg}", error=True)
 
+
 def send_review_termination(req_id):
     req = {
         "jsonrpc": "2.0",
         "id": str(req_id),
         "method": "review",
-        "params": {
-            "terminate": True
-        }
+        "params": {"terminate": True},
     }
     util.send_channel_request(req, True)
 
-def review(prompt, git_objects=None, security_focus=False, verbose=False, temperature=None, save=False, save_path=None):
+
+def review(
+    prompt,
+    git_objects=None,
+    security_focus=False,
+    verbose=False,
+    temperature=None,
+    save=False,
+    save_path=None,
+):
     """
     Sends content to the Gemini API for a code review via the background agent.
     If 'save' is True and 'git_objects' are provided, saves reviews to 'save_path'.
     """
-    util.log_info(f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, temperature={temperature}, save={save}, save_path='{save_path}')")
+    util.log_info(
+        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, temperature={temperature}, save={save}, save_path='{save_path}')"
+    )
     try:
         # --- BATCH SAVE MODE ---
         if git_objects and save:
@@ -140,16 +153,23 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
 
             objects_to_resolve = shlex.split(git_objects)
             for obj in objects_to_resolve:
-                if obj.startswith('-'):
-                    util.display_message("Security error: Git options (like flags starting with '-') are not allowed.", error=True)
+                if obj.startswith("-"):
+                    util.display_message(
+                        "Security error: Git options (like flags starting with '-') are not allowed.",
+                        error=True,
+                    )
                     return
 
             # Check if a range is specified. If not, we don't want to walk the whole history.
             rev_list_args = []
             if not any(".." in obj for obj in objects_to_resolve):
-                rev_list_args.append('--no-walk')
+                rev_list_args.append("--no-walk")
 
-            cmd = ['git', '-C', repo_path, 'rev-list', '--reverse'] + rev_list_args + objects_to_resolve
+            cmd = (
+                ["git", "-C", repo_path, "rev-list", "--reverse"]
+                + rev_list_args
+                + objects_to_resolve
+            )
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
             if result.returncode != 0:
@@ -157,9 +177,11 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                 util.display_message(f"Git error: {error_message}", error=True)
                 return
 
-            commit_list = [sha for sha in result.stdout.strip().split('\n') if sha]
+            commit_list = [sha for sha in result.stdout.strip().split("\n") if sha]
             if not commit_list:
-                util.display_message(f"No commits found for range '{git_objects}'.", history=True)
+                util.display_message(
+                    f"No commits found for range '{git_objects}'.", history=True
+                )
                 return
 
             # Determine Save Directory
@@ -179,7 +201,9 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                     try:
                         os.makedirs(target_dir, exist_ok=True)
                     except Exception as e:
-                        util.display_message(f"Error creating directory {target_dir}: {e}", error=True)
+                        util.display_message(
+                            f"Error creating directory {target_dir}: {e}", error=True
+                        )
                         return
 
             job_name = f"Review batch: {git_objects} {prompt}"
@@ -199,8 +223,8 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                     "temperature": temperature,
                     "project_root": repo_path,
                     "commit_list": commit_list,
-                    "target_dir": target_dir
-                }
+                    "target_dir": target_dir,
+                },
             }
 
             util.send_channel_request(req)
@@ -218,11 +242,14 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
 
             objects_to_show = shlex.split(git_objects)
             for obj in objects_to_show:
-                if obj.startswith('-'):
-                    util.display_message("Security error: Git options (like flags starting with '-') are not allowed.", error=True)
+                if obj.startswith("-"):
+                    util.display_message(
+                        "Security error: Git options (like flags starting with '-') are not allowed.",
+                        error=True,
+                    )
                     return
 
-            cmd = ['git', '-C', repo_path, 'show'] + objects_to_show
+            cmd = ["git", "-C", repo_path, "show"] + objects_to_show
             util.display_message(f"Running git show {git_objects}... ")
             result = subprocess.run(cmd, capture_output=True, text=True, check=False)
 
@@ -234,27 +261,35 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
             content_source_description = f"the output of `git show {git_objects}`"
         else:
             review_content = "\n".join(vim.current.buffer[:])
-            original_filetype = vim.eval('&filetype') or 'text'
+            original_filetype = vim.eval("&filetype") or "text"
             content_source_description = f"the following {original_filetype} code"
 
         if not review_content.strip():
             util.display_message("Nothing to review.", history=True)
             return
 
-        job_name = f"Review: {git_objects if git_objects else 'current buffer'} {prompt}"
+        job_name = (
+            f"Review: {git_objects if git_objects else 'current buffer'} {prompt}"
+        )
         job_id = str(util.reserve_next_job_id(job_name))
 
         util.new_split()
         base_buffer_name = f"[{job_id}] Vimini Review"
         safe_name = f"{base_buffer_name} [->G?]".replace(" ", "\\ ")
         vim.command(f"silent keepalt file {safe_name}")
-        vim.command('setlocal buftype=nofile')
-        vim.command('setlocal bufhidden=wipe')
-        vim.command('setlocal noswapfile')
-        vim.command('setlocal filetype=markdown')
-        vim.command("highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic")
-        vim.command("syntax match ViminiService '^\\[Agent requested tool execution: .*\\]'")
-        vim.command(f"autocmd BufUnload <buffer> py3 from vimini.review import send_review_termination; send_review_termination('{job_id}')")
+        vim.command("setlocal buftype=nofile")
+        vim.command("setlocal bufhidden=wipe")
+        vim.command("setlocal noswapfile")
+        vim.command("setlocal filetype=markdown")
+        vim.command(
+            "highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic"
+        )
+        vim.command(
+            "syntax match ViminiService '^\\[Agent requested tool execution: .*\\]'"
+        )
+        vim.command(
+            f"autocmd BufUnload <buffer> py3 from vimini.review import send_review_termination; send_review_termination('{job_id}')"
+        )
 
         review_buffer = vim.current.buffer
         review_buf_num = review_buffer.number
@@ -267,7 +302,10 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
         if git_objects and review_content:
             separator_start = "========== GIT DIFF TARGET START =========="
             separator_end = "========== GIT DIFF TARGET END =========="
-            util.append_to_buffer(review_buf_num, f"\n{separator_start}\n{review_content}\n{separator_end}\n")
+            util.append_to_buffer(
+                review_buf_num,
+                f"\n{separator_start}\n{review_content}\n{separator_end}\n",
+            )
 
         util.display_message("Processing review via agent... (Async)")
 
@@ -283,13 +321,15 @@ def review(prompt, git_objects=None, security_focus=False, verbose=False, temper
                 "security_focus": security_focus,
                 "verbose": verbose,
                 "temperature": temperature,
-                "project_root": project_root
-            }
+                "project_root": project_root,
+            },
         }
 
         util.send_channel_request(req)
 
     except FileNotFoundError:
-        util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
+        util.display_message(
+            "Error: `git` command not found. Is it in your PATH?", error=True
+        )
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)

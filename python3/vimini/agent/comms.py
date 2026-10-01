@@ -2,7 +2,8 @@ import queue
 import threading
 import logging
 
-logger = logging.getLogger('vimini_agent')
+logger = logging.getLogger("vimini_agent")
+
 
 class CommSession(threading.Thread):
     def __init__(self, req_id, result_queue, agent_config=None, request=None):
@@ -19,11 +20,7 @@ class CommSession(threading.Thread):
         self.cmd_queue.put((req_id, params, conn))
 
     def send_message(self, req_id, conn, result=None, error=None):
-        payload = {
-            "id": req_id,
-            "jsonrpc": "2.0",
-            "method": self.method
-        }
+        payload = {"id": req_id, "jsonrpc": "2.0", "method": self.method}
         if error is not None:
             payload["error"] = error
         else:
@@ -47,12 +44,14 @@ class CommSession(threading.Thread):
             except queue.Empty:
                 continue
             except Exception as e:
-                logger.error(f"Error processing command in session {self.req_id}: {e}", exc_info=True)
+                logger.error(
+                    f"Error processing command in session {self.req_id}: {e}",
+                    exc_info=True,
+                )
                 try:
-                    self.send_response(req_id, conn, result={
-                        "status": "error",
-                        "error": str(e)
-                    })
+                    self.send_response(
+                        req_id, conn, result={"status": "error", "error": str(e)}
+                    )
                 except Exception:
                     pass
 

@@ -14,10 +14,12 @@ DENIAL_PREFIX = "Patch denied: "
 Q_prefix = "< "
 A_prefix = "> "
 
+
 def _to_str(val):
     if isinstance(val, bytes):
-        return val.decode('utf-8', errors='replace')
+        return val.decode("utf-8", errors="replace")
     return str(val) if val is not None else ""
+
 
 def _get_buffer(buf_num):
     buffer = None
@@ -30,6 +32,7 @@ def _get_buffer(buf_num):
                 break
     return buffer
 
+
 def _find_chat_buffer(req_id):
     if not req_id:
         return None
@@ -41,6 +44,7 @@ def _find_chat_buffer(req_id):
     except Exception:
         pass
     return None
+
 
 def _set_waiting(buffer, waiting):
     if buffer is None:
@@ -56,6 +60,7 @@ def _set_waiting(buffer, waiting):
     except Exception as e:
         util.log_info(f"Error setting chat buffer waiting state: {e}")
 
+
 def _prompt_window_exists(req_id=None):
     for w in vim.windows:
         try:
@@ -69,6 +74,7 @@ def _prompt_window_exists(req_id=None):
         except Exception:
             pass
     return False
+
 
 def _open_prompt_window(req_id):
     try:
@@ -104,16 +110,30 @@ def _open_prompt_window(req_id):
 
         prompt_buf[:] = [HINT_MSG, ""]
 
-        vim.command("highlight default ViminiPromptHint ctermfg=Green guifg=Green cterm=italic gui=italic")
+        vim.command(
+            "highlight default ViminiPromptHint ctermfg=Green guifg=Green cterm=italic gui=italic"
+        )
         vim.command("syntax match ViminiPromptHint '^Press .* to submit prompt$'")
 
         # Buffer-local mappings to submit prompt
-        vim.command(f"nnoremap <buffer><silent> <CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"inoremap <buffer><silent> <C-s> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"nnoremap <buffer><silent> <C-s> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"inoremap <buffer><silent> <C-x><CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"inoremap <buffer><silent> <C-CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"nnoremap <buffer><silent> <C-CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
+        vim.command(
+            f"nnoremap <buffer><silent> <CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"inoremap <buffer><silent> <C-s> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"nnoremap <buffer><silent> <C-s> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"inoremap <buffer><silent> <C-x><CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"inoremap <buffer><silent> <C-CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"nnoremap <buffer><silent> <C-CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
 
         vim.command("autocmd BufEnter <buffer> startinsert!")
 
@@ -121,6 +141,7 @@ def _open_prompt_window(req_id):
         vim.command("startinsert!")
     except Exception as e:
         util.log_info(f"Error opening prompt window: {e}")
+
 
 def _focus_prompt_window(req_id=None):
     try:
@@ -136,6 +157,7 @@ def _focus_prompt_window(req_id=None):
     except Exception as e:
         util.log_info(f"Error focusing prompt window: {e}")
     return False
+
 
 def _open_prompt_from_chat(buf_num=None):
     try:
@@ -155,10 +177,13 @@ def _open_prompt_from_chat(buf_num=None):
     except Exception as e:
         util.log_info(f"Error in _open_prompt_from_chat: {e}")
 
+
 open_prompt_from_chat = _open_prompt_from_chat
+
 
 def _on_chat_buf_enter(buf_num):
     pass
+
 
 def submit_prompt(prompt_buf_num=None, prompt_text=None):
     try:
@@ -182,7 +207,7 @@ def submit_prompt(prompt_buf_num=None, prompt_text=None):
             prompt = prompt_text.strip()
         else:
             content = "\n".join(prompt_buf[:])
-            lines = [l for l in content.split('\n') if l.strip() != HINT_MSG]
+            lines = [l for l in content.split("\n") if l.strip() != HINT_MSG]
             prompt = "\n".join(lines).strip()
 
         try:
@@ -203,7 +228,10 @@ def submit_prompt(prompt_buf_num=None, prompt_text=None):
 
             if feedback:
                 if chat_buf:
-                    if len(chat_buf) > 0 and (chat_buf[-1] in (WAITING_MSG, WELCOME_MSG) or "Waiting for prompt" in chat_buf[-1]):
+                    if len(chat_buf) > 0 and (
+                        chat_buf[-1] in (WAITING_MSG, WELCOME_MSG)
+                        or "Waiting for prompt" in chat_buf[-1]
+                    ):
                         chat_buf.options["modifiable"] = 1
                         try:
                             if len(chat_buf) == 1:
@@ -217,17 +245,22 @@ def submit_prompt(prompt_buf_num=None, prompt_text=None):
                     last_line = chat_buf[-1] if len(chat_buf) > 0 else ""
                     if last_line != "":
                         lines_to_add.append("")
-                    for pl in feedback.split('\n'):
+                    for pl in feedback.split("\n"):
                         lines_to_add.append(f"{Q_prefix}{pl}")
                     lines_to_add.append("---")
                     lines_to_add.append(A_prefix)
                     _write_to_buffer(chat_buf, lines_to_add)
                     _set_waiting(chat_buf, True)
 
-                util.display_message("Patch denied with feedback. Sending to agent...", history=True)
+                util.display_message(
+                    "Patch denied with feedback. Sending to agent...", history=True
+                )
                 send_agent_approval(False, req_id, error=feedback, feedback=feedback)
             else:
-                util.display_message("Patch denied without feedback. Canceling operation...", history=True)
+                util.display_message(
+                    "Patch denied without feedback. Canceling operation...",
+                    history=True,
+                )
                 send_agent_approval(False, req_id)
             return
 
@@ -241,32 +274,26 @@ def submit_prompt(prompt_buf_num=None, prompt_text=None):
     except Exception as e:
         util.log_info(f"Error submitting prompt: {e}")
 
+
 def send_agent_approval(approved, req_id, error=None, feedback=None):
-    params = {
-        "approved": bool(approved)
-    }
+    params = {"approved": bool(approved)}
     if error is not None:
         params["error"] = str(error)
     if feedback is not None:
         params["feedback"] = str(feedback)
-    req = {
-        "jsonrpc": "2.0",
-        "id": str(req_id),
-        "method": "chat",
-        "params": params
-    }
+    req = {"jsonrpc": "2.0", "id": str(req_id), "method": "chat", "params": params}
     util.send_channel_request(req, True)
+
 
 def send_chat_termination(req_id):
     req = {
         "jsonrpc": "2.0",
         "id": str(req_id),
         "method": "chat",
-        "params": {
-            "terminate": True
-        }
+        "params": {"terminate": True},
     }
     util.send_channel_request(req, True)
+
 
 def _on_chat_buffer_closed(buf_num):
     try:
@@ -302,6 +329,7 @@ def _on_chat_buffer_closed(buf_num):
         util.display_message("Chat session has been terminated.", history=True)
     except Exception as e:
         util.log_info(f"Error in _on_chat_buffer_closed: {e}")
+
 
 def _open_denial_prompt_window(req_id):
     try:
@@ -344,27 +372,47 @@ def _open_denial_prompt_window(req_id):
 
         prompt_buf[:] = [HINT_MSG, DENIAL_PREFIX]
 
-        vim.command("highlight default ViminiPromptHint ctermfg=Green guifg=Green cterm=italic gui=italic")
+        vim.command(
+            "highlight default ViminiPromptHint ctermfg=Green guifg=Green cterm=italic gui=italic"
+        )
         vim.command("syntax match ViminiPromptHint '^Press .* to submit prompt$'")
 
         # Buffer-local mappings to submit prompt
-        vim.command(f"nnoremap <buffer><silent> <CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"inoremap <buffer><silent> <C-s> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"nnoremap <buffer><silent> <C-s> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"inoremap <buffer><silent> <C-x><CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"inoremap <buffer><silent> <C-CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
-        vim.command(f"nnoremap <buffer><silent> <C-CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>")
+        vim.command(
+            f"nnoremap <buffer><silent> <CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"inoremap <buffer><silent> <C-s> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"nnoremap <buffer><silent> <C-s> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"inoremap <buffer><silent> <C-x><CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"inoremap <buffer><silent> <C-CR> <Esc>:py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
+        vim.command(
+            f"nnoremap <buffer><silent> <C-CR> :py3 from vimini.chat import submit_prompt; submit_prompt({prompt_buf_num})<CR>"
+        )
 
         # Autocmd to handle closing prompt buffer without submitting
-        vim.command(f"autocmd BufUnload <buffer> py3 from vimini.chat import _on_denial_prompt_closed; _on_denial_prompt_closed({prompt_buf_num}, '{req_id}')")
+        vim.command(
+            f"autocmd BufUnload <buffer> py3 from vimini.chat import _on_denial_prompt_closed; _on_denial_prompt_closed({prompt_buf_num}, '{req_id}')"
+        )
         vim.command("autocmd BufEnter <buffer> startinsert!")
 
         vim.current.window.cursor = (2, len(DENIAL_PREFIX))
         vim.command("startinsert!")
-        util.display_message("Enter feedback for denying the patch, or submit empty/close to cancel without feedback.", history=True)
+        util.display_message(
+            "Enter feedback for denying the patch, or submit empty/close to cancel without feedback.",
+            history=True,
+        )
     except Exception as e:
         util.log_info(f"Error opening denial prompt window: {e}")
         send_agent_approval(False, req_id)
+
 
 def _on_denial_prompt_closed(prompt_buf_num, req_id):
     try:
@@ -376,10 +424,13 @@ def _on_denial_prompt_closed(prompt_buf_num, req_id):
             return
         if buf is not None:
             buf.vars["vimini_denial_handled"] = 1
-        util.display_message("Patch denied without feedback. Canceling operation...", history=True)
+        util.display_message(
+            "Patch denied without feedback. Canceling operation...", history=True
+        )
         send_agent_approval(False, str(req_id))
     except Exception as e:
         util.log_info(f"Error in _on_denial_prompt_closed: {e}")
+
 
 def _on_patch_buffer_closed(req_id):
     try:
@@ -388,43 +439,62 @@ def _on_patch_buffer_closed(req_id):
         if handled:
             return
         vim.command("let b:vimini_patch_handled = 1")
-        vim.command(f"call timer_start(0, {{-> execute('py3 from vimini.chat import _open_denial_prompt_window; _open_denial_prompt_window(\"{req_id}\")')}})")
+        vim.command(
+            f"call timer_start(0, {{-> execute('py3 from vimini.chat import _open_denial_prompt_window; _open_denial_prompt_window(\"{req_id}\")')}})"
+        )
     except Exception as e:
         util.log_info(f"Error in _on_patch_buffer_closed: {e}")
+
 
 def _open_patch_buffer(temp_file, req_id):
     if not temp_file or not os.path.exists(temp_file):
         util.display_message("Error: Patch temp file does not exist.", error=True)
-        send_agent_approval(False, req_id, error="Patch temp file does not exist. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
+        send_agent_approval(
+            False,
+            req_id,
+            error="Patch temp file does not exist. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.",
+        )
         return
 
     diff_content = ""
     try:
-        with open(temp_file, 'r', encoding='utf-8') as f:
+        with open(temp_file, "r", encoding="utf-8") as f:
             diff_content = f.read()
     except Exception as e:
         util.log_info(f"Error reading patch temp file: {e}")
         util.display_message(f"Error reading patch temp file: {e}", error=True)
-        send_agent_approval(False, req_id, error=f"Error reading patch temp file: {e}. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
+        send_agent_approval(
+            False,
+            req_id,
+            error=f"Error reading patch temp file: {e}. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.",
+        )
         return
 
     if not diff_content.strip():
         util.display_message("Error: Patch content is empty.", error=True)
-        send_agent_approval(False, req_id, error="Patch content is empty. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
+        send_agent_approval(
+            False,
+            req_id,
+            error="Patch content is empty. Please send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.",
+        )
         return
 
     try:
         project_root = util.get_git_repo_root()
         if not project_root:
-            util.display_message("Error: Patches can only be applied to git repositories.", error=True)
+            util.display_message(
+                "Error: Patches can only be applied to git repositories.", error=True
+            )
             project_root = os.getcwd()
 
         fixed_lines = []
         raw_chunks = []
         current_chunk = []
-        for line in diff_content.strip('\n').split('\n'):
+        for line in diff_content.strip("\n").split("\n"):
             if line.startswith("diff --git ") or line.startswith("--- "):
-                if current_chunk and any(l.startswith("@@ ") or l.startswith("+++ ") for l in current_chunk):
+                if current_chunk and any(
+                    l.startswith("@@ ") or l.startswith("+++ ") for l in current_chunk
+                ):
                     raw_chunks.append(current_chunk)
                     current_chunk = []
             current_chunk.append(line)
@@ -435,23 +505,27 @@ def _open_patch_buffer(temp_file, req_id):
             rel_path = None
             for l in chunk:
                 if l.startswith("--- "):
-                    p = l[4:].strip().split('\t')[0]
+                    p = l[4:].strip().split("\t")[0]
                     if p != "/dev/null":
-                        if p.startswith("a/"): p = p[2:]
+                        if p.startswith("a/"):
+                            p = p[2:]
                         rel_path = p
                         break
                 elif l.startswith("+++ "):
-                    p = l[4:].strip().split('\t')[0]
+                    p = l[4:].strip().split("\t")[0]
                     if p != "/dev/null":
-                        if p.startswith("b/"): p = p[2:]
+                        if p.startswith("b/"):
+                            p = p[2:]
                         rel_path = p
                         break
                 elif l.startswith("diff --git "):
                     parts = l.split()
                     if len(parts) >= 4:
                         p = parts[3]
-                        if p.startswith("b/"): p = p[2:]
-                        elif p.startswith("a/"): p = p[2:]
+                        if p.startswith("b/"):
+                            p = p[2:]
+                        elif p.startswith("a/"):
+                            p = p[2:]
                         rel_path = p
                         break
 
@@ -493,21 +567,30 @@ def _open_patch_buffer(temp_file, req_id):
             "",
             "---",
             "",
-            _DIFF_SEPARATOR
+            _DIFF_SEPARATOR,
         ]
-        if not diff_content.endswith('\n'):
-            diff_content += '\n'
+        if not diff_content.endswith("\n"):
+            diff_content += "\n"
 
         buffer[:] = summary_lines + diff_content.splitlines()
 
         vim.command("setlocal filetype=diff")
-        vim.command(f"autocmd BufUnload <buffer> py3 from vimini.chat import _on_patch_buffer_closed; _on_patch_buffer_closed('{req_id}')")
+        vim.command(
+            f"autocmd BufUnload <buffer> py3 from vimini.chat import _on_patch_buffer_closed; _on_patch_buffer_closed('{req_id}')"
+        )
 
-        util.display_message("Patch buffer opened. Run :ViminiApply to apply changes.", history=True)
+        util.display_message(
+            "Patch buffer opened. Run :ViminiApply to apply changes.", history=True
+        )
         vim.command("redraw!")
     except Exception as e:
         util.log_info(f"Error creating patch buffer: {e}")
-        send_agent_approval(False, req_id, error=f"Error creating patch buffer: {e}. Please verify that the patch is properly formatted and retry.")
+        send_agent_approval(
+            False,
+            req_id,
+            error=f"Error creating patch buffer: {e}. Please verify that the patch is properly formatted and retry.",
+        )
+
 
 def _request_tool_permission(req_id, tool, cmd=None):
     if tool == "build_code":
@@ -521,31 +604,34 @@ def _request_tool_permission(req_id, tool, cmd=None):
         popup_content.append(f"Command: {cmd}")
     else:
         popup_content.append(f"Tool: {tool}")
-    popup_content.extend([
-        "",
-        "---",
-        "Allow execution? [y/n]"
-    ])
+    popup_content.extend(["", "---", "Allow execution? [y/n]"])
 
     popup_options = {
-        'title': f' Confirm {tool_label} Execution ', 'line': 0, 'col': 0,
-        'minwidth': 40, 'maxwidth': 80,
-        'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
-        'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
-        'close': 'none', 'zindex': 200,
+        "title": f" Confirm {tool_label} Execution ",
+        "line": 0,
+        "col": 0,
+        "minwidth": 40,
+        "maxwidth": 80,
+        "padding": [1, 2, 1, 2],
+        "border": [1, 1, 1, 1],
+        "borderchars": ["─", "│", "─", "│", "╭", "╮", "╯", "╰"],
+        "close": "none",
+        "zindex": 200,
     }
 
     confirmed = False
     try:
-        popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+        popup_id = vim.eval(
+            f"popup_create({json.dumps(popup_content)}, {popup_options})"
+        )
         vim.command("redraw!")
         try:
-            answer_code = vim.eval('getchar()')
+            answer_code = vim.eval("getchar()")
             try:
                 answer_char = chr(int(answer_code))
             except (ValueError, TypeError):
                 answer_char = ""
-            if answer_char.lower() == 'y':
+            if answer_char.lower() == "y":
                 confirmed = True
         finally:
             if int(popup_id) > 0:
@@ -556,12 +642,13 @@ def _request_tool_permission(req_id, tool, cmd=None):
         try:
             prompt_msg = f"Allow agent to execute {tool_label} command ({cmd or tool})?"
             res = vim.eval(f"confirm('{prompt_msg}', \"&Yes\\n&No\", 2)")
-            confirmed = (int(res) == 1)
+            confirmed = int(res) == 1
         except Exception as e2:
             util.log_info(f"Fallback confirm failed: {e2}")
             confirmed = False
 
     return confirmed
+
 
 def handle_channel_response(req_id, result):
     status = result.get("status")
@@ -575,7 +662,7 @@ def handle_channel_response(req_id, result):
         verbose = result.get("verbose")
         if verbose is None:
             try:
-                verbose = (vim.eval("get(g:, 'vimini_thinking', 'on')") == 'on')
+                verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
             except Exception:
                 verbose = True
         if verbose and thought_text:
@@ -594,7 +681,7 @@ def handle_channel_response(req_id, result):
             file_path = result.get("file_path")
             target_str = f" for {file_path}" if file_path else f"({temp_file})"
             req_line = f"\nAgent Requested: apply_patch{target_str}"
-        elif tool in ("build_code", "test_code"):
+        elif tool in ("build_code", "test_code", "fix_format"):
             cmd = result.get("command")
             cmd_str = f": {cmd}" if cmd else ""
             req_line = f"\nAgent Requested: {tool}{cmd_str}"
@@ -612,11 +699,24 @@ def handle_channel_response(req_id, result):
             send_agent_approval(True, req_id)
         elif tool == "apply_patch":
             _open_patch_buffer(temp_file, req_id)
-        elif tool in ("build_code", "test_code"):
-            tool_label = "build" if tool == "build_code" else "test"
+        elif tool in ("build_code", "test_code", "fix_format"):
+            if tool == "build_code":
+                tool_label = "build"
+            elif tool == "fix_format":
+                tool_label = "format"
+            else:
+                tool_label = "test"
             cmd = result.get("command")
-            project_root = (buffer.vars.get("vimini_project_root") if buffer else None) or util.get_git_repo_root() or os.getcwd()
-            perm = get_project_config(f"{tool_label}-permission", start_dir=project_root, default="Ask")
+            project_root = (
+                (buffer.vars.get("vimini_project_root") if buffer else None)
+                or util.get_git_repo_root()
+                or os.getcwd()
+            )
+            perm = get_project_config(
+                f"{tool_label}-permission",
+                start_dir=project_root,
+                default="Allow" if tool_label == "format" else "Ask",
+            )
             perm_val = perm.strip().lower() if isinstance(perm, str) else "ask"
 
             if perm_val == "allow":
@@ -643,13 +743,14 @@ def handle_channel_response(req_id, result):
         _set_waiting(buffer, False)
         err_msg = result.get("error", "Unknown error")
         error_lines = [""]
-        for line in str(err_msg).split('\n'):
+        for line in str(err_msg).split("\n"):
             if line.startswith("Error: ") or line.startswith("[Error:"):
                 error_lines.append(line)
             else:
                 error_lines.append(f"Error: {line}")
         error_lines.extend(["Please prompt again to retry later.", "", WAITING_MSG])
         _write_to_buffer(buffer, error_lines)
+
 
 def _send_prompt(prompt, buffer):
     if prompt.startswith(":"):
@@ -659,7 +760,9 @@ def _send_prompt(prompt, buffer):
             util.display_message(f"Error: {e}", error=True)
         return
 
-    if len(buffer) > 0 and (buffer[-1] in (WAITING_MSG, WELCOME_MSG) or "Waiting for prompt" in buffer[-1]):
+    if len(buffer) > 0 and (
+        buffer[-1] in (WAITING_MSG, WELCOME_MSG) or "Waiting for prompt" in buffer[-1]
+    ):
         buffer.options["modifiable"] = 1
         try:
             if len(buffer) == 1:
@@ -674,7 +777,7 @@ def _send_prompt(prompt, buffer):
     if last_line != "":
         lines_to_add.append("")
 
-    prompt_lines = prompt.split('\n')
+    prompt_lines = prompt.split("\n")
     for pl in prompt_lines:
         lines_to_add.append(f"{Q_prefix}{pl}")
     lines_to_add.append("---")
@@ -687,7 +790,7 @@ def _send_prompt(prompt, buffer):
     project_root = util.get_git_repo_root() or os.getcwd()
     verbose = False
     try:
-        verbose = (vim.eval("get(g:, 'vimini_thinking', 'on')") == 'on')
+        verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
     except Exception:
         verbose = True
     temperature = None
@@ -703,15 +806,25 @@ def _send_prompt(prompt, buffer):
             "temperature": temperature,
             "verbose": verbose,
             "prompt": prompt,
-            "project_root": project_root
-        }
+            "project_root": project_root,
+        },
     }
 
     if not util.send_channel_request(req, False):
         _set_waiting(buffer, False)
-        _write_to_buffer(buffer, ["", "Error: Agent channel is not open", "Please prompt again to retry later.", "", WAITING_MSG])
+        _write_to_buffer(
+            buffer,
+            [
+                "",
+                "Error: Agent channel is not open",
+                "Please prompt again to retry later.",
+                "",
+                WAITING_MSG,
+            ],
+        )
     else:
         util.display_message("Command has been sent and waiting for chat response")
+
 
 def chat():
     req_id = str(util.reserve_next_job_id("Chat"))
@@ -730,15 +843,23 @@ def chat():
     buffer.options["modifiable"] = 0
     vim.command("highlight default ViminiWaiting ctermfg=Green guifg=Green")
     vim.command("highlight default ViminiPrompt ctermfg=DarkBlue guifg=DarkBlue")
-    vim.command("highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic")
-    vim.command("highlight default ViminiError ctermfg=Red guifg=Red cterm=italic gui=italic")
+    vim.command(
+        "highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic"
+    )
+    vim.command(
+        "highlight default ViminiError ctermfg=Red guifg=Red cterm=italic gui=italic"
+    )
     vim.command("syntax match ViminiWaiting '^\\(Welcome.*\\|Waiting for prompt.*\\)'")
     vim.command("syntax match ViminiPrompt '^< .*'")
     vim.command("syntax match ViminiService '^Agent Requested: .*'")
     vim.command("syntax match ViminiError '^\\(\\[Error:.*\\|Error:.*\\)'")
     vim.command("syntax match ViminiError '^Please prompt again to retry later.*'")
-    vim.command(f"autocmd BufUnload <buffer> py3 from vimini.chat import _on_chat_buffer_closed; _on_chat_buffer_closed({buf_num})")
-    vim.command(f"nnoremap <buffer><silent> p :py3 from vimini.chat import _open_prompt_from_chat; _open_prompt_from_chat({buf_num})<CR>")
+    vim.command(
+        f"autocmd BufUnload <buffer> py3 from vimini.chat import _on_chat_buffer_closed; _on_chat_buffer_closed({buf_num})"
+    )
+    vim.command(
+        f"nnoremap <buffer><silent> p :py3 from vimini.chat import _open_prompt_from_chat; _open_prompt_from_chat({buf_num})<CR>"
+    )
 
     buffer.vars["vimini_job_id"] = req_id
     _set_waiting(buffer, False)
@@ -746,16 +867,17 @@ def chat():
     _write_to_buffer(buffer, [WELCOME_MSG], clear=True)
     _open_prompt_window(req_id)
 
+
 def _write_to_buffer(buffer, content, clear=False, append_to_last=False):
     buffer.options["modifiable"] = 1
     try:
         if isinstance(content, str):
-            lines = content.split('\n')
+            lines = content.split("\n")
         elif isinstance(content, list):
             lines = []
             for item in content:
                 if isinstance(item, str):
-                    lines.extend(item.split('\n'))
+                    lines.extend(item.split("\n"))
                 else:
                     lines.append(str(item))
         else:
@@ -766,8 +888,8 @@ def _write_to_buffer(buffer, content, clear=False, append_to_last=False):
         else:
             if append_to_last:
                 if len(buffer) > 0 and buffer[-1].startswith("Agent Requested:"):
-                    if isinstance(content, str) and not content.startswith('\n'):
-                        lines.insert(0, '')
+                    if isinstance(content, str) and not content.startswith("\n"):
+                        lines.insert(0, "")
                 if len(buffer) > 0:
                     buffer[-1] += lines[0]
                 else:

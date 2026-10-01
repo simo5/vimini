@@ -9,7 +9,7 @@ from vimini.common.util import (
     save_project_data,
     create_default_project_data,
     get_project_data_file_path,
-    get_project_name
+    get_project_name,
 )
 
 CONFIG_JSON_HELP_HEADER = """# Vimini Project Command Configuration
@@ -73,32 +73,45 @@ _VIMINI_CONFIG_PROJECT_ROOT = None
 _VIMINI_CONFIG_PROJECT_NAME = None
 _JSON_EDITOR_STATE = {}
 
+
 def _to_str(val):
     if isinstance(val, bytes):
-        return val.decode('utf-8', errors='replace')
+        return val.decode("utf-8", errors="replace")
     return str(val) if val is not None else ""
+
 
 def _get_key_for_line(line):
     if not line:
         return None
     trimmed = line.strip()
-    if trimmed.startswith('|') or trimmed.startswith('>'):
+    if trimmed.startswith("|") or trimmed.startswith(">"):
         return None
     for key in PROJECT_CONFIG_SCHEMA.keys():
-        if trimmed.startswith(f"{key} ") or trimmed.startswith(f"{key}=") or trimmed.startswith(f"{key}:") or trimmed == key:
+        if (
+            trimmed.startswith(f"{key} ")
+            or trimmed.startswith(f"{key}=")
+            or trimmed.startswith(f"{key}:")
+            or trimmed == key
+        ):
             return key
     if _VIMINI_PENDING_PROJECT_CONFIG:
         for key in _VIMINI_PENDING_PROJECT_CONFIG.keys():
-            if trimmed.startswith(f"{key} ") or trimmed.startswith(f"{key}=") or trimmed.startswith(f"{key}:") or trimmed == key:
+            if (
+                trimmed.startswith(f"{key} ")
+                or trimmed.startswith(f"{key}=")
+                or trimmed.startswith(f"{key}:")
+                or trimmed == key
+            ):
                 return key
     return None
+
 
 def _find_key_at_or_above(buf, line_num):
     idx = line_num - 1
     while idx >= 0:
         line = buf[idx]
         trimmed = line.strip()
-        if trimmed.startswith('>') or trimmed.startswith('|'):
+        if trimmed.startswith(">") or trimmed.startswith("|"):
             return None
         key = _get_key_for_line(line)
         if key:
@@ -106,8 +119,10 @@ def _find_key_at_or_above(buf, line_num):
         idx -= 1
     return None
 
+
 def _truncate_72(line):
     return line[:72] if len(line) > 72 else line
+
 
 def _format_command_tree(key, val, default_desc=""):
     lines = []
@@ -125,6 +140,7 @@ def _format_command_tree(key, val, default_desc=""):
             val = {"command": val.strip(), "description": ""}
 
     from vimini.common.util import parse_tool_command_config
+
     parsed = parse_tool_command_config(val)
     if not parsed:
         lines.append(f"  {key} = (not set)")
@@ -138,7 +154,11 @@ def _format_command_tree(key, val, default_desc=""):
         desc = parsed.get("description", "")
         alts = parsed.get("alternatives", [])
         has_alts = bool(alts)
-        if desc and desc != "Select one of the configured alternative commands (all-or-nothing)":
+        if (
+            desc
+            and desc
+            != "Select one of the configured alternative commands (all-or-nothing)"
+        ):
             prefix = "├── " if has_alts else "└── "
             lines.append(_truncate_72(f"    {prefix}description: {desc}"))
         for i, alt in enumerate(alts):
@@ -184,10 +204,15 @@ def _format_command_tree(key, val, default_desc=""):
                 choices_str = f" [{', '.join(choices)}]" if choices else ""
                 spec = f"{opt_name} (arg{choices_str}){req_str}"
 
-            line_str = f"        {prefix}{spec}: {opt_desc}" if opt_desc else f"        {prefix}{spec}"
+            line_str = (
+                f"        {prefix}{spec}: {opt_desc}"
+                if opt_desc
+                else f"        {prefix}{spec}"
+            )
             lines.append(_truncate_72(line_str))
 
     return lines
+
 
 def _draw_config_listing(project_name, project_root, config_data, metadata_data):
     file_path = get_project_data_file_path(start_dir=project_root) or "(not saved)"
@@ -201,7 +226,7 @@ def _draw_config_listing(project_name, project_root, config_data, metadata_data)
         f"| File: {file_path}",
         f"| Root: {project_root}",
         "",
-        "> CONFIGURATION OPTIONS"
+        "> CONFIGURATION OPTIONS",
     ]
 
     all_keys = list(PROJECT_CONFIG_SCHEMA.keys())
@@ -221,14 +246,17 @@ def _draw_config_listing(project_name, project_root, config_data, metadata_data)
             if desc:
                 buffer_lines.append(_truncate_72(f"    # {desc}"))
 
-    buffer_lines.extend([
-        "",
-        "> PROJECT METADATA (Read-Only)",
-        f"  version = {version}",
-        f"  context files = {context_files_count} file(s) tracked"
-    ])
+    buffer_lines.extend(
+        [
+            "",
+            "> PROJECT METADATA (Read-Only)",
+            f"  version = {version}",
+            f"  context files = {context_files_count} file(s) tracked",
+        ]
+    )
 
     return buffer_lines
+
 
 def prompt_reset_config_dialog(reason=None):
     """
@@ -236,47 +264,43 @@ def prompt_reset_config_dialog(reason=None):
     when the configuration fails to load.
     Returns True if user confirmed, False otherwise.
     """
-    popup_content = [
-        "Failed to load project configuration.",
-        ""
-    ]
+    popup_content = ["Failed to load project configuration.", ""]
     if reason:
         clean_reason = str(reason).strip().replace("\n", " ")
         if len(clean_reason) > 60:
             clean_reason = clean_reason[:57] + "..."
         popup_content.append(f"Error: {clean_reason}")
         popup_content.append("")
-    popup_content.extend([
-        "Reset and generate a new config?",
-        "",
-        "---",
-        "Reset configuration? [y/n]"
-    ])
+    popup_content.extend(
+        ["Reset and generate a new config?", "", "---", "Reset configuration? [y/n]"]
+    )
 
     popup_options = {
-        'title': ' Reset Configuration ',
-        'line': 0,
-        'col': 0,
-        'minwidth': 40,
-        'maxwidth': 80,
-        'padding': [1, 2, 1, 2],
-        'border': [1, 1, 1, 1],
-        'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
-        'close': 'none',
-        'zindex': 200,
+        "title": " Reset Configuration ",
+        "line": 0,
+        "col": 0,
+        "minwidth": 40,
+        "maxwidth": 80,
+        "padding": [1, 2, 1, 2],
+        "border": [1, 1, 1, 1],
+        "borderchars": ["─", "│", "─", "│", "╭", "╮", "╯", "╰"],
+        "close": "none",
+        "zindex": 200,
     }
 
     confirmed = False
     try:
-        popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+        popup_id = vim.eval(
+            f"popup_create({json.dumps(popup_content)}, {popup_options})"
+        )
         vim.command("redraw!")
         try:
-            answer_code = vim.eval('getchar()')
+            answer_code = vim.eval("getchar()")
             try:
                 answer_char = chr(int(answer_code))
             except (ValueError, TypeError):
                 answer_char = str(answer_code) if answer_code else ""
-            if answer_char.lower() == 'y':
+            if answer_char.lower() == "y":
                 confirmed = True
         finally:
             if int(popup_id) > 0:
@@ -285,14 +309,17 @@ def prompt_reset_config_dialog(reason=None):
     except Exception as e:
         util.log_info(f"Popup creation failed, falling back to confirm dialog: {e}")
         try:
-            prompt_msg = "Failed to load project configuration. Reset and generate a new config?"
+            prompt_msg = (
+                "Failed to load project configuration. Reset and generate a new config?"
+            )
             res = vim.eval(f"confirm('{prompt_msg}', \"&Yes\\n&No\", 2)")
-            confirmed = (int(res) == 1)
+            confirmed = int(res) == 1
         except Exception as e2:
             util.log_info(f"Fallback confirm dialog failed: {e2}")
             confirmed = False
 
     return confirmed
+
 
 def load_project_config_or_prompt(project_root=None, project_name=None):
     try:
@@ -301,12 +328,19 @@ def load_project_config_or_prompt(project_root=None, project_name=None):
         util.log_info(f"Project configuration failed to load: {e}")
         if prompt_reset_config_dialog(reason=str(e)):
             new_data = create_default_project_data()
-            if save_project_data(new_data, project_name=project_name, start_dir=project_root):
-                util.display_message("Project configuration reset and generated anew.", history=True)
+            if save_project_data(
+                new_data, project_name=project_name, start_dir=project_root
+            ):
+                util.display_message(
+                    "Project configuration reset and generated anew.", history=True
+                )
             else:
-                util.display_message("Failed to save newly generated configuration.", error=True)
+                util.display_message(
+                    "Failed to save newly generated configuration.", error=True
+                )
             return new_data
         raise
+
 
 def config_command():
     """
@@ -316,12 +350,14 @@ def config_command():
     global _VIMINI_CONFIG_PROJECT_ROOT, _VIMINI_CONFIG_PROJECT_NAME
     util.log_info("config_command()")
     try:
-        current_path = os.path.realpath(vim.eval('getcwd()'))
+        current_path = os.path.realpath(vim.eval("getcwd()"))
         project_root = util.get_git_repo_root() or current_path
         project_name = util.get_git_repo_name() or get_project_name(project_root)
 
         try:
-            data = load_project_config_or_prompt(project_root=project_root, project_name=project_name)
+            data = load_project_config_or_prompt(
+                project_root=project_root, project_name=project_name
+            )
         except Exception:
             util.display_message("Project configuration loading aborted.", history=True)
             return
@@ -335,19 +371,21 @@ def config_command():
         _VIMINI_CONFIG_PROJECT_ROOT = project_root
         _VIMINI_CONFIG_PROJECT_NAME = project_name
 
-        buffer_lines = _draw_config_listing(project_name, project_root, _VIMINI_PENDING_PROJECT_CONFIG, data)
+        buffer_lines = _draw_config_listing(
+            project_name, project_root, _VIMINI_PENDING_PROJECT_CONFIG, data
+        )
 
         util.new_split()
-        vim.command('file ViminiProjectConfig')
+        vim.command("file ViminiProjectConfig")
         buf = vim.current.buffer
         buf[:] = buffer_lines
 
-        buf.options['buftype'] = 'nofile'
-        buf.options['swapfile'] = False
-        buf.options['modifiable'] = False
-        buf.options['readonly'] = True
-        buf.vars['vimini_config_root'] = project_root
-        buf.vars['vimini_config_name'] = project_name
+        buf.options["buftype"] = "nofile"
+        buf.options["swapfile"] = False
+        buf.options["modifiable"] = False
+        buf.options["readonly"] = True
+        buf.vars["vimini_config_root"] = project_root
+        buf.vars["vimini_config_name"] = project_name
 
         # Syntax highlights
         vim.command("syntax match ViminiConfigKey '^\\s*[a-zA-Z0-9_-]\\+\\ze\\s*='")
@@ -364,18 +402,29 @@ def config_command():
         vim.command("highlight default link ViminiConfigSection Title")
 
         # Key mappings
-        vim.command("nnoremap <buffer> <silent> <CR> :py3 from vimini.config import edit_config_option; edit_config_option()<CR>")
-        vim.command("nnoremap <buffer> <silent> e :py3 from vimini.config import edit_config_option; edit_config_option()<CR>")
-        vim.command("nnoremap <buffer> <silent> d :py3 from vimini.config import clear_config_option; clear_config_option()<CR>")
-        vim.command("nnoremap <buffer> <silent> r :py3 from vimini.config import reset_config_options; reset_config_options()<CR>")
+        vim.command(
+            "nnoremap <buffer> <silent> <CR> :py3 from vimini.config import edit_config_option; edit_config_option()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> e :py3 from vimini.config import edit_config_option; edit_config_option()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> d :py3 from vimini.config import clear_config_option; clear_config_option()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> r :py3 from vimini.config import reset_config_options; reset_config_options()<CR>"
+        )
         vim.command("nnoremap <buffer> <silent> q :q<CR>")
-        vim.command("autocmd BufUnload <buffer> :py3 from vimini.config import confirm_project_config; confirm_project_config()")
+        vim.command(
+            "autocmd BufUnload <buffer> :py3 from vimini.config import confirm_project_config; confirm_project_config()"
+        )
 
         # Place cursor on first configuration option
         vim.current.window.cursor = (8, 2)
 
     except Exception as e:
         util.display_message(f"Error opening project configuration: {e}", error=True)
+
 
 def edit_config_option():
     global _VIMINI_PENDING_PROJECT_CONFIG
@@ -391,7 +440,9 @@ def edit_config_option():
             return
 
         if not key:
-            util.display_message("No editable configuration option selected on this line.")
+            util.display_message(
+                "No editable configuration option selected on this line."
+            )
             return
 
         schema_info = PROJECT_CONFIG_SCHEMA.get(key, {})
@@ -455,7 +506,9 @@ def edit_config_option():
         if not new_val_str:
             _VIMINI_PENDING_PROJECT_CONFIG[key] = None
         else:
-            if (new_val_str.startswith("{") and new_val_str.endswith("}")) or (new_val_str.startswith("[") and new_val_str.endswith("]")):
+            if (new_val_str.startswith("{") and new_val_str.endswith("}")) or (
+                new_val_str.startswith("[") and new_val_str.endswith("]")
+            ):
                 try:
                     _VIMINI_PENDING_PROJECT_CONFIG[key] = json.loads(new_val_str)
                 except Exception:
@@ -464,11 +517,16 @@ def edit_config_option():
                 _VIMINI_PENDING_PROJECT_CONFIG[key] = new_val_str
 
         _refresh_config_buffer(win, line_num, col)
-        val_display = repr(_VIMINI_PENDING_PROJECT_CONFIG[key]) if _VIMINI_PENDING_PROJECT_CONFIG[key] is not None else "(not set)"
+        val_display = (
+            repr(_VIMINI_PENDING_PROJECT_CONFIG[key])
+            if _VIMINI_PENDING_PROJECT_CONFIG[key] is not None
+            else "(not set)"
+        )
         util.display_message(f"Set '{key}' to {val_display}")
 
     except Exception as e:
         util.display_message(f"Error editing configuration option: {e}", error=True)
+
 
 def edit_config_as_json():
     global _VIMINI_PENDING_PROJECT_CONFIG
@@ -480,7 +538,9 @@ def edit_config_as_json():
         key = _find_key_at_or_above(buf, line_num)
 
         if not key:
-            util.display_message("No editable configuration option selected on this line.")
+            util.display_message(
+                "No editable configuration option selected on this line."
+            )
             return
 
         config_buf_nr = buf.number
@@ -491,7 +551,11 @@ def edit_config_as_json():
                 is_empty = True
             elif isinstance(current_val, str) and not current_val.strip():
                 is_empty = True
-            elif isinstance(current_val, dict) and not current_val.get("command") and not current_val.get("alternatives"):
+            elif (
+                isinstance(current_val, dict)
+                and not current_val.get("command")
+                and not current_val.get("alternatives")
+            ):
                 is_empty = True
 
             if is_empty:
@@ -504,15 +568,9 @@ def edit_config_as_json():
                 else:
                     default_cmd = "make test"
                     default_desc = "Run project tests"
-                val_to_edit = {
-                    "command": default_cmd,
-                    "description": default_desc
-                }
+                val_to_edit = {"command": default_cmd, "description": default_desc}
             elif isinstance(current_val, str):
-                val_to_edit = {
-                    "command": current_val,
-                    "description": ""
-                }
+                val_to_edit = {"command": current_val, "description": ""}
             elif isinstance(current_val, dict):
                 val_to_edit = dict(current_val)
                 if "command" in val_to_edit and "description" not in val_to_edit:
@@ -520,10 +578,7 @@ def edit_config_as_json():
             elif isinstance(current_val, list):
                 val_to_edit = list(current_val)
             else:
-                val_to_edit = {
-                    "command": str(current_val),
-                    "description": ""
-                }
+                val_to_edit = {"command": str(current_val), "description": ""}
         else:
             if current_val is None:
                 val_to_edit = {}
@@ -535,7 +590,9 @@ def edit_config_as_json():
         json_body = json.dumps(val_to_edit, indent=2) + "\n"
         initial_content = CONFIG_JSON_HELP_HEADER + "\n" + json_body
 
-        with tempfile.NamedTemporaryFile(mode="w+", delete=False, encoding="utf-8", suffix=".config") as f:
+        with tempfile.NamedTemporaryFile(
+            mode="w+", delete=False, encoding="utf-8", suffix=".config"
+        ) as f:
             f.write(initial_content)
             tmp_filename = f.name
 
@@ -549,22 +606,26 @@ def edit_config_as_json():
             "config_col": col,
         }
 
-        util.new_split('horizontal')
+        util.new_split("horizontal")
         vim.command(f"silent edit {tmp_filename.replace(' ', '\\\\ ')}")
         json_buf = vim.current.buffer
-        json_buf.options['filetype'] = 'config'
-        json_buf.options['bufhidden'] = 'wipe'
-        json_buf.vars['vimini_config_key'] = key
-        json_buf.vars['vimini_config_tmp_file'] = tmp_filename
-        json_buf.vars['vimini_config_buf_nr'] = int(config_buf_nr)
+        json_buf.options["filetype"] = "config"
+        json_buf.options["bufhidden"] = "wipe"
+        json_buf.vars["vimini_config_key"] = key
+        json_buf.vars["vimini_config_tmp_file"] = tmp_filename
+        json_buf.vars["vimini_config_buf_nr"] = int(config_buf_nr)
         vim.command("syntax match Comment '^\\s*#.*$'")
-        vim.command("autocmd BufWritePost <buffer> py3 from vimini.config import finalize_json_config; finalize_json_config(is_wipeout=False)")
-        vim.command("autocmd BufWipeout <buffer> py3 from vimini.config import finalize_json_config; finalize_json_config(is_wipeout=True)")
+        vim.command(
+            "autocmd BufWritePost <buffer> py3 from vimini.config import finalize_json_config; finalize_json_config(is_wipeout=False)"
+        )
+        vim.command(
+            "autocmd BufWipeout <buffer> py3 from vimini.config import finalize_json_config; finalize_json_config(is_wipeout=True)"
+        )
 
         json_line_num = 1
         for idx, l in enumerate(vim.current.buffer, 1):
             trimmed = l.strip()
-            if trimmed and not trimmed.startswith('#'):
+            if trimmed and not trimmed.startswith("#"):
                 json_line_num = idx
                 break
         vim.current.window.cursor = (json_line_num, 0)
@@ -572,6 +633,7 @@ def edit_config_as_json():
         vim.command("redraw")
     except Exception as e:
         util.display_message(f"Error opening JSON editor: {e}", error=True)
+
 
 def validate_config_json_content(key, content):
     try:
@@ -586,11 +648,17 @@ def validate_config_json_content(key, content):
                 return None, "Command cannot be empty."
             parsed = {"command": cmd_str, "description": ""}
         elif not isinstance(parsed, (dict, list)):
-            return None, "Command configuration must be a JSON object (or list of alternative commands)."
+            return (
+                None,
+                "Command configuration must be a JSON object (or list of alternative commands).",
+            )
 
         if isinstance(parsed, dict):
             if "alternatives" in parsed:
-                if not isinstance(parsed["alternatives"], list) or not parsed["alternatives"]:
+                if (
+                    not isinstance(parsed["alternatives"], list)
+                    or not parsed["alternatives"]
+                ):
                     return None, "'alternatives' must be a non-empty list of commands."
             elif "command" in parsed:
                 cmd_str = str(parsed.get("command", "")).strip()
@@ -598,14 +666,21 @@ def validate_config_json_content(key, content):
                     return None, "Command object must specify a non-empty 'command'."
                 desc_str = str(parsed.get("description", "")).strip()
                 if not desc_str:
-                    return None, "Command object must specify a non-empty 'description'."
+                    return (
+                        None,
+                        "Command object must specify a non-empty 'description'.",
+                    )
                 if "options" in parsed:
                     if not isinstance(parsed["options"], list):
                         return None, "'options' must be a list of option objects."
             else:
-                return None, "Command object must contain either 'command' or 'alternatives'."
+                return (
+                    None,
+                    "Command object must contain either 'command' or 'alternatives'.",
+                )
 
     return parsed, None
+
 
 def finalize_json_config(is_wipeout=True):
     global _VIMINI_PENDING_PROJECT_CONFIG
@@ -615,7 +690,7 @@ def finalize_json_config(is_wipeout=True):
         key = ""
         tmp_filename = ""
         config_buf_nr = 0
-        if hasattr(buf, 'vars'):
+        if hasattr(buf, "vars"):
             try:
                 key = _to_str(buf.vars.get("vimini_config_key"))
                 tmp_filename = _to_str(buf.vars.get("vimini_config_tmp_file"))
@@ -634,7 +709,10 @@ def finalize_json_config(is_wipeout=True):
             raw_content = f.read()
 
         initial_content = _JSON_EDITOR_STATE.get("initial_content")
-        if initial_content is not None and raw_content.strip() == initial_content.strip():
+        if (
+            initial_content is not None
+            and raw_content.strip() == initial_content.strip()
+        ):
             if is_wipeout:
                 try:
                     os.remove(tmp_filename)
@@ -644,7 +722,10 @@ def finalize_json_config(is_wipeout=True):
             return
 
         last_error_content = _JSON_EDITOR_STATE.get("last_error_content")
-        if last_error_content is not None and raw_content.strip() == last_error_content.strip():
+        if (
+            last_error_content is not None
+            and raw_content.strip() == last_error_content.strip()
+        ):
             if is_wipeout:
                 try:
                     os.remove(tmp_filename)
@@ -654,7 +735,11 @@ def finalize_json_config(is_wipeout=True):
                 util.display_message("Configuration changes abandoned.", history=True)
             return
 
-        clean_lines = [line for line in raw_content.splitlines(keepends=True) if not line.strip().startswith('#')]
+        clean_lines = [
+            line
+            for line in raw_content.splitlines(keepends=True)
+            if not line.strip().startswith("#")
+        ]
         content = "".join(clean_lines).strip()
 
         if not content:
@@ -674,7 +759,7 @@ def finalize_json_config(is_wipeout=True):
 
             error_marker = "# === CONFIGURATION VALIDATION ERROR ==="
             if error_marker in raw_content:
-                base_raw = raw_content[:raw_content.index(error_marker)].rstrip()
+                base_raw = raw_content[: raw_content.index(error_marker)].rstrip()
             else:
                 base_raw = raw_content.rstrip()
 
@@ -697,7 +782,9 @@ def finalize_json_config(is_wipeout=True):
             _JSON_EDITOR_STATE["config_line_num"] = saved_line
             _JSON_EDITOR_STATE["config_col"] = saved_col
 
-            vim.command("call timer_start(50, { -> execute('py3 from vimini.config import reopen_json_editor; reopen_json_editor()') })")
+            vim.command(
+                "call timer_start(50, { -> execute('py3 from vimini.config import reopen_json_editor; reopen_json_editor()') })"
+            )
             return
 
         _VIMINI_PENDING_PROJECT_CONFIG[key] = parsed
@@ -713,6 +800,7 @@ def finalize_json_config(is_wipeout=True):
     except Exception as e:
         util.display_message(f"Error saving JSON configuration: {e}", error=True)
 
+
 def reopen_json_editor():
     global _JSON_EDITOR_STATE
     try:
@@ -724,22 +812,26 @@ def reopen_json_editor():
         if not key or not tmp_filename or not os.path.exists(tmp_filename):
             return
 
-        util.new_split('horizontal')
+        util.new_split("horizontal")
         vim.command(f"silent edit {tmp_filename.replace(' ', '\\\\ ')}")
         json_buf = vim.current.buffer
-        json_buf.options['filetype'] = 'markdown'
-        json_buf.options['bufhidden'] = 'wipe'
-        json_buf.vars['vimini_config_key'] = key
-        json_buf.vars['vimini_config_tmp_file'] = tmp_filename
-        json_buf.vars['vimini_config_buf_nr'] = int(config_buf_nr)
+        json_buf.options["filetype"] = "markdown"
+        json_buf.options["bufhidden"] = "wipe"
+        json_buf.vars["vimini_config_key"] = key
+        json_buf.vars["vimini_config_tmp_file"] = tmp_filename
+        json_buf.vars["vimini_config_buf_nr"] = int(config_buf_nr)
         vim.command("syntax match Comment '^\\s*#.*$'")
-        vim.command("autocmd BufWritePost <buffer> py3 from vimini.config import finalize_json_config; finalize_json_config(is_wipeout=False)")
-        vim.command("autocmd BufWipeout <buffer> py3 from vimini.config import finalize_json_config; finalize_json_config(is_wipeout=True)")
+        vim.command(
+            "autocmd BufWritePost <buffer> py3 from vimini.config import finalize_json_config; finalize_json_config(is_wipeout=False)"
+        )
+        vim.command(
+            "autocmd BufWipeout <buffer> py3 from vimini.config import finalize_json_config; finalize_json_config(is_wipeout=True)"
+        )
 
         json_line_num = 1
         for idx, l in enumerate(vim.current.buffer, 1):
             trimmed = l.strip()
-            if trimmed and not trimmed.startswith('#'):
+            if trimmed and not trimmed.startswith("#"):
                 json_line_num = idx
                 break
         vim.current.window.cursor = (json_line_num, 0)
@@ -747,6 +839,7 @@ def reopen_json_editor():
         vim.command("redraw")
     except Exception as e:
         util.display_message(f"Error reopening JSON editor: {e}", error=True)
+
 
 def clear_config_option():
     global _VIMINI_PENDING_PROJECT_CONFIG
@@ -767,6 +860,7 @@ def clear_config_option():
     except Exception as e:
         util.display_message(f"Error clearing configuration option: {e}", error=True)
 
+
 def reset_config_options():
     global _VIMINI_PENDING_PROJECT_CONFIG, _VIMINI_ORIGINAL_PROJECT_CONFIG
     try:
@@ -779,6 +873,7 @@ def reset_config_options():
         util.display_message("Reset configuration options to last saved state.")
     except Exception as e:
         util.display_message(f"Error resetting configuration options: {e}", error=True)
+
 
 def _refresh_config_buffer(win=None, line_num=None, col=None, buf_nr=None):
     target_buf = None
@@ -808,14 +903,14 @@ def _refresh_config_buffer(win=None, line_num=None, col=None, buf_nr=None):
         target_buf = vim.current.buffer
 
     project_root = _VIMINI_CONFIG_PROJECT_ROOT
-    if not project_root and target_buf is not None and hasattr(target_buf, 'vars'):
+    if not project_root and target_buf is not None and hasattr(target_buf, "vars"):
         try:
             project_root = _to_str(target_buf.vars.get("vimini_config_root"))
         except Exception:
             pass
 
     project_name = _VIMINI_CONFIG_PROJECT_NAME
-    if not project_name and target_buf is not None and hasattr(target_buf, 'vars'):
+    if not project_name and target_buf is not None and hasattr(target_buf, "vars"):
         try:
             project_name = _to_str(target_buf.vars.get("vimini_config_name"))
         except Exception:
@@ -825,15 +920,17 @@ def _refresh_config_buffer(win=None, line_num=None, col=None, buf_nr=None):
         data = load_project_data(start_dir=project_root)
     except Exception:
         data = create_default_project_data()
-    buffer_lines = _draw_config_listing(project_name, project_root, _VIMINI_PENDING_PROJECT_CONFIG, data)
+    buffer_lines = _draw_config_listing(
+        project_name, project_root, _VIMINI_PENDING_PROJECT_CONFIG, data
+    )
 
-    target_buf.options['readonly'] = False
-    target_buf.options['modifiable'] = True
+    target_buf.options["readonly"] = False
+    target_buf.options["modifiable"] = True
     try:
         target_buf[:] = buffer_lines
     finally:
-        target_buf.options['modifiable'] = False
-        target_buf.options['readonly'] = True
+        target_buf.options["modifiable"] = False
+        target_buf.options["readonly"] = True
 
     for w in vim.windows:
         if w.buffer.number == target_buf.number:
@@ -845,43 +942,64 @@ def _refresh_config_buffer(win=None, line_num=None, col=None, buf_nr=None):
 
     vim.command("redraw")
 
+
 def confirm_project_config():
     global _VIMINI_PENDING_PROJECT_CONFIG, _VIMINI_ORIGINAL_PROJECT_CONFIG
     global _VIMINI_CONFIG_PROJECT_ROOT, _VIMINI_CONFIG_PROJECT_NAME
     try:
-        if _VIMINI_PENDING_PROJECT_CONFIG is None or _VIMINI_ORIGINAL_PROJECT_CONFIG is None:
+        if (
+            _VIMINI_PENDING_PROJECT_CONFIG is None
+            or _VIMINI_ORIGINAL_PROJECT_CONFIG is None
+        ):
             return
 
         if _VIMINI_PENDING_PROJECT_CONFIG == _VIMINI_ORIGINAL_PROJECT_CONFIG:
             return
 
-        project_root = _VIMINI_CONFIG_PROJECT_ROOT or util.get_git_repo_root() or os.getcwd()
+        project_root = (
+            _VIMINI_CONFIG_PROJECT_ROOT or util.get_git_repo_root() or os.getcwd()
+        )
 
         popup_content = ["Save project configuration changes?", ""]
         for k, v in _VIMINI_PENDING_PROJECT_CONFIG.items():
             orig_v = _VIMINI_ORIGINAL_PROJECT_CONFIG.get(k)
             if orig_v != v:
-                orig_disp = json.dumps(orig_v) if isinstance(orig_v, (dict, list)) else (orig_v if orig_v is not None else "(not set)")
-                new_disp = json.dumps(v) if isinstance(v, (dict, list)) else (v if v is not None else "(not set)")
+                orig_disp = (
+                    json.dumps(orig_v)
+                    if isinstance(orig_v, (dict, list))
+                    else (orig_v if orig_v is not None else "(not set)")
+                )
+                new_disp = (
+                    json.dumps(v)
+                    if isinstance(v, (dict, list))
+                    else (v if v is not None else "(not set)")
+                )
                 popup_content.append(f"  {k}: {orig_disp} -> {new_disp}")
 
-        popup_content.extend(['', '---', 'Accept changes? [y/n]'])
+        popup_content.extend(["", "---", "Accept changes? [y/n]"])
 
         popup_options = {
-            'title': ' Confirm Configuration ', 'line': 0, 'col': 0,
-            'minwidth': 40, 'maxwidth': 80,
-            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
-            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
-            'close': 'none', 'zindex': 200,
+            "title": " Confirm Configuration ",
+            "line": 0,
+            "col": 0,
+            "minwidth": 40,
+            "maxwidth": 80,
+            "padding": [1, 2, 1, 2],
+            "border": [1, 1, 1, 1],
+            "borderchars": ["─", "│", "─", "│", "╭", "╮", "╯", "╰"],
+            "close": "none",
+            "zindex": 200,
         }
-        popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+        popup_id = vim.eval(
+            f"popup_create({json.dumps(popup_content)}, {popup_options})"
+        )
         vim.command("redraw!")
 
         confirmed = False
         try:
-            answer_code = vim.eval('getchar()')
+            answer_code = vim.eval("getchar()")
             answer_char = chr(int(answer_code))
-            if answer_char.lower() == 'y':
+            if answer_char.lower() == "y":
                 confirmed = True
         except (vim.error, ValueError, TypeError):
             pass
@@ -896,11 +1014,17 @@ def confirm_project_config():
                 data = create_default_project_data()
             data["configuration"] = _VIMINI_PENDING_PROJECT_CONFIG
             if save_project_data(data, start_dir=project_root):
-                util.display_message("Project configuration updated and saved.", history=True)
+                util.display_message(
+                    "Project configuration updated and saved.", history=True
+                )
             else:
-                util.display_message("Failed to save project configuration.", error=True)
+                util.display_message(
+                    "Failed to save project configuration.", error=True
+                )
         else:
-            util.display_message("Project configuration changes discarded.", history=True)
+            util.display_message(
+                "Project configuration changes discarded.", history=True
+            )
 
     except Exception as e:
         util.display_message(f"Error confirming project configuration: {e}", error=True)

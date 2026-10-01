@@ -17,12 +17,13 @@ from vimini.common.util import (
     list_directory,
     parse_tool_command_config,
     read_file,
-    generate_diff_for_file
+    generate_diff_for_file,
 )
 from vimini.agent.comms import CommSession
 from vimini.common.genai import get_client, load_api_key, create_generation_config
 
-logger = logging.getLogger('vimini_agent')
+logger = logging.getLogger("vimini_agent")
+
 
 def generate_tool_declaration_schema(tool_label, tool_config):
     """
@@ -39,7 +40,7 @@ def generate_tool_declaration_schema(tool_label, tool_config):
     if not tool_config:
         return (
             f"{tool_action}. (No {tool_label} command is currently configured in project options).",
-            types.Schema(type=types.Type.OBJECT)
+            types.Schema(type=types.Type.OBJECT),
         )
 
     if tool_config["type"] == "simple":
@@ -49,10 +50,7 @@ def generate_tool_declaration_schema(tool_label, tool_config):
             f"Configured command: '{cmd}'.\n"
             f"This command accepts no options or arguments. Call this tool with an empty object {{}}."
         )
-        return (
-            desc,
-            types.Schema(type=types.Type.OBJECT, properties={})
-        )
+        return (desc, types.Schema(type=types.Type.OBJECT, properties={}))
 
     if tool_config["type"] == "alternatives":
         alts = tool_config.get("alternatives", [])
@@ -75,10 +73,10 @@ def generate_tool_declaration_schema(tool_label, tool_config):
                 "command": types.Schema(
                     type=types.Type.STRING,
                     enum=cmd_enum,
-                    description="The exact alternative command to run. Must be one of the allowed choices."
+                    description="The exact alternative command to run. Must be one of the allowed choices.",
                 )
             },
-            required=["command"]
+            required=["command"],
         )
         return desc, params
 
@@ -101,41 +99,42 @@ def generate_tool_declaration_schema(tool_label, tool_config):
                 if not has_value:
                     full_desc = f"Boolean flag '{flag}' (no value). Set to true to include this flag. {opt_desc}".strip()
                     properties[name] = types.Schema(
-                        type=types.Type.BOOLEAN,
-                        description=full_desc
+                        type=types.Type.BOOLEAN, description=full_desc
                     )
                     opt_lines.append(f"- {name} (flag '{flag}', boolean): {opt_desc}")
                 else:
                     if choices:
                         full_desc = f"Flag '{flag} <choice>'. Allowed values: {choices}. {opt_desc}".strip()
                         properties[name] = types.Schema(
-                            type=types.Type.STRING,
-                            enum=choices,
-                            description=full_desc
+                            type=types.Type.STRING, enum=choices, description=full_desc
                         )
-                        opt_lines.append(f"- {name} (flag '{flag}', choices: {choices}): {opt_desc}")
+                        opt_lines.append(
+                            f"- {name} (flag '{flag}', choices: {choices}): {opt_desc}"
+                        )
                     else:
                         full_desc = f"Flag '{flag} <value>'. Free-form string argument. {opt_desc}".strip()
                         properties[name] = types.Schema(
-                            type=types.Type.STRING,
-                            description=full_desc
+                            type=types.Type.STRING, description=full_desc
                         )
-                        opt_lines.append(f"- {name} (flag '{flag}', string value): {opt_desc}")
+                        opt_lines.append(
+                            f"- {name} (flag '{flag}', string value): {opt_desc}"
+                        )
             else:
                 # Argument
                 if choices:
                     full_desc = f"Positional argument (single string). Allowed values: {choices}. {opt_desc}".strip()
                     properties[name] = types.Schema(
-                        type=types.Type.STRING,
-                        enum=choices,
-                        description=full_desc
+                        type=types.Type.STRING, enum=choices, description=full_desc
                     )
-                    opt_lines.append(f"- {name} (argument, choices: {choices}): {opt_desc}")
+                    opt_lines.append(
+                        f"- {name} (argument, choices: {choices}): {opt_desc}"
+                    )
                 else:
-                    full_desc = f"Positional argument (single string). {opt_desc}".strip()
+                    full_desc = (
+                        f"Positional argument (single string). {opt_desc}".strip()
+                    )
                     properties[name] = types.Schema(
-                        type=types.Type.STRING,
-                        description=full_desc
+                        type=types.Type.STRING, description=full_desc
                     )
                     opt_lines.append(f"- {name} (argument, string): {opt_desc}")
 
@@ -153,11 +152,12 @@ def generate_tool_declaration_schema(tool_label, tool_config):
         params = types.Schema(
             type=types.Type.OBJECT,
             properties=properties,
-            required=required if required else None
+            required=required if required else None,
         )
         return desc, params
 
     return (f"{tool_action}.", types.Schema(type=types.Type.OBJECT))
+
 
 def get_agent_tools(project_root=None):
     build_config = get_project_tool_config("build", start_dir=project_root)
@@ -166,81 +166,78 @@ def get_agent_tools(project_root=None):
 
     build_desc, build_schema = generate_tool_declaration_schema("build", build_config)
     test_desc, test_schema = generate_tool_declaration_schema("test", test_config)
-    format_desc, format_schema = generate_tool_declaration_schema("format", format_config)
+    format_desc, format_schema = generate_tool_declaration_schema(
+        "format", format_config
+    )
 
     return [
         types.Tool(
             function_declarations=[
                 types.FunctionDeclaration(
-                    name='apply_patch',
-                    description='Applies file modifications or creates new files. '
-                        'You can provide the entire file contents using file_path and file_content '
-                        '(strongly preferred, as a clean unified diff is generated locally to show the user), '
-                        'or provide a unified diff patch via diff_content. '
-                        'Ensure file paths are relative to the project root directory.',
+                    name="apply_patch",
+                    description="Applies file modifications or creates new files. "
+                    "You can provide the entire file contents using file_path and file_content "
+                    "(strongly preferred, as a clean unified diff is generated locally to show the user), "
+                    "or provide a unified diff patch via diff_content. "
+                    "Ensure file paths are relative to the project root directory.",
                     parameters=types.Schema(
                         type=types.Type.OBJECT,
                         properties={
-                            'file_path': types.Schema(
+                            "file_path": types.Schema(
                                 type=types.Type.STRING,
-                                description='The path to the file to modify or create, relative to the project root.'
+                                description="The path to the file to modify or create, relative to the project root.",
                             ),
-                            'file_content': types.Schema(
+                            "file_content": types.Schema(
                                 type=types.Type.STRING,
-                                description='The complete, entire content of the file. A unified diff will be generated locally against the existing file.'
+                                description="The complete, entire content of the file. A unified diff will be generated locally against the existing file.",
                             ),
-                            'diff_content': types.Schema(
+                            "diff_content": types.Schema(
                                 type=types.Type.STRING,
-                                description='The unified diff patch to apply (optional if file_path and file_content are provided).'
-                            )
-                        }
-                    )
+                                description="The unified diff patch to apply (optional if file_path and file_content are provided).",
+                            ),
+                        },
+                    ),
                 ),
                 types.FunctionDeclaration(
-                    name='read_file',
-                    description='Reads the content of a file. Only files within the current working directory or its subdirectories can be read.',
+                    name="read_file",
+                    description="Reads the content of a file. Only files within the current working directory or its subdirectories can be read.",
                     parameters=types.Schema(
                         type=types.Type.OBJECT,
                         properties={
-                            'filepath': types.Schema(
+                            "filepath": types.Schema(
                                 type=types.Type.STRING,
-                                description='Path to the file to read.'
+                                description="Path to the file to read.",
                             )
                         },
-                        required=['filepath']
-                    )
+                        required=["filepath"],
+                    ),
                 ),
                 types.FunctionDeclaration(
-                    name='list_directory',
-                    description='Reads the list of files and directories in a given path. Cannot list above the current working directory.',
+                    name="list_directory",
+                    description="Reads the list of files and directories in a given path. Cannot list above the current working directory.",
                     parameters=types.Schema(
                         type=types.Type.OBJECT,
                         properties={
-                            'directory_path': types.Schema(
+                            "directory_path": types.Schema(
                                 type=types.Type.STRING,
-                                description='The relative path to the directory to list. Defaults to "." for the current directory.'
+                                description='The relative path to the directory to list. Defaults to "." for the current directory.',
                             )
-                        }
-                    )
+                        },
+                    ),
                 ),
                 types.FunctionDeclaration(
-                    name='build_code',
-                    description=build_desc,
-                    parameters=build_schema
+                    name="build_code", description=build_desc, parameters=build_schema
                 ),
                 types.FunctionDeclaration(
-                    name='test_code',
-                    description=test_desc,
-                    parameters=test_schema
+                    name="test_code", description=test_desc, parameters=test_schema
                 ),
                 types.FunctionDeclaration(
-                    name='fix_format',
-                    description=format_desc,
-                    parameters=format_schema
-                )
+                    name="fix_format", description=format_desc, parameters=format_schema
+                ),
             ]
         )
     ]
+
 
 agent_tools = get_agent_tools()
 
@@ -255,26 +252,32 @@ def validate_patch_is_safe(temp_file_path, project_root=None):
         return False, f"Temp file does not exist: {temp_file_path}"
 
     try:
-        with open(temp_file_path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(temp_file_path, "r", encoding="utf-8", errors="replace") as f:
             diff_content = f.read()
     except Exception as e:
         return False, f"Error reading temp file: {e}"
 
     modified_files = set()
-    for line in diff_content.split('\n'):
-        if line.startswith('--- ') or line.startswith('+++ '):
-            path_part = line[4:].split('\t')[0].strip()
-            if path_part == '/dev/null':
+    for line in diff_content.split("\n"):
+        if line.startswith("--- ") or line.startswith("+++ "):
+            path_part = line[4:].split("\t")[0].strip()
+            if path_part == "/dev/null":
                 continue
-            if path_part.startswith('a/') or path_part.startswith('b/'):
+            if path_part.startswith("a/") or path_part.startswith("b/"):
                 path_part = path_part[2:]
 
             target_path = os.path.realpath(os.path.join(project_root, path_part))
             try:
                 if os.path.commonpath([project_root, target_path]) != project_root:
-                    return False, f"You are not permitted to modify files outside the project: {path_part}"
+                    return (
+                        False,
+                        f"You are not permitted to modify files outside the project: {path_part}",
+                    )
             except ValueError:
-                return False, f"Path resolution failed for {path_part}. You are not permitted to modify files outside the project."
+                return (
+                    False,
+                    f"Path resolution failed for {path_part}. You are not permitted to modify files outside the project.",
+                )
 
             modified_files.add(path_part)
 
@@ -283,9 +286,12 @@ def validate_patch_is_safe(temp_file_path, project_root=None):
 
     return True, "Patch is safe."
 
+
 class ChatSession(CommSession):
     def __init__(self, req_id, result_queue, agent_config=None, request=None):
-        super().__init__(req_id, result_queue, agent_config=agent_config, request=request)
+        super().__init__(
+            req_id, result_queue, agent_config=agent_config, request=request
+        )
         self.method = "chat"
         self.client = None
         self.session = None
@@ -304,23 +310,29 @@ class ChatSession(CommSession):
 
         if not cmd:
             project_name = get_project_name(project_root)
-            project_file_path = get_project_data_file_path(project_name, project_root) or "~/.var/vimini/projects/<project_name>"
+            project_file_path = (
+                get_project_data_file_path(project_name, project_root)
+                or "~/.var/vimini/projects/<project_name>"
+            )
             config_key = f"{tool_label}-command"
             msg = (
                 f"\n[No {tool_label} command is defined for this project]\n"
                 f"To configure a {tool_label} command, run :ViminiConfig or set '{config_key}' in the project file:\n"
                 f"  {project_file_path}\n"
             )
-            self.send_response(current_req_id, conn, result={
-                "status": "chunk",
-                "text": msg
-            })
+            self.send_response(
+                current_req_id, conn, result={"status": "chunk", "text": msg}
+            )
             return f"The tool '{tool}' is not available for this project because no {tool_label} command is configured in project options."
 
-        self.send_response(current_req_id, conn, result={
-            "status": "chunk",
-            "text": f"\n[Executing {tool_label} command: {cmd}...]\n"
-        })
+        self.send_response(
+            current_req_id,
+            conn,
+            result={
+                "status": "chunk",
+                "text": f"\n[Executing {tool_label} command: {cmd}...]\n",
+            },
+        )
 
         try:
             proc = subprocess.Popen(
@@ -331,35 +343,34 @@ class ChatSession(CommSession):
                 text=True,
                 bufsize=1,
                 cwd=project_root,
-                errors='replace'
+                errors="replace",
             )
 
             output_lines = []
-            for line in iter(proc.stdout.readline, ''):
+            for line in iter(proc.stdout.readline, ""):
                 output_lines.append(line)
-                self.send_response(current_req_id, conn, result={
-                    "status": "chunk",
-                    "text": line
-                })
+                self.send_response(
+                    current_req_id, conn, result={"status": "chunk", "text": line}
+                )
 
             proc.wait()
             returncode = proc.returncode
             full_output = "".join(output_lines).strip()
         except Exception as e:
             err_text = f"Execution error: {e}\n"
-            self.send_response(current_req_id, conn, result={
-                "status": "chunk",
-                "text": err_text
-            })
+            self.send_response(
+                current_req_id, conn, result={"status": "chunk", "text": err_text}
+            )
             returncode = -1
             full_output = err_text.strip()
 
-        status_str = "succeeded" if returncode == 0 else f"failed with exit code {returncode}"
+        status_str = (
+            "succeeded" if returncode == 0 else f"failed with exit code {returncode}"
+        )
         chat_msg = f"\n[{tool_label.capitalize()} command {status_str}]\n"
-        self.send_response(current_req_id, conn, result={
-            "status": "chunk",
-            "text": chat_msg
-        })
+        self.send_response(
+            current_req_id, conn, result={"status": "chunk", "text": chat_msg}
+        )
 
         if returncode == 0:
             if full_output:
@@ -371,7 +382,6 @@ class ChatSession(CommSession):
                 return f"{tool_label.capitalize()} command '{cmd}' failed (exit code {returncode}).\n\nCommand Output:\n{full_output}"
             else:
                 return f"{tool_label.capitalize()} command '{cmd}' failed (exit code {returncode})."
-
 
     def _process_command(self, req_id, params, conn):
         if isinstance(params, dict) and params.get("terminate"):
@@ -403,45 +413,85 @@ class ChatSession(CommSession):
 
         if not self.session:
             self.client = get_client(config=agent_config)
-            compilation_needed = get_project_config("compilation-needed", start_dir=self.project_root, default=False)
+            compilation_needed = get_project_config(
+                "compilation-needed", start_dir=self.project_root, default=False
+            )
             build_config = get_project_tool_config("build", start_dir=self.project_root)
             test_config = get_project_tool_config("test", start_dir=self.project_root)
-            format_config = get_project_tool_config("format", start_dir=self.project_root)
+            format_config = get_project_tool_config(
+                "format", start_dir=self.project_root
+            )
 
             tools_info = []
             if build_config:
                 if build_config["type"] == "alternatives":
-                    alts_str = ", ".join(repr(a["command"]) for a in build_config.get("alternatives", []))
-                    tools_info.append(f"- `build_code`: Alternative build commands available: {alts_str}. Select one via `command` parameter (all-or-nothing, no extra options).")
+                    alts_str = ", ".join(
+                        repr(a["command"]) for a in build_config.get("alternatives", [])
+                    )
+                    tools_info.append(
+                        f"- `build_code`: Alternative build commands available: {alts_str}. Select one via `command` parameter (all-or-nothing, no extra options)."
+                    )
                 elif build_config["type"] == "command_with_options":
-                    opts_str = ", ".join(f"{opt['name']} ({opt.get('flag', opt['name'])})" for opt in build_config.get("options", []))
-                    tools_info.append(f"- `build_code`: Base command: '{build_config['command']}'. Available options/arguments: {opts_str or 'none'}.")
+                    opts_str = ", ".join(
+                        f"{opt['name']} ({opt.get('flag', opt['name'])})"
+                        for opt in build_config.get("options", [])
+                    )
+                    tools_info.append(
+                        f"- `build_code`: Base command: '{build_config['command']}'. Available options/arguments: {opts_str or 'none'}."
+                    )
                 else:
-                    tools_info.append(f"- `build_code`: Simple command '{build_config['command']}'. Accepts no options.")
+                    tools_info.append(
+                        f"- `build_code`: Simple command '{build_config['command']}'. Accepts no options."
+                    )
             elif not compilation_needed:
-                tools_info.append("- `build_code`: Not configured and compilation is not needed.")
+                tools_info.append(
+                    "- `build_code`: Not configured and compilation is not needed."
+                )
 
             if test_config:
                 if test_config["type"] == "alternatives":
-                    alts_str = ", ".join(repr(a["command"]) for a in test_config.get("alternatives", []))
-                    tools_info.append(f"- `test_code`: Alternative test commands available: {alts_str}. Select one via `command` parameter (all-or-nothing, no extra options).")
+                    alts_str = ", ".join(
+                        repr(a["command"]) for a in test_config.get("alternatives", [])
+                    )
+                    tools_info.append(
+                        f"- `test_code`: Alternative test commands available: {alts_str}. Select one via `command` parameter (all-or-nothing, no extra options)."
+                    )
                 elif test_config["type"] == "command_with_options":
-                    opts_str = ", ".join(f"{opt['name']} ({opt.get('flag', opt['name'])})" for opt in test_config.get("options", []))
-                    tools_info.append(f"- `test_code`: Base command: '{test_config['command']}'. Available options/arguments: {opts_str or 'none'}.")
+                    opts_str = ", ".join(
+                        f"{opt['name']} ({opt.get('flag', opt['name'])})"
+                        for opt in test_config.get("options", [])
+                    )
+                    tools_info.append(
+                        f"- `test_code`: Base command: '{test_config['command']}'. Available options/arguments: {opts_str or 'none'}."
+                    )
                 else:
-                    tools_info.append(f"- `test_code`: Simple command '{test_config['command']}'. Accepts no options.")
+                    tools_info.append(
+                        f"- `test_code`: Simple command '{test_config['command']}'. Accepts no options."
+                    )
             else:
                 tools_info.append("- `test_code`: No test command configured.")
 
             if format_config:
                 if format_config["type"] == "alternatives":
-                    alts_str = ", ".join(repr(a["command"]) for a in format_config.get("alternatives", []))
-                    tools_info.append(f"- `fix_format`: Alternative format commands available: {alts_str}. Select one via `command` parameter.")
+                    alts_str = ", ".join(
+                        repr(a["command"])
+                        for a in format_config.get("alternatives", [])
+                    )
+                    tools_info.append(
+                        f"- `fix_format`: Alternative format commands available: {alts_str}. Select one via `command` parameter."
+                    )
                 elif format_config["type"] == "command_with_options":
-                    opts_str = ", ".join(f"{opt['name']} ({opt.get('flag', opt['name'])})" for opt in format_config.get("options", []))
-                    tools_info.append(f"- `fix_format`: Base command: '{format_config['command']}'. Available options/arguments: {opts_str or 'none'}.")
+                    opts_str = ", ".join(
+                        f"{opt['name']} ({opt.get('flag', opt['name'])})"
+                        for opt in format_config.get("options", [])
+                    )
+                    tools_info.append(
+                        f"- `fix_format`: Base command: '{format_config['command']}'. Available options/arguments: {opts_str or 'none'}."
+                    )
                 else:
-                    tools_info.append(f"- `fix_format`: Simple command '{format_config['command']}'. Accepts no options.")
+                    tools_info.append(
+                        f"- `fix_format`: Simple command '{format_config['command']}'. Accepts no options."
+                    )
             else:
                 tools_info.append("- `fix_format`: No format command configured.")
 
@@ -493,13 +543,10 @@ class ChatSession(CommSession):
                     "5. **Limit Retries:** Avoid multiple calls to `apply_patch` for the same file in a single response. If an apply_patch command is refused, do not retry and instead prompt the user for more instructions.\n"
                     "6. **Be Concise:** Provide brief, clear explanations. Avoid unnecessary conversational filler."
                 ),
-                disable_function_calling=False
+                disable_function_calling=False,
             )
 
-            kwargs = {
-                "model": model,
-                "config": agent_config_obj
-            }
+            kwargs = {"model": model, "config": agent_config_obj}
             if self.chat_history is not None:
                 kwargs["history"] = self.chat_history
             self.session = self.client.chats.create(**kwargs)
@@ -513,33 +560,51 @@ class ChatSession(CommSession):
             try:
                 response_stream = self.session.send_message_stream(current_prompt)
                 for chunk in response_stream:
-                    if chunk.candidates and chunk.candidates[0].content and chunk.candidates[0].content.parts:
+                    if (
+                        chunk.candidates
+                        and chunk.candidates[0].content
+                        and chunk.candidates[0].content.parts
+                    ):
                         modified_text = ""
                         for part in chunk.candidates[0].content.parts:
-                            if hasattr(part, 'function_call') and part.function_call:
+                            if hasattr(part, "function_call") and part.function_call:
                                 tool_call = part.function_call
                                 pending_tool_calls.append(tool_call)
-                            elif getattr(part, 'thought', False):
-                                thought_chunk = getattr(part, 'text', '') or ''
+                            elif getattr(part, "thought", False):
+                                thought_chunk = getattr(part, "text", "") or ""
                                 if thought_chunk:
-                                    self.send_response(current_req_id, conn, result={
-                                        "status": "thought",
-                                        "thought": thought_chunk,
-                                        "verbose": verbose
-                                    })
-                            elif hasattr(part, 'text') and part.text:
+                                    self.send_response(
+                                        current_req_id,
+                                        conn,
+                                        result={
+                                            "status": "thought",
+                                            "thought": thought_chunk,
+                                            "verbose": verbose,
+                                        },
+                                    )
+                            elif hasattr(part, "text") and part.text:
                                 modified_text += part.text
 
                         if modified_text:
-                            self.send_response(current_req_id, conn, result={"status": "chunk", "text": modified_text})
+                            self.send_response(
+                                current_req_id,
+                                conn,
+                                result={"status": "chunk", "text": modified_text},
+                            )
                     elif chunk.text:
-                        self.send_response(current_req_id, conn, result={"status": "chunk", "text": chunk.text})
+                        self.send_response(
+                            current_req_id,
+                            conn,
+                            result={"status": "chunk", "text": chunk.text},
+                        )
             except Exception as e:
-                logger.error(f"Error in ChatSession for req_id {current_req_id}: {e}", exc_info=True)
-                self.send_response(current_req_id, conn, result={
-                    "status": "error",
-                    "error": str(e)
-                })
+                logger.error(
+                    f"Error in ChatSession for req_id {current_req_id}: {e}",
+                    exc_info=True,
+                )
+                self.send_response(
+                    current_req_id, conn, result={"status": "error", "error": str(e)}
+                )
                 if self.session:
                     try:
                         self.chat_history = self.session.get_history()
@@ -555,19 +620,33 @@ class ChatSession(CommSession):
                     args_dict = dict(tool_call.args) if tool_call.args else {}
                     temp_file_path = None
                     logger.info(f"Chat[{req_id}]: tool use requested: {tool_call.name}")
-                    if tool_call.name == 'apply_patch':
+                    if tool_call.name == "apply_patch":
                         files_to_diff = []
-                        if "files" in args_dict and isinstance(args_dict["files"], list):
+                        if "files" in args_dict and isinstance(
+                            args_dict["files"], list
+                        ):
                             for f_item in args_dict["files"]:
                                 if isinstance(f_item, dict):
-                                    f_path = f_item.get("file_path") or f_item.get("filepath")
-                                    f_content = f_item.get("file_content") if "file_content" in f_item else f_item.get("content")
+                                    f_path = f_item.get("file_path") or f_item.get(
+                                        "filepath"
+                                    )
+                                    f_content = (
+                                        f_item.get("file_content")
+                                        if "file_content" in f_item
+                                        else f_item.get("content")
+                                    )
                                     if f_path is not None and f_content is not None:
                                         files_to_diff.append((f_path, f_content))
 
-                        file_path = args_dict.get('file_path') or args_dict.get('filepath')
-                        file_content = args_dict.get('file_content') if 'file_content' in args_dict else args_dict.get('content')
-                        diff_content = args_dict.get('diff_content', '')
+                        file_path = args_dict.get("file_path") or args_dict.get(
+                            "filepath"
+                        )
+                        file_content = (
+                            args_dict.get("file_content")
+                            if "file_content" in args_dict
+                            else args_dict.get("content")
+                        )
+                        diff_content = args_dict.get("diff_content", "")
 
                         if not files_to_diff and file_path and file_content is not None:
                             files_to_diff.append((file_path, file_content))
@@ -575,7 +654,14 @@ class ChatSession(CommSession):
                         # If full content was mistakenly provided in diff_content along with file_path
                         if not files_to_diff and file_path and diff_content:
                             stripped_diff = diff_content.lstrip()
-                            if not (stripped_diff.startswith("diff --git") or stripped_diff.startswith("--- ") or stripped_diff.startswith("@@ ")) and "\n@@ " not in diff_content:
+                            if (
+                                not (
+                                    stripped_diff.startswith("diff --git")
+                                    or stripped_diff.startswith("--- ")
+                                    or stripped_diff.startswith("@@ ")
+                                )
+                                and "\n@@ " not in diff_content
+                            ):
                                 files_to_diff.append((file_path, diff_content))
                                 diff_content = ""
 
@@ -583,122 +669,185 @@ class ChatSession(CommSession):
                             diff_parts = []
                             diff_errors = []
                             for f_path, f_content in files_to_diff:
-                                f_diff, err = generate_diff_for_file(f_path, f_content, self.project_root)
+                                f_diff, err = generate_diff_for_file(
+                                    f_path, f_content, self.project_root
+                                )
                                 if err:
                                     diff_errors.append(err)
                                 elif f_diff:
                                     diff_parts.append(f_diff)
 
                             if diff_errors:
-                                responses.append(types.Part.from_function_response(
-                                    name=tool_call.name,
-                                    response={'result': f"Patch generation failed:\n" + "\n".join(diff_errors)}
-                                ))
+                                responses.append(
+                                    types.Part.from_function_response(
+                                        name=tool_call.name,
+                                        response={
+                                            "result": f"Patch generation failed:\n"
+                                            + "\n".join(diff_errors)
+                                        },
+                                    )
+                                )
                                 continue
 
                             if not diff_parts:
-                                responses.append(types.Part.from_function_response(
-                                    name=tool_call.name,
-                                    response={'result': "The provided file content is identical to the existing file; no modifications were detected."}
-                                ))
+                                responses.append(
+                                    types.Part.from_function_response(
+                                        name=tool_call.name,
+                                        response={
+                                            "result": "The provided file content is identical to the existing file; no modifications were detected."
+                                        },
+                                    )
+                                )
                                 continue
 
                             diff_content = "".join(diff_parts)
 
                         if not diff_content:
-                            responses.append(types.Part.from_function_response(
-                                name=tool_call.name,
-                                response={'result': "Patch failed: Neither valid 'file_content' (with 'file_path') nor 'diff_content' was provided."}
-                            ))
+                            responses.append(
+                                types.Part.from_function_response(
+                                    name=tool_call.name,
+                                    response={
+                                        "result": "Patch failed: Neither valid 'file_content' (with 'file_path') nor 'diff_content' was provided."
+                                    },
+                                )
+                            )
                             continue
 
-                        with tempfile.NamedTemporaryFile(mode='w', suffix='.diff', delete=False, encoding='utf-8') as f:
+                        with tempfile.NamedTemporaryFile(
+                            mode="w", suffix=".diff", delete=False, encoding="utf-8"
+                        ) as f:
                             f.write(diff_content)
                             temp_file_path = f.name
 
-                        is_safe, err_msg = validate_patch_is_safe(temp_file_path, self.project_root)
+                        is_safe, err_msg = validate_patch_is_safe(
+                            temp_file_path, self.project_root
+                        )
                         if not is_safe:
                             if temp_file_path and os.path.exists(temp_file_path):
                                 try:
                                     os.remove(temp_file_path)
                                 except Exception:
                                     pass
-                            responses.append(types.Part.from_function_response(
-                                name=tool_call.name,
-                                response={'result': f"Patch validation failed: {err_msg}"}
-                            ))
+                            responses.append(
+                                types.Part.from_function_response(
+                                    name=tool_call.name,
+                                    response={
+                                        "result": f"Patch validation failed: {err_msg}"
+                                    },
+                                )
+                            )
                             continue
 
-                        target_desc = ", ".join(f[0] for f in files_to_diff) if files_to_diff else (file_path or "")
+                        target_desc = (
+                            ", ".join(f[0] for f in files_to_diff)
+                            if files_to_diff
+                            else (file_path or "")
+                        )
                         desc_str = f" for {target_desc}" if target_desc else ""
                         req_msg = f"\n[Agent requested tool execution: apply_patch{desc_str}. Patch saved to temp file: {temp_file_path}]\n"
-                        self.send_response(current_req_id, conn, result={
-                            "status": "tool_use_requested",
-                            "tool": tool_call.name,
-                            "file_path": target_desc,
-                            "temp_file": temp_file_path,
-                            "text": req_msg
-                        })
-                    elif tool_call.name in ('build_code', 'test_code', 'fix_format'):
-                        if tool_call.name == 'build_code':
+                        self.send_response(
+                            current_req_id,
+                            conn,
+                            result={
+                                "status": "tool_use_requested",
+                                "tool": tool_call.name,
+                                "file_path": target_desc,
+                                "temp_file": temp_file_path,
+                                "text": req_msg,
+                            },
+                        )
+                    elif tool_call.name in ("build_code", "test_code", "fix_format"):
+                        if tool_call.name == "build_code":
                             tool_label = "build"
-                        elif tool_call.name == 'fix_format':
+                        elif tool_call.name == "fix_format":
                             tool_label = "format"
                         else:
                             tool_label = "test"
 
-                        tool_config = get_project_tool_config(tool_label, start_dir=self.project_root)
+                        tool_config = get_project_tool_config(
+                            tool_label, start_dir=self.project_root
+                        )
                         if not tool_config:
                             project_name = get_project_name(self.project_root)
-                            project_file_path = get_project_data_file_path(project_name, self.project_root) or "~/.var/vimini/projects/<project_name>"
+                            project_file_path = (
+                                get_project_data_file_path(
+                                    project_name, self.project_root
+                                )
+                                or "~/.var/vimini/projects/<project_name>"
+                            )
                             config_key = f"{tool_label}-command"
                             msg = (
                                 f"\n[No {tool_label} command is defined for this project]\n"
                                 f"To configure a {tool_label} command, run :ViminiConfig or set '{config_key}' in the project file:\n"
                                 f"  {project_file_path}\n"
                             )
-                            self.send_response(current_req_id, conn, result={
-                                "status": "chunk",
-                                "text": msg
-                            })
-                            responses.append(types.Part.from_function_response(
-                                name=tool_call.name,
-                                response={'result': f"The tool '{tool_call.name}' is not available for this project because no {tool_label} command is configured in project options."}
-                            ))
+                            self.send_response(
+                                current_req_id,
+                                conn,
+                                result={"status": "chunk", "text": msg},
+                            )
+                            responses.append(
+                                types.Part.from_function_response(
+                                    name=tool_call.name,
+                                    response={
+                                        "result": f"The tool '{tool_call.name}' is not available for this project because no {tool_label} command is configured in project options."
+                                    },
+                                )
+                            )
                             continue
 
-                        is_valid, res_or_err = validate_tool_call(tool_label, args_dict, tool_config)
+                        is_valid, res_or_err = validate_tool_call(
+                            tool_label, args_dict, tool_config
+                        )
                         if not is_valid:
-                            logger.warning(f"Tool {tool_call.name} rejected schema check: {res_or_err}")
-                            self.send_response(current_req_id, conn, result={
-                                "status": "chunk",
-                                "text": f"\n[Agent {tool_label} command rejected due to schema error:\n{res_or_err}]\n"
-                            })
-                            responses.append(types.Part.from_function_response(
-                                name=tool_call.name,
-                                response={'result': f"Command rejected: {res_or_err}"}
-                            ))
+                            logger.warning(
+                                f"Tool {tool_call.name} rejected schema check: {res_or_err}"
+                            )
+                            self.send_response(
+                                current_req_id,
+                                conn,
+                                result={
+                                    "status": "chunk",
+                                    "text": f"\n[Agent {tool_label} command rejected due to schema error:\n{res_or_err}]\n",
+                                },
+                            )
+                            responses.append(
+                                types.Part.from_function_response(
+                                    name=tool_call.name,
+                                    response={
+                                        "result": f"Command rejected: {res_or_err}"
+                                    },
+                                )
+                            )
                             continue
 
                         composed_cmd = res_or_err
                         cmd_info = f": {composed_cmd}"
                         req_msg = f"\n[Agent requested tool execution: {tool_call.name}{cmd_info}]\n"
-                        self.send_response(current_req_id, conn, result={
-                            "status": "tool_use_requested",
-                            "tool": tool_call.name,
-                            "command": composed_cmd,
-                            "args": args_dict,
-                            "text": req_msg
-                        })
+                        self.send_response(
+                            current_req_id,
+                            conn,
+                            result={
+                                "status": "tool_use_requested",
+                                "tool": tool_call.name,
+                                "command": composed_cmd,
+                                "args": args_dict,
+                                "text": req_msg,
+                            },
+                        )
                     else:
                         args_str = json.dumps(args_dict)
                         req_msg = f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n"
-                        self.send_response(current_req_id, conn, result={
-                            "status": "tool_use_requested",
-                            "tool": tool_call.name,
-                            "args": args_dict,
-                            "text": req_msg
-                        })
+                        self.send_response(
+                            current_req_id,
+                            conn,
+                            result={
+                                "status": "tool_use_requested",
+                                "tool": tool_call.name,
+                                "args": args_dict,
+                                "text": req_msg,
+                            },
+                        )
 
                     try:
                         next_item = self.cmd_queue.get()
@@ -714,9 +863,13 @@ class ChatSession(CommSession):
                     logger.info(f"Received tool response from user: {next_params}")
 
                     if isinstance(next_params, dict) and next_params.get("terminate"):
-                        logger.info(f"Terminating ChatSession for req_id: {self.req_id}")
+                        logger.info(
+                            f"Terminating ChatSession for req_id: {self.req_id}"
+                        )
                         self.running = False
-                        self.send_response(current_req_id, conn, result={"status": "terminated"})
+                        self.send_response(
+                            current_req_id, conn, result={"status": "terminated"}
+                        )
                         return False
 
                     is_approved = False
@@ -725,45 +878,64 @@ class ChatSession(CommSession):
                             is_approved = bool(next_params["approved"])
                         elif "approval" in next_params:
                             is_approved = bool(next_params["approval"])
-                        elif "prompt" in next_params and isinstance(next_params["prompt"], str):
+                        elif "prompt" in next_params and isinstance(
+                            next_params["prompt"], str
+                        ):
                             p = next_params["prompt"].strip().lower()
                             if p in ("yes", "y", "approve", "approved", "ok"):
                                 is_approved = True
 
-                    if tool_call.name == 'list_directory':
+                    if tool_call.name == "list_directory":
                         if is_approved:
-                            dir_path = args_dict.get('directory_path', '.')
+                            dir_path = args_dict.get("directory_path", ".")
                             result_text = list_directory(dir_path, self.project_root)
                         else:
-                            result_text = "Tool execution cancelled or rejected by user."
-                        responses.append(types.Part.from_function_response(
-                            name=tool_call.name,
-                            response={'result': result_text}
-                        ))
-                    elif tool_call.name == 'read_file':
+                            result_text = (
+                                "Tool execution cancelled or rejected by user."
+                            )
+                        responses.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, response={"result": result_text}
+                            )
+                        )
+                    elif tool_call.name == "read_file":
                         if is_approved:
-                            filepath = args_dict.get('filepath', '')
+                            filepath = args_dict.get("filepath", "")
                             result_text = read_file(filepath, self.project_root)
                         else:
-                            result_text = "Tool execution cancelled or rejected by user."
-                        responses.append(types.Part.from_function_response(
-                            name=tool_call.name,
-                            response={'result': result_text}
-                        ))
-                    elif tool_call.name == 'apply_patch':
+                            result_text = (
+                                "Tool execution cancelled or rejected by user."
+                            )
+                        responses.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, response={"result": result_text}
+                            )
+                        )
+                    elif tool_call.name == "apply_patch":
                         if temp_file_path and os.path.exists(temp_file_path):
                             try:
                                 os.remove(temp_file_path)
                             except Exception:
                                 pass
 
-                        feedback = next_params.get("feedback") or next_params.get("reason") if isinstance(next_params, dict) else None
-                        error_msg = next_params.get("error") if isinstance(next_params, dict) else None
+                        feedback = (
+                            next_params.get("feedback") or next_params.get("reason")
+                            if isinstance(next_params, dict)
+                            else None
+                        )
+                        error_msg = (
+                            next_params.get("error")
+                            if isinstance(next_params, dict)
+                            else None
+                        )
 
                         if feedback:
                             patch_result = f"Apply patch command was denied by the user with the following feedback:\n{feedback}"
                         elif error_msg:
-                            if "retry" not in error_msg.lower() and "denied" not in error_msg.lower():
+                            if (
+                                "retry" not in error_msg.lower()
+                                and "denied" not in error_msg.lower()
+                            ):
                                 patch_result = f"Patch failed to apply:\n{error_msg}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry."
                             else:
                                 patch_result = error_msg
@@ -772,39 +944,50 @@ class ChatSession(CommSession):
                         else:
                             patch_result = "Apply patch command was refused. Do not retry and instead prompt the user for more instructions."
 
-                        responses.append(types.Part.from_function_response(
-                            name=tool_call.name,
-                            response={'result': patch_result}
-                        ))
-                    elif tool_call.name in ('build_code', 'test_code', 'fix_format'):
-                        if tool_call.name == 'build_code':
+                        responses.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, response={"result": patch_result}
+                            )
+                        )
+                    elif tool_call.name in ("build_code", "test_code", "fix_format"):
+                        if tool_call.name == "build_code":
                             tool_label = "build"
-                        elif tool_call.name == 'fix_format':
+                        elif tool_call.name == "fix_format":
                             tool_label = "format"
                         else:
                             tool_label = "test"
 
                         if is_approved:
-                            result_text = self.execute_project_tool(tool_call.name, composed_cmd, current_req_id, conn)
+                            result_text = self.execute_project_tool(
+                                tool_call.name, composed_cmd, current_req_id, conn
+                            )
                         else:
-                            self.send_response(current_req_id, conn, result={
-                                "status": "chunk",
-                                "text": f"\n[{tool_label.capitalize()} command execution rejected by user]\n"
-                            })
-                            result_text = "Tool execution cancelled or rejected by user."
-                        responses.append(types.Part.from_function_response(
-                            name=tool_call.name,
-                            response={'result': result_text}
-                        ))
+                            self.send_response(
+                                current_req_id,
+                                conn,
+                                result={
+                                    "status": "chunk",
+                                    "text": f"\n[{tool_label.capitalize()} command execution rejected by user]\n",
+                                },
+                            )
+                            result_text = (
+                                "Tool execution cancelled or rejected by user."
+                            )
+                        responses.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, response={"result": result_text}
+                            )
+                        )
                     else:
                         if is_approved:
                             result_text = "Tool executed."
                         else:
                             result_text = "Tool execution rejected by user."
-                        responses.append(types.Part.from_function_response(
-                            name=tool_call.name,
-                            response={'result': result_text}
-                        ))
+                        responses.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, response={"result": result_text}
+                            )
+                        )
 
                 return process_prompt_stream(responses, next_req_id)
 
