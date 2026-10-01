@@ -495,8 +495,15 @@ def edit_config_as_json():
                 is_empty = True
 
             if is_empty:
-                default_cmd = "make" if key == "build-command" else "make test"
-                default_desc = "Build the project" if key == "build-command" else "Run project tests"
+                if key == "build-command":
+                    default_cmd = "make"
+                    default_desc = "Build the project"
+                elif key == "format-command":
+                    default_cmd = "make format"
+                    default_desc = "Format project code"
+                else:
+                    default_cmd = "make test"
+                    default_desc = "Run project tests"
                 val_to_edit = {
                     "command": default_cmd,
                     "description": default_desc

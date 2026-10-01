@@ -37,6 +37,19 @@ PROJECT_CONFIG_SCHEMA = {
         "type": "choice",
         "choices": ["Ask", "Allow", "Deny"]
     },
+    "format-command": {
+        "label": "Format Command",
+        "description": "Shell command, alternative commands, or command configuration with options to format code according to project guidelines",
+        "default": None,
+        "type": "string"
+    },
+    "format-permission": {
+        "label": "Format Permission",
+        "description": "Execution permission for format command (Allow, Deny, or Ask)",
+        "default": "Allow",
+        "type": "choice",
+        "choices": ["Ask", "Allow", "Deny"]
+    },
     "compilation-needed": {
         "label": "Compilation Needed",
         "description": "Whether the project requires compilation (true/false, default false)",
@@ -140,7 +153,7 @@ def upgrade_project_data(raw_data):
             if k not in config:
                 config[k] = schema_item.get("default")
         # Normalize single-string commands to dict with description
-        for cmd_key in ("build-command", "test-command"):
+        for cmd_key in ("build-command", "test-command", "format-command"):
             cmd_val = config.get(cmd_key)
             if isinstance(cmd_val, str) and cmd_val.strip():
                 if cmd_val.strip().startswith("{"):
@@ -228,7 +241,7 @@ def set_project_config(key, value, project_name=None, start_dir=None):
 
 def parse_tool_command_config(raw_config):
     """
-    Parses raw configuration for build or test commands into a normalized structure.
+    Parses raw configuration for build, test, or format commands into a normalized structure.
     Supports:
     - Simple command string (e.g. "cargo build")
     - Alternative commands list (e.g. ["make debug", "make release"] or list of dicts)
@@ -404,7 +417,7 @@ def parse_tool_command_config(raw_config):
 
 def get_project_tool_config(tool_label, project_name=None, start_dir=None):
     """
-    Returns the parsed configuration for tool_label ('build' or 'test').
+    Returns the parsed configuration for tool_label ('build', 'test', or 'format').
     Checks:
     1. {tool_label}-command
     2. {tool_label}-commands

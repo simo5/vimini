@@ -6,6 +6,40 @@ import tempfile
 from vimini import util
 from vimini.util import get_model_name
 
+def _run_format_command(repo_path):
+    """
+    Executes the configured project format-command prior to staging and committing.
+    Returns True if formatting succeeded or no format command is set, False if formatting failed.
+    """
+    from vimini.common.util import get_project_tool_config, validate_tool_call
+    format_config = get_project_tool_config("format", start_dir=repo_path)
+    if not format_config:
+        return True
+
+    is_valid, cmd_or_err = validate_tool_call("format", {}, format_config)
+    if not is_valid:
+        util.display_message(f"Format command error: {cmd_or_err}", error=True)
+        return False
+
+    util.display_message(f"Running format command: {cmd_or_err}...")
+    try:
+        res = subprocess.run(
+            cmd_or_err,
+            shell=True,
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        if res.returncode != 0:
+            err_msg = (res.stderr or res.stdout).strip()
+            util.display_message(f"Format command failed (exit code {res.returncode}): {err_msg}", error=True)
+            return False
+        return True
+    except Exception as e:
+        util.display_message(f"Error running format command: {e}", error=True)
+        return False
+
 def _stage_changes(repo_path, message="Staging changes..."):
     """
     Stages changes with filtering (exclude dotfiles and swap/backup files).
@@ -144,6 +178,10 @@ def commit(assistant=True, temperature=None, regenerate=False, amend=False, refi
 
         diff_to_process = ""
         diff_stat_output = ""
+
+        if not regenerate:
+            if not _run_format_command(repo_path):
+                return
 
         if amend:
             if not _stage_changes(repo_path, "Staging changes for amend..."):

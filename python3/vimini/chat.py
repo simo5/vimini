@@ -510,11 +510,13 @@ def _open_patch_buffer(temp_file, req_id):
         send_agent_approval(False, req_id, error=f"Error creating patch buffer: {e}. Please verify that the patch is properly formatted and retry.")
 
 def _request_tool_permission(req_id, tool, cmd=None):
-    tool_label = "Build" if tool == "build_code" else "Test"
-    popup_content = [
-        f"Execute {tool_label} Command?",
-        ""
-    ]
+    if tool == "build_code":
+        tool_label = "Build"
+    elif tool == "fix_format":
+        tool_label = "Format"
+    else:
+        tool_label = "Test"
+    popup_content = [f"Execute {tool_label} Command?", ""]
     if cmd:
         popup_content.append(f"Command: {cmd}")
     else:

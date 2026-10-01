@@ -26,10 +26,15 @@ logger = logging.getLogger('vimini_agent')
 
 def generate_tool_declaration_schema(tool_label, tool_config):
     """
-    Generates (description, parameters_schema) for build_code or test_code
+    Generates (description, parameters_schema) for build_code, test_code, or fix_format
     based on the parsed tool_config.
     """
-    tool_action = "Compiles or builds the code in the project" if tool_label == "build" else "Runs the project test suite"
+    if tool_label == "build":
+        tool_action = "Compiles or builds the code in the project"
+    elif tool_label == "format":
+        tool_action = "Formats the code in the project according to project guidelines"
+    else:
+        tool_action = "Runs the project test suite"
 
     if not tool_config:
         return (
@@ -157,9 +162,11 @@ def generate_tool_declaration_schema(tool_label, tool_config):
 def get_agent_tools(project_root=None):
     build_config = get_project_tool_config("build", start_dir=project_root)
     test_config = get_project_tool_config("test", start_dir=project_root)
+    format_config = get_project_tool_config("format", start_dir=project_root)
 
     build_desc, build_schema = generate_tool_declaration_schema("build", build_config)
     test_desc, test_schema = generate_tool_declaration_schema("test", test_config)
+    format_desc, format_schema = generate_tool_declaration_schema("format", format_config)
 
     return [
         types.Tool(
@@ -225,6 +232,11 @@ def get_agent_tools(project_root=None):
                     name='test_code',
                     description=test_desc,
                     parameters=test_schema
+                ),
+                types.FunctionDeclaration(
+                    name='fix_format',
+                    description=format_desc,
+                    parameters=format_schema
                 )
             ]
         )
@@ -281,7 +293,13 @@ class ChatSession(CommSession):
         self.chat_history = None
 
     def execute_project_tool(self, tool, cmd, current_req_id, conn):
-        tool_label = "build" if tool == "build_code" else "test"
+        if tool == "build_code":
+            tool_label = "build"
+        elif tool == "fix_format":
+            tool_label = "format"
+        else:
+            tool_label = "test"
+
         project_root = self.project_root or get_project_root()
 
         if not cmd:
@@ -388,6 +406,7 @@ class ChatSession(CommSession):
             compilation_needed = get_project_config("compilation-needed", start_dir=self.project_root, default=False)
             build_config = get_project_tool_config("build", start_dir=self.project_root)
             test_config = get_project_tool_config("test", start_dir=self.project_root)
+            format_config = get_project_tool_config("format", start_dir=self.project_root)
 
             tools_info = []
             if build_config:
@@ -414,34 +433,42 @@ class ChatSession(CommSession):
             else:
                 tools_info.append("- `test_code`: No test command configured.")
 
+            if format_config:
+                if format_config["type"] == "alternatives":
+                    alts_str = ", ".join(repr(a["command"]) for a in format_config.get("alternatives", []))
+                    tools_info.append(f"- `fix_format`: Alternative format commands available: {alts_str}. Select one via `command` parameter.")
+                elif format_config["type"] == "command_with_options":
+                    opts_str = ", ".join(f"{opt['name']} ({opt.get('flag', opt['name'])})" for opt in format_config.get("options", []))
+                    tools_info.append(f"- `fix_format`: Base command: '{format_config['command']}'. Available options/arguments: {opts_str or 'none'}.")
+                else:
+                    tools_info.append(f"- `fix_format`: Simple command '{format_config['command']}'. Accepts no options.")
+            else:
+                tools_info.append("- `fix_format`: No format command configured.")
+
             tools_summary = "\n".join(tools_info)
 
             if compilation_needed or build_config:
                 build_test_guideline = (
-                    "4. **Build and Test Tools:** Test and build tools may be expensive "
-                    "and should be invoked only if the user instructions include a "
-                    "request to build or test changes. You can use `build_code` to "
-                    "compile/build the project and `test_code` to execute the project "
-                    f"test suite to verify code changes or diagnose errors.\n"
+                    "4. **Build, Test, and Format Tools:** Test, build, and format tools may be executed to verify or fix code. "
+                    "You can use `build_code` to compile/build the project, `test_code` to execute the project test suite, "
+                    "and `fix_format` to format code according to project guidelines.\n"
                     "Running tests should be done only when necessary and if possible, "
                     "select only the specific test that needs to be verified instead of "
                     "running all the tests.\n"
                     f"Configured tools:\n{tools_summary}\n"
-                    "When calling `build_code` or `test_code`, you MUST strictly adhere to the defined schema and allowed options. Unrecognized parameters or invalid values will cause the command to be rejected. "
+                    "When calling `build_code`, `test_code`, or `fix_format`, you MUST strictly adhere to the defined schema and allowed options. Unrecognized parameters or invalid values will cause the command to be rejected. "
                     "Do not attempt to work around command execution control by trying to add command execution in tests that is not actually testing the code."
                 )
             else:
                 build_test_guideline = (
-                    "4. **Build and Test Tools:** Test and build tools may be expensive "
-                    "and should be invoked only if the user instructions include a "
-                    "request to build or test changes. This project does not require "
-                    f"compilation and therefore the `build_code` tool should not be executed. "
-                    f"You can use `test_code` to execute the project test suite to verify code changes or diagnose errors.\n"
+                    "4. **Build, Test, and Format Tools:** Test and format tools may be executed to verify or fix code. "
+                    "This project does not require compilation and therefore the `build_code` tool should not be executed. "
+                    "You can use `test_code` to execute the project test suite and `fix_format` to format code according to project guidelines.\n"
                     "Running tests should be done only when necessary and if possible, "
                     "select only the specific test that needs to be verified instead of "
                     "running all the tests.\n"
                     f"Configured tools:\n{tools_summary}\n"
-                    "When calling `test_code`, you MUST strictly adhere to the defined schema and allowed options. Unrecognized parameters or invalid values will cause the command to be rejected. "
+                    "When calling `test_code` or `fix_format`, you MUST strictly adhere to the defined schema and allowed options. Unrecognized parameters or invalid values will cause the command to be rejected. "
                     "Do not attempt to work around command execution control by trying to add command execution in tests that is not actually testing the code."
                 )
             current_tools = get_agent_tools(self.project_root)
@@ -612,8 +639,14 @@ class ChatSession(CommSession):
                             "temp_file": temp_file_path,
                             "text": req_msg
                         })
-                    elif tool_call.name in ('build_code', 'test_code'):
-                        tool_label = "build" if tool_call.name == "build_code" else "test"
+                    elif tool_call.name in ('build_code', 'test_code', 'fix_format'):
+                        if tool_call.name == 'build_code':
+                            tool_label = "build"
+                        elif tool_call.name == 'fix_format':
+                            tool_label = "format"
+                        else:
+                            tool_label = "test"
+
                         tool_config = get_project_tool_config(tool_label, start_dir=self.project_root)
                         if not tool_config:
                             project_name = get_project_name(self.project_root)
@@ -743,8 +776,14 @@ class ChatSession(CommSession):
                             name=tool_call.name,
                             response={'result': patch_result}
                         ))
-                    elif tool_call.name in ('build_code', 'test_code'):
-                        tool_label = "build" if tool_call.name == "build_code" else "test"
+                    elif tool_call.name in ('build_code', 'test_code', 'fix_format'):
+                        if tool_call.name == 'build_code':
+                            tool_label = "build"
+                        elif tool_call.name == 'fix_format':
+                            tool_label = "format"
+                        else:
+                            tool_label = "test"
+
                         if is_approved:
                             result_text = self.execute_project_tool(tool_call.name, composed_cmd, current_req_id, conn)
                         else:
