@@ -8,8 +8,10 @@ from . import util
 # To store state between search and apply
 RIPGREP_CONFIG_STORE = {}
 
+
 def dedup_slashes(line):
-    return re.sub(r'//+', '/', line)
+    return re.sub(r"//+", "/", line)
+
 
 def _parse_file_ranges(lines, context_separator):
     file_ranges = {}
@@ -26,17 +28,17 @@ def _parse_file_ranges(lines, context_separator):
             current_range = None
             continue
 
-        is_content_line = line.split(':', 1)[0].isdigit()
+        is_content_line = line.split(":", 1)[0].isdigit()
 
         if not is_content_line:
             line_path = dedup_slashes(line)
-            if current_file: # Finish previous file
+            if current_file:  # Finish previous file
                 if current_range:
                     file_ranges.setdefault(current_file, []).append(current_range)
             current_file = line_path
             current_range = None
         elif is_content_line:
-            parts = line.split(':', 1)
+            parts = line.split(":", 1)
             line_num = int(parts[0])
             if current_file:
                 if current_range:
@@ -49,13 +51,14 @@ def _parse_file_ranges(lines, context_separator):
 
     return file_ranges
 
+
 def _format_output_for_buffer(lines, file_ranges, context_separator):
     buffer_content = []
     first_file_written = False
     file_paths = set(file_ranges.keys())
 
     for line in lines:
-        parts = line.split(':', 1)
+        parts = line.split(":", 1)
         if len(parts) > 1 and parts[0].isdigit():
             buffer_content.append(parts[1])
         else:
@@ -64,7 +67,7 @@ def _format_output_for_buffer(lines, file_ranges, context_separator):
             if is_file_path:
                 if first_file_written:
                     buffer_content.append(context_separator)
-                    buffer_content.append('')
+                    buffer_content.append("")
                 else:
                     first_file_written = True
             buffer_content.append(line)
@@ -73,6 +76,7 @@ def _format_output_for_buffer(lines, file_ranges, context_separator):
         buffer_content.append(context_separator)
 
     return buffer_content
+
 
 def _parse_modified_buffer(lines, file_ranges, context_separator):
     changes = {}
@@ -101,6 +105,7 @@ def _parse_modified_buffer(lines, file_ranges, context_separator):
 
     return changes
 
+
 def _apply_changes(changes, file_ranges, project_root):
     modified_files = []
     for file_path, blocks in changes.items():
@@ -109,12 +114,15 @@ def _apply_changes(changes, file_ranges, project_root):
 
         ranges = file_ranges[file_path]
         if len(blocks) != len(ranges):
-            util.display_message(f"Error for {file_path}: edited block count ({len(blocks)}) does not match original ({len(ranges)}).", error=True)
+            util.display_message(
+                f"Error for {file_path}: edited block count ({len(blocks)}) does not match original ({len(ranges)}).",
+                error=True,
+            )
             return modified_files
 
         full_path = os.path.join(project_root, file_path)
         try:
-            with open(full_path, 'r', encoding='utf-8') as f:
+            with open(full_path, "r", encoding="utf-8") as f:
                 original_lines = f.read().splitlines()
         except FileNotFoundError:
             original_lines = []
@@ -130,31 +138,46 @@ def _apply_changes(changes, file_ranges, project_root):
 
         try:
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
-            with open(full_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(original_lines) + '\n')
+            with open(full_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(original_lines) + "\n")
             modified_files.append(full_path)
         except Exception as e:
             util.display_message(f"Error writing to {file_path}: {e}", error=True)
-    
+
     return modified_files
+
 
 def search(regex, path_to_search=".", context_lines=5):
     global RIPGREP_CONFIG_STORE
     context_separator = "-- DO NOT DELETE THIS SEPARATOR --"
     try:
         cmd = [
-            'rg', '-n', f'-C{context_lines}', '--heading', '--color=never',
-            '--field-context-separator=:', f'--context-separator={context_separator}',
-            '-e', regex, path_to_search
+            "rg",
+            "-n",
+            f"-C{context_lines}",
+            "--heading",
+            "--color=never",
+            "--field-context-separator=:",
+            f"--context-separator={context_separator}",
+            "-e",
+            regex,
+            path_to_search,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False, encoding='utf-8')
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=False, encoding="utf-8"
+        )
 
         if result.returncode > 1:
             err_msg = result.stderr.strip()
-            if "command not found" in err_msg.lower() or "no such file" in err_msg.lower():
-                 util.display_message("ripgrep command not found. Please install it.", error=True)
+            if (
+                "command not found" in err_msg.lower()
+                or "no such file" in err_msg.lower()
+            ):
+                util.display_message(
+                    "ripgrep command not found. Please install it.", error=True
+                )
             else:
-                 util.display_message(f"ripgrep failed: {err_msg}", error=True)
+                util.display_message(f"ripgrep failed: {err_msg}", error=True)
             return
 
         output = result.stdout
@@ -162,7 +185,9 @@ def search(regex, path_to_search=".", context_lines=5):
             util.display_message("No results found.", history=True)
             return
     except FileNotFoundError:
-        util.display_message("ripgrep command not found. Please install it.", error=True)
+        util.display_message(
+            "ripgrep command not found. Please install it.", error=True
+        )
         return
     except Exception as e:
         util.display_message(f"Error running ripgrep: {e}", error=True)
@@ -175,22 +200,23 @@ def search(regex, path_to_search=".", context_lines=5):
     project_root = util.get_git_repo_root() or os.getcwd()
 
     RIPGREP_CONFIG_STORE = {
-        'file_ranges': file_ranges,
-        'context_separator': context_separator,
-        'project_root': project_root
+        "file_ranges": file_ranges,
+        "context_separator": context_separator,
+        "project_root": project_root,
     }
 
     # Check if buffer already exists and delete it to avoid E95
     for buf in vim.buffers:
-        if buf.name and buf.name.endswith('ViminiRipGrep'):
-            vim.command(f'bwipeout! {buf.number}')
+        if buf.name and buf.name.endswith("ViminiRipGrep"):
+            vim.command(f"bwipeout! {buf.number}")
             break
 
     util.new_split()
-    vim.command('file ViminiRipGrep')
-    vim.command('setlocal buftype=nofile noswapfile')
+    vim.command("file ViminiRipGrep")
+    vim.command("setlocal buftype=nofile noswapfile")
     vim.current.buffer[:] = buffer_content
     vim.command(f"let b:vimini_project_root = '{project_root}'")
+
 
 def command(arg_string):
     """
@@ -209,7 +235,9 @@ def command(arg_string):
     regex = args[0]
 
     if len(args) < 2:
-        util.display_message("A prompt for Gemini is required after the regex.", error=True)
+        util.display_message(
+            "A prompt for Gemini is required after the regex.", error=True
+        )
         return
     prompt = " ".join(args[1:])
 
@@ -217,7 +245,7 @@ def command(arg_string):
 
     rg_buffer = None
     for buf in vim.buffers:
-        if buf.name and buf.name.endswith('ViminiRipGrep'):
+        if buf.name and buf.name.endswith("ViminiRipGrep"):
             rg_buffer = buf
             break
 
@@ -226,7 +254,9 @@ def command(arg_string):
 
     buffer_content = "\n".join(rg_buffer[:])
     if not buffer_content.strip():
-        util.display_message("Ripgrep results are empty, nothing to send to Gemini.", history=True)
+        util.display_message(
+            "Ripgrep results are empty, nothing to send to Gemini.", history=True
+        )
         return
 
     client = util.get_client()
@@ -250,7 +280,7 @@ def command(arg_string):
 
     job_id = util.reserve_next_job_id(f"Ripgrep: {regex}")
     rg_buffer_num = rg_buffer.number
-    
+
     # State closure for the async callback
     is_first_chunk = True
 
@@ -264,7 +294,7 @@ def command(arg_string):
                     b[:] = []
                     break
             is_first_chunk = False
-        
+
         util.append_to_buffer(rg_buffer_num, text)
 
     def on_error(msg):
@@ -273,23 +303,27 @@ def command(arg_string):
     def on_finish():
         return "Ripgrep results updated by Gemini."
 
-    generation_kwargs = util.create_generation_kwargs(
-        contents=[full_prompt]
+    generation_kwargs = util.create_generation_kwargs(contents=[full_prompt])
+
+    util.start_async_job(
+        client,
+        generation_kwargs,
+        {
+            "on_chunk": on_chunk,
+            "on_error": on_error,
+            "on_finish": on_finish,
+            "status_message": "Modifying Ripgrep results...",
+        },
+        job_id=job_id,
     )
-    
-    util.start_async_job(client, generation_kwargs, {
-        'on_chunk': on_chunk,
-        'on_error': on_error,
-        'on_finish': on_finish,
-        'status_message': "Modifying Ripgrep results..."
-    }, job_id=job_id)
+
 
 def apply():
     global RIPGREP_CONFIG_STORE
 
     rg_buffer = None
     for buf in vim.buffers:
-        if buf.name and buf.name.endswith('ViminiRipGrep'):
+        if buf.name and buf.name.endswith("ViminiRipGrep"):
             rg_buffer = buf
             break
     if not rg_buffer:
@@ -297,12 +331,14 @@ def apply():
         return
 
     if not RIPGREP_CONFIG_STORE:
-        util.display_message("No ripgrep session data. Please run ViminiRipGrep first.", error=True)
+        util.display_message(
+            "No ripgrep session data. Please run ViminiRipGrep first.", error=True
+        )
         return
 
-    file_ranges = RIPGREP_CONFIG_STORE['file_ranges']
-    context_separator = RIPGREP_CONFIG_STORE['context_separator']
-    project_root = RIPGREP_CONFIG_STORE.get('project_root', os.getcwd())
+    file_ranges = RIPGREP_CONFIG_STORE["file_ranges"]
+    context_separator = RIPGREP_CONFIG_STORE["context_separator"]
+    project_root = RIPGREP_CONFIG_STORE.get("project_root", os.getcwd())
 
     buffer_content = rg_buffer[:]
     changes = _parse_modified_buffer(buffer_content, file_ranges, context_separator)
@@ -312,9 +348,9 @@ def apply():
         normalized_target_path = os.path.realpath(absolute_path)
         for buf in vim.buffers:
             if buf.name and os.path.realpath(buf.name) == normalized_target_path:
-                vim.command(f'checktime {buf.number}')
+                vim.command(f"checktime {buf.number}")
                 break
 
     RIPGREP_CONFIG_STORE = {}
-    vim.command(f'bdelete! {rg_buffer.number}')
+    vim.command(f"bdelete! {rg_buffer.number}")
     util.display_message("Changes applied.", history=True)

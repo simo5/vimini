@@ -2,7 +2,7 @@ import os
 import sys
 
 # Ensure python3 root directory is in sys.path when executed directly
-python_root = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..'))
+python_root = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if python_root not in sys.path:
     sys.path.insert(0, python_root)
 
@@ -23,29 +23,34 @@ AGENT_CONFIG = {}
 _sessions = {}
 _sessions_lock = threading.Lock()
 
+
 def get_var_dir():
-    var_dir = os.path.expanduser('~/.var/vimini')
+    var_dir = os.path.expanduser("~/.var/vimini")
     os.makedirs(var_dir, exist_ok=True)
     return var_dir
 
+
 def setup_logger():
     var_dir = get_var_dir()
-    log_file = os.path.join(var_dir, 'agent.log')
-    logger = logging.getLogger('vimini_agent')
+    log_file = os.path.join(var_dir, "agent.log")
+    logger = logging.getLogger("vimini_agent")
     logger.setLevel(logging.INFO)
     if not logger.handlers:
-        handler = logging.FileHandler(log_file, encoding='utf-8')
-        formatter = logging.Formatter('[%(asctime)s] %(levelname)s: %(message)s')
+        handler = logging.FileHandler(log_file, encoding="utf-8")
+        formatter = logging.Formatter("[%(asctime)s] %(levelname)s: %(message)s")
         handler.setFormatter(formatter)
         logger.addHandler(handler)
     return logger
 
+
 logger = setup_logger()
+
 
 def get_socket_path(pid=None):
     if pid is None:
         pid = os.getpid()
     return os.path.join(get_var_dir(), f"agent.{pid}")
+
 
 def execute_function(req_id, method, params, result_queue, conn):
     """
@@ -63,87 +68,96 @@ def execute_function(req_id, method, params, result_queue, conn):
             models_iter = client.models.list()
             models = []
             for m in models_iter:
-                models.append({
-                    "name": m.name,
-                    "display_name": getattr(m, "display_name", m.name)
-                })
+                models.append(
+                    {"name": m.name, "display_name": getattr(m, "display_name", m.name)}
+                )
             result = {"status": "ok", "models": models}
         elif method == "commit":
             client = get_client(config=AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
             temperature = AGENT_CONFIG.get("temperature")
-            config = create_generation_config(temperature=temperature, disable_function_calling=True)
+            config = create_generation_config(
+                temperature=temperature, disable_function_calling=True
+            )
             response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=config
+                model=model, contents=prompt, config=config
             )
             result = {
                 "status": "ok",
                 "text": response.text,
-                "repo_path": params.get("repo_path") if isinstance(params, dict) else None,
-                "diff_stat_output": params.get("diff_stat_output") if isinstance(params, dict) else None,
-                "regenerate": params.get("regenerate") if isinstance(params, dict) else False,
-                "assistant": params.get("assistant") if isinstance(params, dict) else True
+                "repo_path": params.get("repo_path")
+                if isinstance(params, dict)
+                else None,
+                "diff_stat_output": params.get("diff_stat_output")
+                if isinstance(params, dict)
+                else None,
+                "regenerate": params.get("regenerate")
+                if isinstance(params, dict)
+                else False,
+                "assistant": params.get("assistant")
+                if isinstance(params, dict)
+                else True,
             }
         elif method == "autocomplete":
             client = get_client(config=AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
             temperature = AGENT_CONFIG.get("temperature")
-            config = create_generation_config(temperature=temperature, disable_function_calling=True)
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=config
+            config = create_generation_config(
+                temperature=temperature, disable_function_calling=True
             )
-            result = {
-                "status": "ok",
-                "text": response.text
-            }
+            response = client.models.generate_content(
+                model=model, contents=prompt, config=config
+            )
+            result = {"status": "ok", "text": response.text}
         else:
             result = {"status": "ok"}
         response = [
             0,
-            {
-                "id": req_id,
-                "jsonrpc": "2.0",
-                "method": method,
-                "result": result
-            }
+            {"id": req_id, "jsonrpc": "2.0", "method": method, "result": result},
         ]
     except Exception as e:
-        logger.error(f"Error executing method '{method}' (id: {req_id}): {e}", exc_info=True)
+        logger.error(
+            f"Error executing method '{method}' (id: {req_id}): {e}", exc_info=True
+        )
         response = [
             0,
             {
                 "id": req_id,
                 "jsonrpc": "2.0",
                 "method": method,
-                "error": {"code": -32603, "message": str(e)}
-            }
+                "error": {"code": -32603, "message": str(e)},
+            },
         ]
     result_queue.put((conn, response))
+
 
 def get_session_class(method):
     if method == "chat":
         from vimini.agent.chat import ChatSession
+
         return ChatSession
     if method == "code":
         from vimini.agent.code import CodeSession
+
         return CodeSession
     if method == "review":
         from vimini.agent.review import ReviewSession
+
         return ReviewSession
     return None
 
+
 def cleanup_sessions():
     with _sessions_lock:
-        dead_sessions = [req_id for req_id, session in _sessions.items() if not session.is_alive()]
+        dead_sessions = [
+            req_id for req_id, session in _sessions.items() if not session.is_alive()
+        ]
         if dead_sessions:
             for req_id in dead_sessions:
                 del _sessions[req_id]
+
 
 def handle_incoming_request(req_id, method, params, result_queue, conn):
     session_cls = get_session_class(method)
@@ -151,7 +165,9 @@ def handle_incoming_request(req_id, method, params, result_queue, conn):
         with _sessions_lock:
             session = _sessions.get(req_id)
             if session is None or not session.is_alive():
-                session = session_cls(req_id, result_queue, agent_config=AGENT_CONFIG, request=params)
+                session = session_cls(
+                    req_id, result_queue, agent_config=AGENT_CONFIG, request=params
+                )
                 _sessions[req_id] = session
                 session.start()
         session.post_cmd(req_id, params, conn)
@@ -159,9 +175,10 @@ def handle_incoming_request(req_id, method, params, result_queue, conn):
         t = threading.Thread(
             target=execute_function,
             args=(req_id, method, params, result_queue, conn),
-            daemon=True
+            daemon=True,
         )
         t.start()
+
 
 class AgentServer:
     def __init__(self, socket_path=None):
@@ -214,7 +231,9 @@ class AgentServer:
             self.server_sock = server_sock
             self.running = True
         except Exception as e:
-            logger.error(f"Failed to bind socket {self.socket_path}: {e}", exc_info=True)
+            logger.error(
+                f"Failed to bind socket {self.socket_path}: {e}", exc_info=True
+            )
             self.cleanup()
             raise
 
@@ -230,14 +249,19 @@ class AgentServer:
                         conn, response = self.result_queue.get_nowait()
                         if conn in clients:
                             try:
-                                payload = (json.dumps(response) + '\n').encode('utf-8')
+                                payload = (json.dumps(response) + "\n").encode("utf-8")
                                 conn.sendall(payload)
                             except Exception as e:
-                                logger.error(f"Error sending response payload to client: {e}", exc_info=True)
+                                logger.error(
+                                    f"Error sending response payload to client: {e}",
+                                    exc_info=True,
+                                )
                     except queue.Empty:
                         break
 
-                read_sockets = [self.server_sock] + clients if self.server_sock else clients
+                read_sockets = (
+                    [self.server_sock] + clients if self.server_sock else clients
+                )
                 if not read_sockets:
                     break
 
@@ -277,7 +301,9 @@ class AgentServer:
                             clients.append(conn)
                             buffers[conn] = bytearray()
                         except Exception as e:
-                            logger.error(f"Error accepting connection: {e}", exc_info=True)
+                            logger.error(
+                                f"Error accepting connection: {e}", exc_info=True
+                            )
                     else:
                         try:
                             data = s.recv(MAX_RECEIVE_BUFFER_SIZE)
@@ -289,9 +315,9 @@ class AgentServer:
                                 s.close()
                             else:
                                 buffers[s].extend(data)
-                                while b'\n' in buffers[s]:
-                                    line, buffers[s] = buffers[s].split(b'\n', 1)
-                                    line_str = line.decode('utf-8').strip()
+                                while b"\n" in buffers[s]:
+                                    line, buffers[s] = buffers[s].split(b"\n", 1)
+                                    line_str = line.decode("utf-8").strip()
                                     if not line_str:
                                         continue
                                     req_id = None
@@ -299,33 +325,51 @@ class AgentServer:
                                         msg = json.loads(line_str)
                                         if isinstance(msg, list) and len(msg) >= 2:
                                             vim_id = msg[0]
-                                            req_dict = msg[1] if isinstance(msg[1], dict) else {}
-                                            req_id = req_dict.get('id')
-                                            method = req_dict.get('method')
-                                            params = req_dict.get('params')
+                                            req_dict = (
+                                                msg[1]
+                                                if isinstance(msg[1], dict)
+                                                else {}
+                                            )
+                                            req_id = req_dict.get("id")
+                                            method = req_dict.get("method")
+                                            params = req_dict.get("params")
                                         elif isinstance(msg, dict):
-                                            req_id = msg.get('id')
-                                            method = msg.get('method')
-                                            params = msg.get('params')
+                                            req_id = msg.get("id")
+                                            method = msg.get("method")
+                                            params = msg.get("params")
                                         else:
-                                            raise ValueError(f"Unexpected message format: {type(msg)}")
+                                            raise ValueError(
+                                                f"Unexpected message format: {type(msg)}"
+                                            )
 
-                                        logger.info(f"Received message method: {method} (id: {req_id})")
+                                        logger.info(
+                                            f"Received message method: {method} (id: {req_id})"
+                                        )
 
-                                        handle_incoming_request(req_id, method, params, self.result_queue, s)
+                                        handle_incoming_request(
+                                            req_id, method, params, self.result_queue, s
+                                        )
                                     except Exception as e:
-                                        logger.error(f"Error processing incoming message '{line_str}': {e}", exc_info=True)
+                                        logger.error(
+                                            f"Error processing incoming message '{line_str}': {e}",
+                                            exc_info=True,
+                                        )
                                         err_resp = [
                                             0,
                                             {
                                                 "id": req_id,
                                                 "jsonrpc": "2.0",
-                                                "error": {"code": -32603, "message": str(e)}
-                                            }
+                                                "error": {
+                                                    "code": -32603,
+                                                    "message": str(e),
+                                                },
+                                            },
                                         ]
                                         self.result_queue.put((s, err_resp))
                         except Exception as e:
-                            logger.error(f"Error reading from socket: {e}", exc_info=True)
+                            logger.error(
+                                f"Error reading from socket: {e}", exc_info=True
+                            )
                             if s in clients:
                                 clients.remove(s)
                             if s in buffers:
@@ -346,6 +390,7 @@ class AgentServer:
             except Exception:
                 pass
 
+
 def run_server():
     server = AgentServer()
     try:
@@ -357,7 +402,9 @@ def run_server():
     finally:
         server.cleanup()
 
+
 _agent_process = None
+
 
 def stop_agent_server():
     global _agent_process
@@ -372,6 +419,7 @@ def stop_agent_server():
         except Exception as e:
             logger.error(f"Error stopping agent server process: {e}", exc_info=True)
         _agent_process = None
+
 
 def start_agent_server():
     global _agent_process
@@ -391,5 +439,6 @@ def start_agent_server():
 
     return None
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     run_server()

@@ -7,11 +7,12 @@ from vimini.common.util import (
     load_project_data,
     create_default_project_data,
     save_project_data,
-    get_project_data_file_path
+    get_project_data_file_path,
 )
 from vimini.common.context import upload_context_files as _common_upload_context_files
 
 # --- Context File Storage Helpers ---
+
 
 def save_project_context_files(files):
     try:
@@ -27,6 +28,7 @@ def save_project_context_files(files):
     except Exception as e:
         util.display_message(f"Error saving project context files: {e}", error=True)
 
+
 def restore_context_files():
     try:
         project_root = util.get_git_repo_root() or os.getcwd()
@@ -34,6 +36,7 @@ def restore_context_files():
         if not file_path or not os.path.exists(file_path):
             return
         from vimini.config import load_project_config_or_prompt
+
         try:
             data = load_project_config_or_prompt(project_root=project_root)
         except Exception:
@@ -46,8 +49,10 @@ def restore_context_files():
     except Exception as e:
         util.log_info(f"Failed to restore context files: {e}")
 
+
 # --- Context File Uploading ---
 # (moved from util.py)
+
 
 def find_context_files(file_paths_to_include=None):
     """
@@ -96,7 +101,7 @@ def find_context_files(file_paths_to_include=None):
         if isinstance(var, list):
             context_files_list = var
     except (vim.error, AttributeError):
-        pass # Not in vim or variable doesn't exist.
+        pass  # Not in vim or variable doesn't exist.
 
     for file_path in context_files_list:
         abs_path = os.path.realpath(file_path)
@@ -106,6 +111,7 @@ def find_context_files(file_paths_to_include=None):
             seen_file_paths.add(abs_path)
 
     return files_to_upload
+
 
 def get_buffer_contents(file_paths_to_include=None):
     """
@@ -124,12 +130,14 @@ def get_buffer_contents(file_paths_to_include=None):
                     content = "\n".join(buf[:])
             except Exception:
                 pass
-        rel_path = os.path.relpath(file_path, project_root) if os.path.isabs(file_path) else file_path
-        buffers_data.append({
-            "path": rel_path,
-            "content": content
-        })
+        rel_path = (
+            os.path.relpath(file_path, project_root)
+            if os.path.isabs(file_path)
+            else file_path
+        )
+        buffers_data.append({"path": rel_path, "content": content})
     return buffers_data
+
 
 def upload_context_files(client, file_paths_to_include=None):
     """
@@ -139,7 +147,10 @@ def upload_context_files(client, file_paths_to_include=None):
     """
     context_files = find_context_files(file_paths_to_include)
     if not context_files:
-        util.display_message("No context files found (from open buffers or g:context_files).", history=True)
+        util.display_message(
+            "No context files found (from open buffers or g:context_files).",
+            history=True,
+        )
         return None
 
     items = []
@@ -154,18 +165,16 @@ def upload_context_files(client, file_paths_to_include=None):
                 pass
         items.append((file_path, content))
 
-    logger = logging.getLogger('vimini')
+    logger = logging.getLogger("vimini")
     return _common_upload_context_files(
-        logger,
-        client,
-        file_paths_to_include=items,
-        display_cb=util.display_message
+        logger, client, file_paths_to_include=items, display_cb=util.display_message
     )
 
 
 # --- Interactive Context File Manager ---
 
 _VIMINI_PENDING_CONTEXT_FILES = None
+
 
 def _draw_context_files_listing(target_path, project_root, context_files_list):
     context_files_abs = set()
@@ -182,11 +191,11 @@ def _draw_context_files_listing(target_path, project_root, context_files_list):
         "| <CR>: toggle/enter | l: list | q: close",
         "| A: add all | C: in context | >: directory",
         "",
-        "> .."
+        "> ..",
     ]
 
     # 3. Get directory listing
-    dirs_to_ignore = {'.git', '__pycache__', 'node_modules', '.venv', 'target'}
+    dirs_to_ignore = {".git", "__pycache__", "node_modules", ".venv", "target"}
     dirs, files = [], []
     try:
         for name in os.listdir(target_path):
@@ -198,7 +207,9 @@ def _draw_context_files_listing(target_path, project_root, context_files_list):
             else:
                 files.append(name)
     except OSError as e:
-        util.display_message(f"Error reading directory '{target_path}': {e}", error=True)
+        util.display_message(
+            f"Error reading directory '{target_path}': {e}", error=True
+        )
         return None
 
     # 4. Format and append directory and file lines
@@ -212,6 +223,7 @@ def _draw_context_files_listing(target_path, project_root, context_files_list):
 
     return buffer_lines
 
+
 def context_files_command():
     """
     Shows a new buffer with a file explorer to manage g:context_files.
@@ -220,7 +232,7 @@ def context_files_command():
     global _VIMINI_PENDING_CONTEXT_FILES
     try:
         # 1. Get paths and existing context files
-        current_path = os.path.realpath(vim.eval('getcwd()'))
+        current_path = os.path.realpath(vim.eval("getcwd()"))
         project_root = util.get_git_repo_root() or current_path
 
         try:
@@ -234,33 +246,44 @@ def context_files_command():
         _VIMINI_PENDING_CONTEXT_FILES = initial_context_files
 
         # 2. Get directory listing using the helper
-        buffer_lines = _draw_context_files_listing(current_path, project_root, _VIMINI_PENDING_CONTEXT_FILES)
+        buffer_lines = _draw_context_files_listing(
+            current_path, project_root, _VIMINI_PENDING_CONTEXT_FILES
+        )
         if buffer_lines is None:
-            return # Error was displayed by helper
+            return  # Error was displayed by helper
 
         # 3. Create and populate the new buffer
         util.new_split()
-        vim.command('file ViminiContextFiles')
+        vim.command("file ViminiContextFiles")
         buf = vim.current.buffer
         buf[:] = buffer_lines
 
         # 4. Set buffer options
-        vim.command('setlocal buftype=nofile noswapfile nomodifiable')
+        vim.command("setlocal buftype=nofile noswapfile nomodifiable")
         vim.command(f"let b:vimini_context_root = '{project_root}'")
         vim.command(f"let b:vimini_context_path = '{current_path}'")
 
         # 5. Set up key mappings and autocmd for close confirmation
-        vim.command("nnoremap <buffer> <silent> <CR> :py3 from vimini.context import toggle_context_file; toggle_context_file()<CR>")
-        vim.command("nnoremap <buffer> <silent> l :py3 from vimini.context import show_context_lists; show_context_lists()<CR>")
-        vim.command("nnoremap <buffer> <silent> A :py3 from vimini.context import add_all_regular_files; add_all_regular_files()<CR>")
+        vim.command(
+            "nnoremap <buffer> <silent> <CR> :py3 from vimini.context import toggle_context_file; toggle_context_file()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> l :py3 from vimini.context import show_context_lists; show_context_lists()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> A :py3 from vimini.context import add_all_regular_files; add_all_regular_files()<CR>"
+        )
         vim.command("nnoremap <buffer> <silent> q :q<CR>")
-        vim.command("autocmd BufUnload <buffer> :py3 from vimini.context import confirm_context_files; confirm_context_files()")
+        vim.command(
+            "autocmd BufUnload <buffer> :py3 from vimini.context import confirm_context_files; confirm_context_files()"
+        )
         # Move cursor past header to the first file/directory entry.
         vim.current.window.cursor = (6, 0)
-        vim.command('setlocal readonly')
+        vim.command("setlocal readonly")
 
     except Exception as e:
         util.display_message(f"Error managing context files: {e}", error=True)
+
 
 def add_all_regular_files():
     """
@@ -282,11 +305,13 @@ def add_all_regular_files():
 
         context_files_list = _VIMINI_PENDING_CONTEXT_FILES
         if not isinstance(context_files_list, list):
-            util.display_message("Error: Pending context files list is not available.", error=True)
+            util.display_message(
+                "Error: Pending context files list is not available.", error=True
+            )
             return
 
         added_count = 0
-        dirs_to_ignore = {'.git', '__pycache__', 'node_modules', '.venv', 'target'}
+        dirs_to_ignore = {".git", "__pycache__", "node_modules", ".venv", "target"}
 
         try:
             for name in os.listdir(current_path):
@@ -301,7 +326,9 @@ def add_all_regular_files():
                         path_in_list = os.path.expanduser(f)
                         if not os.path.isabs(path_in_list):
                             path_in_list = os.path.join(project_root, path_in_list)
-                        if os.path.normpath(path_in_list) == os.path.normpath(full_path):
+                        if os.path.normpath(path_in_list) == os.path.normpath(
+                            full_path
+                        ):
                             is_already_present = True
                             break
 
@@ -309,16 +336,20 @@ def add_all_regular_files():
                         context_files_list.append(relative_path_for_storage)
                         added_count += 1
         except OSError as e:
-            util.display_message(f"Error reading directory '{current_path}': {e}", error=True)
+            util.display_message(
+                f"Error reading directory '{current_path}': {e}", error=True
+            )
             return
 
         if added_count > 0:
             _VIMINI_PENDING_CONTEXT_FILES = context_files_list
-            buffer_lines = _draw_context_files_listing(current_path, project_root, context_files_list)
+            buffer_lines = _draw_context_files_listing(
+                current_path, project_root, context_files_list
+            )
             if buffer_lines is not None:
-                vim.command('setlocal modifiable')
+                vim.command("setlocal modifiable")
                 buf[:] = buffer_lines
-                vim.command('setlocal readonly')
+                vim.command("setlocal readonly")
                 vim.command("redraw")
                 # Restore cursor position if possible
                 try:
@@ -333,6 +364,7 @@ def add_all_regular_files():
         err_msg = str(e).replace("'", "''")
         vim.command(f"echoerr '[Vimini] Error adding regular files: {err_msg}'")
 
+
 def toggle_context_file():
     """
     Called by <Enter> mapping in the ViminiContextFiles buffer.
@@ -346,7 +378,7 @@ def toggle_context_file():
         line = buf[line_num - 1]
 
         # Ignore empty lines or header/comment lines
-        if not line.strip() or line.strip().startswith('|'):
+        if not line.strip() or line.strip().startswith("|"):
             return
 
         current_path = vim.eval("get(b:, 'vimini_context_path', '')")
@@ -356,9 +388,9 @@ def toggle_context_file():
             return
 
         # --- Directory Navigation Logic ---
-        if line.startswith('> '):
+        if line.startswith("> "):
             dir_name = line[2:].strip()
-            if dir_name == '..':
+            if dir_name == "..":
                 new_path = os.path.dirname(current_path)
             else:
                 new_path = os.path.join(current_path, dir_name)
@@ -373,22 +405,27 @@ def toggle_context_file():
             context_files_list = _VIMINI_PENDING_CONTEXT_FILES
             if not isinstance(context_files_list, list):
                 # This should not happen if context_files_command() was called.
-                util.display_message("Error: Pending context files list is not available.", error=True)
+                util.display_message(
+                    "Error: Pending context files list is not available.", error=True
+                )
                 return
 
-            buffer_lines = _draw_context_files_listing(new_path, project_root, context_files_list)
+            buffer_lines = _draw_context_files_listing(
+                new_path, project_root, context_files_list
+            )
             if buffer_lines is None:
-                return # Error displayed by helper
+                return  # Error displayed by helper
 
-            vim.command('setlocal modifiable')
+            vim.command("setlocal modifiable")
             buf[:] = buffer_lines
             vim.command(f"let b:vimini_context_path = '{new_path}'")
-            vim.command('setlocal readonly')
+            vim.command("setlocal readonly")
             win.cursor = (6, 0)
             return
 
         # --- File Toggling Logic ---
-        if len(line) < 3: return
+        if len(line) < 3:
+            return
         prefix = line[:2]
         file_name = line[2:].strip()
 
@@ -398,26 +435,32 @@ def toggle_context_file():
         if not os.path.isfile(full_path_on_line):
             context_files_list = _VIMINI_PENDING_CONTEXT_FILES
             if not isinstance(context_files_list, list):
-                util.display_message("Error: Pending context files list is not available.", error=True)
+                util.display_message(
+                    "Error: Pending context files list is not available.", error=True
+                )
                 return
 
-            buffer_lines = _draw_context_files_listing(current_path, project_root, context_files_list)
+            buffer_lines = _draw_context_files_listing(
+                current_path, project_root, context_files_list
+            )
             if buffer_lines is None:
-                return # Error displayed by helper
+                return  # Error displayed by helper
 
-            vim.command('setlocal modifiable')
+            vim.command("setlocal modifiable")
             buf[:] = buffer_lines
-            vim.command('setlocal readonly')
-            win.cursor = (6, 0) # cursor to top after redraw
+            vim.command("setlocal readonly")
+            win.cursor = (6, 0)  # cursor to top after redraw
             return
 
-        is_in_context = (prefix == "C ")
+        is_in_context = prefix == "C "
 
         relative_path_for_storage = os.path.relpath(full_path_on_line, project_root)
 
         context_files_list = _VIMINI_PENDING_CONTEXT_FILES
         if not isinstance(context_files_list, list):
-            util.display_message("Error: Pending context files list is not available.", error=True)
+            util.display_message(
+                "Error: Pending context files list is not available.", error=True
+            )
             return
 
         new_list = []
@@ -447,14 +490,17 @@ def toggle_context_file():
 
         _VIMINI_PENDING_CONTEXT_FILES = new_list
 
-        vim.command('setlocal modifiable')
+        vim.command("setlocal modifiable")
         buf[line_num - 1] = f"{new_prefix}{file_name}"
-        vim.command('setlocal readonly')
+        vim.command("setlocal readonly")
         vim.command("redraw")
         win.cursor = (line_num, col)
 
     except Exception as e:
-        vim.command(f"echoerr '[Vimini] Error toggling context file: {str(e).replace("'", "''")}'")
+        vim.command(
+            f"echoerr '[Vimini] Error toggling context file: {str(e).replace("'", "''")}'"
+        )
+
 
 def show_context_lists():
     """
@@ -494,20 +540,27 @@ def show_context_lists():
             else:
                 popup_content.append("(none)")
 
-        popup_content.extend(['', '(Press any key to close)'])
+        popup_content.extend(["", "(Press any key to close)"])
 
         # Create the popup
         popup_options = {
-            'title': ' Context Lists ', 'line': 0, 'col': 0,
-            'minwidth': 40, 'maxwidth': 80,
-            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
-            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
-            'close': 'none', 'zindex': 200,
+            "title": " Context Lists ",
+            "line": 0,
+            "col": 0,
+            "minwidth": 40,
+            "maxwidth": 80,
+            "padding": [1, 2, 1, 2],
+            "border": [1, 1, 1, 1],
+            "borderchars": ["─", "│", "─", "│", "╭", "╮", "╯", "╰"],
+            "close": "none",
+            "zindex": 200,
         }
-        popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+        popup_id = vim.eval(
+            f"popup_create({json.dumps(popup_content)}, {popup_options})"
+        )
         vim.command("redraw!")
         # Wait for any key to be pressed.
-        vim.eval('getchar()')
+        vim.eval("getchar()")
 
     except Exception as e:
         util.display_message(f"Error showing context lists: {e}", error=True)
@@ -516,6 +569,7 @@ def show_context_lists():
         if int(popup_id) > 0:
             vim.eval(f"popup_close({popup_id})")
             vim.command("redraw!")
+
 
 def confirm_context_files():
     """
@@ -553,14 +607,19 @@ def confirm_context_files():
         else:
             popup_content.append("(Context will be empty)")
 
-        popup_content.extend(['', '---', 'Accept changes? [y/n/a]'])
+        popup_content.extend(["", "---", "Accept changes? [y/n/a]"])
 
         popup_options = {
-            'title': ' Confirm Context ', 'line': 0, 'col': 0,
-            'minwidth': 40, 'maxwidth': 80,
-            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
-            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
-            'close': 'none', 'zindex': 200,
+            "title": " Confirm Context ",
+            "line": 0,
+            "col": 0,
+            "minwidth": 40,
+            "maxwidth": 80,
+            "padding": [1, 2, 1, 2],
+            "border": [1, 1, 1, 1],
+            "borderchars": ["─", "│", "─", "│", "╭", "╮", "╯", "╰"],
+            "close": "none",
+            "zindex": 200,
         }
         popup_id = vim.eval(f"popup_create({popup_content}, {popup_options})")
         vim.command("redraw!")
@@ -568,11 +627,11 @@ def confirm_context_files():
         commit_confirmed = False
         always_save = False
         try:
-            answer_code = vim.eval('getchar()')
+            answer_code = vim.eval("getchar()")
             answer_char = chr(int(answer_code))
-            if answer_char.lower() == 'y':
+            if answer_char.lower() == "y":
                 commit_confirmed = True
-            elif answer_char.lower() == 'a':
+            elif answer_char.lower() == "a":
                 commit_confirmed = True
                 always_save = True
         except (vim.error, ValueError, TypeError):
@@ -586,7 +645,9 @@ def confirm_context_files():
             vim.command(f"let g:context_files = {json.dumps(pending_files)}")
             if always_save:
                 save_project_context_files(pending_files)
-                util.display_message("Context files updated and saved for project.", history=True)
+                util.display_message(
+                    "Context files updated and saved for project.", history=True
+                )
             else:
                 util.display_message("Context files updated.", history=True)
         else:
@@ -601,13 +662,14 @@ def confirm_context_files():
 
 # --- Agentic Context Functions ---
 
+
 def list_directory(directory_path="."):
     """
     Reads the list of files and directories in a given path.
     Does not allow listing files above the current working directory.
     """
     try:
-        current_root = os.path.realpath(vim.eval('getcwd()'))
+        current_root = os.path.realpath(vim.eval("getcwd()"))
         target_path = os.path.realpath(os.path.join(current_root, directory_path))
 
         if os.path.commonpath([current_root, target_path]) != current_root:
@@ -637,13 +699,14 @@ def list_directory(directory_path="."):
     except Exception as e:
         return f"Error listing directory: {str(e)}"
 
+
 def read_file(filepath):
     """
     Reads the content of a file. Only files within the current working directory
     or its subdirectories can be read.
     """
     try:
-        current_root = os.path.realpath(vim.eval('getcwd()'))
+        current_root = os.path.realpath(vim.eval("getcwd()"))
         target_path = os.path.realpath(os.path.join(current_root, filepath))
 
         if os.path.commonpath([current_root, target_path]) != current_root:
@@ -652,7 +715,7 @@ def read_file(filepath):
         if not os.path.isfile(target_path):
             return f"Error: File '{filepath}' does not exist or is not a regular file."
 
-        with open(target_path, 'r', encoding='utf-8') as f:
+        with open(target_path, "r", encoding="utf-8") as f:
             content = f.read()
 
         return content
@@ -662,6 +725,7 @@ def read_file(filepath):
 
 # --- Remote File Manager ---
 
+
 def _refresh_files_buffer():
     """
     Helper to re-fetch files and update the content of the 'Vimini Files' buffer.
@@ -669,7 +733,7 @@ def _refresh_files_buffer():
     # Find the 'Vimini Files' buffer
     vimini_files_buffer = None
     for b in vim.buffers:
-        if b.valid and b.name and b.name.endswith('Vimini Files'):
+        if b.valid and b.name and b.name.endswith("Vimini Files"):
             vimini_files_buffer = b
             break
     if not vimini_files_buffer:
@@ -684,7 +748,7 @@ def _refresh_files_buffer():
         "Vimini Remote Files",
         "-------------------",
         " d: delete | D: delete all | i: info | q: close",
-        ""
+        "",
     ]
     if not all_files:
         file_list_content.append("No files have been uploaded.")
@@ -714,12 +778,13 @@ def _refresh_files_buffer():
         if lnum < 1:
             lnum = 1
         cursor_pos[1] = str(lnum)
-        cursor_pos[0] = '0' # Use current buffer to be safe
+        cursor_pos[0] = "0"  # Use current buffer to be safe
 
         vim.command(f"call setpos('.', {cursor_pos})")
 
         if original_win_nr != win_nr:
             vim.command(f"{original_win_nr}wincmd w")
+
 
 def _files_buffer_action(action):
     """
@@ -729,14 +794,19 @@ def _files_buffer_action(action):
     try:
         w = vim.current.window
         # Check if we are in the right buffer
-        if not (w.valid and w.buffer.name and w.buffer.name.endswith('Vimini Files')):
+        if not (w.valid and w.buffer.name and w.buffer.name.endswith("Vimini Files")):
             return
 
         line_num = w.cursor[0]
         line = w.buffer[line_num - 1].strip()
 
         # Ignore header/blank lines
-        if not line or line.startswith("Vimini") or line.startswith("---") or "delete |" in line:
+        if (
+            not line
+            or line.startswith("Vimini")
+            or line.startswith("---")
+            or "delete |" in line
+        ):
             return
 
         file_name = line
@@ -754,11 +824,14 @@ def _files_buffer_action(action):
                 break
 
         if not target_file:
-            util.display_message(f"Error: File '{file_name}' no longer exists on server. Refreshing list.", error=True)
+            util.display_message(
+                f"Error: File '{file_name}' no longer exists on server. Refreshing list.",
+                error=True,
+            )
             _refresh_files_buffer()
             return
 
-        util.display_message("") # Clear message
+        util.display_message("")  # Clear message
 
         if action == "info":
             info_content = [
@@ -772,18 +845,23 @@ def _files_buffer_action(action):
                 f"URI:          {target_file.uri}",
             ]
             util.new_split()
-            vim.command(f'file Vimini File Info: {file_name}')
+            vim.command(f"file Vimini File Info: {file_name}")
             vim.current.buffer[:] = info_content
-            vim.command('setlocal buftype=nofile filetype=markdown noswapfile nomodifiable')
+            vim.command(
+                "setlocal buftype=nofile filetype=markdown noswapfile nomodifiable"
+            )
 
         elif action == "delete":
             util.display_message(f"Deleting '{file_name}'...")
             client.files.delete(name=target_file.name)
-            util.display_message(f"File '{file_name}' deleted. Refreshing list...", history=True)
+            util.display_message(
+                f"File '{file_name}' deleted. Refreshing list...", history=True
+            )
             _refresh_files_buffer()
 
     except Exception as e:
         util.display_message(f"Error during file action: {e}", error=True)
+
 
 def _delete_all_files():
     """
@@ -804,26 +882,33 @@ def _delete_all_files():
             f"Delete all {len(all_files)} remote files?",
             "This action cannot be undone.",
             "",
-            "Confirm deletion? [y/n]"
+            "Confirm deletion? [y/n]",
         ]
         popup_options = {
-            'title': ' Confirm Deletion ', 'line': 0, 'col': 0,
-            'minwidth': 40, 'maxwidth': 60,
-            'padding': [1, 2, 1, 2], 'border': [1, 1, 1, 1],
-            'borderchars': ['─', '│', '─', '│', '╭', '╮', '╯', '╰'],
-            'close': 'none', 'zindex': 200,
+            "title": " Confirm Deletion ",
+            "line": 0,
+            "col": 0,
+            "minwidth": 40,
+            "maxwidth": 60,
+            "padding": [1, 2, 1, 2],
+            "border": [1, 1, 1, 1],
+            "borderchars": ["─", "│", "─", "│", "╭", "╮", "╯", "╰"],
+            "close": "none",
+            "zindex": 200,
         }
-        popup_id = vim.eval(f"popup_create({json.dumps(popup_content)}, {popup_options})")
+        popup_id = vim.eval(
+            f"popup_create({json.dumps(popup_content)}, {popup_options})"
+        )
         vim.command("redraw!")
 
         confirmed = False
         try:
-            answer_code = vim.eval('getchar()')
+            answer_code = vim.eval("getchar()")
             answer_char = chr(int(answer_code))
-            if answer_char.lower() == 'y':
+            if answer_char.lower() == "y":
                 confirmed = True
         except (vim.error, ValueError, TypeError):
-            pass # confirmed remains False
+            pass  # confirmed remains False
         finally:
             vim.eval(f"popup_close({popup_id})")
             vim.command("redraw!")
@@ -853,6 +938,7 @@ def _delete_all_files():
     except Exception as e:
         util.display_message(f"Error deleting all files: {e}", error=True)
 
+
 def files_command():
     """
     Opens an interactive buffer listing all remote files, with key mappings
@@ -872,7 +958,7 @@ def files_command():
             "Vimini Remote Files",
             "-------------------",
             " d: delete | D: delete all | i: info | q: close",
-            ""
+            "",
         ]
         if not all_files:
             file_list_content.append("No files have been uploaded.")
@@ -881,18 +967,24 @@ def files_command():
                 file_list_content.append(f.display_name)
 
         util.new_split()
-        vim.command('file Vimini Files')
+        vim.command("file Vimini Files")
         buf = vim.current.buffer
         buf[:] = file_list_content
-        vim.command('setlocal buftype=nofile noswapfile filetype=markdown')
+        vim.command("setlocal buftype=nofile noswapfile filetype=markdown")
 
         # Mappings for actions
-        vim.command("nnoremap <buffer> <silent> i :py3 from vimini.context import _files_buffer_action; _files_buffer_action('info')<CR>")
-        vim.command("nnoremap <buffer> <silent> d :py3 from vimini.context import _files_buffer_action; _files_buffer_action('delete')<CR>")
-        vim.command("nnoremap <buffer> <silent> D :py3 from vimini.context import _delete_all_files; _delete_all_files()<CR>")
+        vim.command(
+            "nnoremap <buffer> <silent> i :py3 from vimini.context import _files_buffer_action; _files_buffer_action('info')<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> d :py3 from vimini.context import _files_buffer_action; _files_buffer_action('delete')<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> D :py3 from vimini.context import _delete_all_files; _delete_all_files()<CR>"
+        )
         vim.command("nnoremap <buffer> <silent> q :q<CR>")
 
-        vim.command('setlocal nomodifiable')
+        vim.command("setlocal nomodifiable")
 
     except Exception as e:
         util.display_message(f"Error listing files: {e}", error=True)

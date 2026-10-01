@@ -6,13 +6,21 @@ from google.genai import types
 from vimini.common.util import get_git_repo_root, get_project_root, get_relative_path
 
 
-def upload_context_files(logger, client, file_paths_to_include=None, project_root=None, buffers=None, display_cb=None):
+def upload_context_files(
+    logger,
+    client,
+    file_paths_to_include=None,
+    project_root=None,
+    buffers=None,
+    display_cb=None,
+):
     """
     Uploads files to use as context. Re-uploads files if they have been
     modified since the last upload.
     Returns a list of active file API resources, or None on failure.
     Does not use the vim module.
     """
+
     def _msg(text, error=False, history=False):
         if error:
             logger.error(text)
@@ -116,7 +124,9 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
             files_to_process.append(found_file)
 
     reused_file_paths = {f.display_name for f in files_to_process}
-    upload_file_paths = {get_relative_path(p, git_root=project_root) for p, _ in files_requiring_upload}
+    upload_file_paths = {
+        get_relative_path(p, git_root=project_root) for p, _ in files_requiring_upload
+    }
     all_context_file_paths = sorted(list(reused_file_paths | upload_file_paths))
 
     logger.info(f"Found {len(all_context_file_paths)} context files:")
@@ -130,7 +140,7 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
             content = custom_content
         else:
             try:
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read()
             except Exception as e:
                 _msg(f"Could not read context file {file_path}: {e}", error=True)
@@ -139,45 +149,51 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
         if not content.strip():
             continue
 
-        content_bytes = content.encode('utf-8')
-        files_with_content.append({
-            'path': file_path,
-            'content_bytes': content_bytes,
-            'size': len(content_bytes)
-        })
+        content_bytes = content.encode("utf-8")
+        files_with_content.append(
+            {
+                "path": file_path,
+                "content_bytes": content_bytes,
+                "size": len(content_bytes),
+            }
+        )
 
     MAX_UPLOAD_BYTES = 1 * 1024 * 1024
-    total_size = sum(f['size'] for f in files_with_content)
+    total_size = sum(f["size"] for f in files_with_content)
     eliminated_files = []
 
     while total_size > MAX_UPLOAD_BYTES and files_with_content:
-        largest_file = max(files_with_content, key=lambda f: f['size'])
+        largest_file = max(files_with_content, key=lambda f: f["size"])
         files_with_content.remove(largest_file)
-        total_size -= largest_file['size']
-        eliminated_files.append(os.path.basename(largest_file['path']))
+        total_size -= largest_file["size"]
+        eliminated_files.append(os.path.basename(largest_file["path"]))
 
     if eliminated_files:
-        _msg(f"Context files > 1MB. Excluded: {', '.join(sorted(eliminated_files))}", history=True)
-        logger.info(f"Excluded {len(eliminated_files)} files from context upload due to size limit: {', '.join(sorted(eliminated_files))}")
+        _msg(
+            f"Context files > 1MB. Excluded: {', '.join(sorted(eliminated_files))}",
+            history=True,
+        )
+        logger.info(
+            f"Excluded {len(eliminated_files)} files from context upload due to size limit: {', '.join(sorted(eliminated_files))}"
+        )
 
     if files_with_content:
         _msg(f"Uploading {len(files_with_content)} context file(s)...")
 
     uploaded_files = []
     for file_info in files_with_content:
-        file_path = file_info['path']
+        file_path = file_info["path"]
         rel_path = get_relative_path(file_path, git_root=project_root)
-        buf_content_bytes = file_info['content_bytes']
+        buf_content_bytes = file_info["content_bytes"]
 
         buf_io = io.BytesIO(buf_content_bytes)
-        mime_type = 'text/plain'
+        mime_type = "text/plain"
 
         try:
             uploaded_file = client.files.upload(
                 file=buf_io,
                 config=types.UploadFileConfig(
-                    display_name=rel_path,
-                    mime_type=mime_type
+                    display_name=rel_path, mime_type=mime_type
                 ),
             )
             uploaded_files.append(uploaded_file)
@@ -187,12 +203,15 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
 
     pending_files = []
     for f in uploaded_files:
-        if f.state.name == 'ACTIVE':
+        if f.state.name == "ACTIVE":
             files_to_process.append(f)
-        elif f.state.name == 'PROCESSING':
+        elif f.state.name == "PROCESSING":
             pending_files.append(f)
         else:
-            _msg(f"Reused file {f.display_name} is in an unusable state: {f.state.name}", error=True)
+            _msg(
+                f"Reused file {f.display_name} is in an unusable state: {f.state.name}",
+                error=True,
+            )
             return None
 
     start_time = time.time()
@@ -208,15 +227,20 @@ def upload_context_files(logger, client, file_paths_to_include=None, project_roo
         for f in pending_files:
             try:
                 updated_file = client.files.get(name=f.name)
-                if updated_file.state.name == 'PROCESSING':
+                if updated_file.state.name == "PROCESSING":
                     still_pending.append(updated_file)
-                elif updated_file.state.name == 'ACTIVE':
+                elif updated_file.state.name == "ACTIVE":
                     files_to_process.append(updated_file)
                 else:
-                    _msg(f"File processing failed for {updated_file.display_name}: {updated_file.state.name}", error=True)
+                    _msg(
+                        f"File processing failed for {updated_file.display_name}: {updated_file.state.name}",
+                        error=True,
+                    )
                     return None
             except Exception as e:
-                _msg(f"Error checking file status for {f.display_name}: {e}", error=True)
+                _msg(
+                    f"Error checking file status for {f.display_name}: {e}", error=True
+                )
                 return None
         pending_files = still_pending
 

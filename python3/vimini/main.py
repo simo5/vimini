@@ -5,13 +5,26 @@ from vimini import util
 from vimini.util import process_queue, get_model_name
 from vimini.autocomplete import autocomplete, cancel_autocomplete
 from vimini.code import code, show_diff, apply_code
-from vimini.commit import commit, handle_commit_response, finalize_commit, _finalize_commit
+from vimini.commit import (
+    commit,
+    handle_commit_response,
+    finalize_commit,
+    _finalize_commit,
+)
 from vimini.review import review
 from vimini.ripgrep import command as ripgrep_command
 from vimini.ripgrep import apply as ripgrep_apply
 from vimini.chat import chat
-from vimini.context import context_files_command, toggle_context_file, show_context_lists, confirm_context_files, files_command, restore_context_files
+from vimini.context import (
+    context_files_command,
+    toggle_context_file,
+    show_context_lists,
+    confirm_context_files,
+    files_command,
+    restore_context_files,
+)
 from vimini.config import config_command
+
 
 def initialize(api_key_file, model, logfile=None):
     """
@@ -21,11 +34,14 @@ def initialize(api_key_file, model, logfile=None):
     """
     util._API_KEY_FILE = api_key_file
     util._MODEL = model
-    util._GENAI_CLIENT = None # Reset client if key/model changes.
+    util._GENAI_CLIENT = None  # Reset client if key/model changes.
     util.set_logging(logfile)
     restore_context_files()
     if not util.get_api_key():
-        util.display_message("API key not found. Please store it in ~/.config/gemini.token.", error=True)
+        util.display_message(
+            "API key not found. Please store it in ~/.config/gemini.token.", error=True
+        )
+
 
 def send_setup():
     """
@@ -43,10 +59,11 @@ def send_setup():
         "params": {
             "api_key_file": util._API_KEY_FILE,
             "model": util._MODEL,
-            "temperature": temperature
-        }
+            "temperature": temperature,
+        },
     }
     return util.send_channel_request(req, silent=False)
+
 
 def start_agent():
     """
@@ -54,6 +71,7 @@ def start_agent():
     """
     try:
         from vimini.agent.server import start_agent_server
+
         socket_path = start_agent_server()
         if socket_path:
             start_time = time.time()
@@ -66,30 +84,38 @@ def start_agent():
         util.log_info(f"Failed to start agent server: {e}")
         return None
 
+
 def stop_agent():
     """
     Stops the agent server process if running.
     """
     try:
         from vimini.agent.server import stop_agent_server
+
         stop_agent_server()
     except Exception as e:
         util.log_info(f"Failed to stop agent server: {e}")
 
+
 def _send_channel_request(req_dict, silent=False):
-    if not vim.eval("exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"):
+    if not vim.eval(
+        "exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"
+    ):
         if not silent:
             util.display_message("Error: Agent server channel is not open.", error=True)
         return False
     try:
         util.log_info(f"Sending channel request: {req_dict}")
         safe_json = json.dumps(req_dict)
-        vim.command(f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))")
+        vim.command(
+            f"call ch_sendexpr(g:vimini_channel, json_decode({json.dumps(safe_json)}))"
+        )
         return True
     except Exception as e:
         if not silent:
             util.display_message(f"Error sending channel request: {e}", error=True)
         return False
+
 
 def handle_channel_message(msg):
     """
@@ -105,19 +131,27 @@ def handle_channel_message(msg):
     result = msg.get("result")
 
     if error is not None:
-        err_msg = error.get("message", "Unknown error") if isinstance(error, dict) else str(error)
+        err_msg = (
+            error.get("message", "Unknown error")
+            if isinstance(error, dict)
+            else str(error)
+        )
         err_result = {"status": "error", "error": err_msg}
         if method == "autocomplete":
             from vimini.autocomplete import handle_channel_response
+
             handle_channel_response(req_id, err_result)
         elif method == "code":
             from vimini.code import handle_channel_response
+
             handle_channel_response(req_id, err_result)
         elif method == "chat":
             from vimini.chat import handle_channel_response
+
             handle_channel_response(req_id, err_result)
         elif method == "review":
             from vimini.review import handle_channel_response
+
             handle_channel_response(req_id, err_result)
         elif method == "commit":
             util.display_message(f"Error: {err_msg}", error=True)
@@ -130,29 +164,37 @@ def handle_channel_message(msg):
     if isinstance(result, dict):
         if method == "autocomplete":
             from vimini.autocomplete import handle_channel_response
+
             handle_channel_response(req_id, result)
         elif method == "code":
             from vimini.code import handle_channel_response
+
             handle_channel_response(req_id, result)
         elif method == "review":
             from vimini.review import handle_channel_response
+
             handle_channel_response(req_id, result)
         elif method == "setup":
             util.log_info("Agent server setup completed.")
         elif method == "list_models":
             models = result.get("models", [])
             from vimini.models import show_models_list
+
             show_models_list(models)
         elif method == "chat":
             from vimini.chat import handle_channel_response
+
             handle_channel_response(req_id, result)
         elif method == "commit":
             from vimini.commit import handle_commit_response
+
             handle_commit_response(req_id, result)
+
 
 # This new function is needed because vimini.vim calls main.logging()
 def logging(logfile=None):
     util.set_logging(logfile)
+
 
 def reload_vimini():
     """
@@ -166,37 +208,42 @@ def reload_vimini():
     # Save initialization parameters before deleting modules
     try:
         from vimini import util as old_util
+
         api_key_file = old_util._API_KEY_FILE
         model = old_util._MODEL
         job_counter = old_util._JOB_COUNTER
         log_file = None
         if old_util._LOGGER and old_util._LOGGER.handlers:
             import logging
+
             for handler in old_util._LOGGER.handlers:
                 if isinstance(handler, logging.FileHandler):
                     log_file = handler.baseFilename
                     break
     except Exception:
-        api_key_file = os.path.expanduser('~/.config/gemini.token')
+        api_key_file = os.path.expanduser("~/.config/gemini.token")
         model = vim.eval("get(g:, 'vimini_model', 'gemini-3.6-flash')")
         job_counter = 0
         log_file = vim.eval("get(g:, 'vimini_log_file', '')")
-        if not log_file or vim.eval("get(g:, 'vimini_logging', 'off')") != 'on':
+        if not log_file or vim.eval("get(g:, 'vimini_logging', 'off')") != "on":
             log_file = None
 
     # Delete all vimini modules from sys.modules
-    modules_to_delete = [m for m in list(sys.modules.keys()) if m.startswith('vimini')]
+    modules_to_delete = [m for m in list(sys.modules.keys()) if m.startswith("vimini")]
     for m in modules_to_delete:
         del sys.modules[m]
 
     # Re-import main and re-initialize
     from vimini import main
+
     main.initialize(api_key_file=api_key_file, model=model, logfile=log_file)
 
     # Use the freshly imported util to display the message and restore _JOB_COUNTER
     from vimini import util as new_util
+
     new_util._JOB_COUNTER = job_counter
     new_util.display_message("Vimini Python modules reloaded.", history=True)
+
 
 def list_models():
     """
@@ -207,8 +254,9 @@ def list_models():
         "jsonrpc": "2.0",
         "id": "list_models",
         "method": "list_models",
-        "params": {}
+        "params": {},
     }
+
 
 def help(command_name=None):
     """
@@ -217,7 +265,7 @@ def help(command_name=None):
     """
     util.log_info(f"help(command_name='{command_name}')")
 
-    help_content = [ 
+    help_content = [
         "VIMINI HELP",
         "===========",
         "",
@@ -293,19 +341,19 @@ def help(command_name=None):
         vim.command(f"{win_nr}wincmd w")
     else:
         util.new_split()
-        vim.command(f'file {buf_name}')
-        vim.command('setlocal buftype=nofile filetype=markdown noswapfile')
+        vim.command(f"file {buf_name}")
+        vim.command("setlocal buftype=nofile filetype=markdown noswapfile")
 
     # Update content
-    vim.command('setlocal modifiable')
+    vim.command("setlocal modifiable")
     vim.current.buffer[:] = help_content
-    vim.command('setlocal nomodifiable')
+    vim.command("setlocal nomodifiable")
 
     # Highlight handling
     vim.command("try | call clearmatches() | catch | endtry")
 
     if command_name:
-        target = command_name.lstrip(':')
+        target = command_name.lstrip(":")
         # Find the line starting with :Target
         found_line = -1
         search_prefix = f":{target}"
@@ -321,7 +369,8 @@ def help(command_name=None):
             pattern = search_prefix.replace("'", "''")
             vim.command(f"call matchadd('Search', '{pattern}')")
         else:
-             util.display_message(f"Command :{target} not found in help.", history=True)
+            util.display_message(f"Command :{target} not found in help.", history=True)
+
 
 def status_command():
     util.show_status()

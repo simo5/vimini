@@ -7,6 +7,7 @@ from vimini import util
 _current_autocomplete_job_id = None
 _original_cursor_hl = {}
 
+
 def cancel_autocomplete():
     """
     Signals that any ongoing autocomplete job should be cancelled.
@@ -15,6 +16,7 @@ def cancel_autocomplete():
     global _current_autocomplete_job_id
     _current_autocomplete_job_id = None
 
+
 def _show_autocomplete_popup(suggestion):
     """
     Shows the popup with the autocomplete suggestion.
@@ -22,9 +24,14 @@ def _show_autocomplete_popup(suggestion):
     """
     try:
         popup_options = {
-            'line': 'cursor-1', 'col': 'cursor', 'close': 'none',
-            'border': [0, 0, 0, 0], 'padding': [0, 1, 0, 1],
-            'highlight': 'Pmenu', 'zindex': 200, 'moved': 'any',
+            "line": "cursor-1",
+            "col": "cursor",
+            "close": "none",
+            "border": [0, 0, 0, 0],
+            "padding": [0, 1, 0, 1],
+            "highlight": "Pmenu",
+            "zindex": 200,
+            "moved": "any",
         }
 
         popup_id = vim.eval(f"popup_create('{suggestion}', {popup_options})")
@@ -51,6 +58,7 @@ def _show_autocomplete_popup(suggestion):
         error_message = str(e).replace("'", "''")
         vim.command(f"echoerr '[Vimini] Autocomplete popup Error: {error_message}'")
 
+
 def handle_channel_response(result):
     """
     Callback function invoked when the agent sends back an autocomplete response via Vim's channel.
@@ -74,11 +82,12 @@ def handle_channel_response(result):
     if not text:
         return
 
-    suggestion = text.strip().split('\n')[0]
+    suggestion = text.strip().split("\n")[0]
     if not suggestion:
         return
 
     _show_autocomplete_popup(suggestion)
+
 
 def autocomplete():
     """
@@ -106,7 +115,9 @@ def autocomplete():
         return
 
     current_line_content = context_lines[-1]
-    context_lines[-1] = current_line_content[:col] + "<CURSOR>" + current_line_content[col:]
+    context_lines[-1] = (
+        current_line_content[:col] + "<CURSOR>" + current_line_content[col:]
+    )
     context_text = "\n".join(context_lines)
 
     prompt = (
@@ -123,9 +134,7 @@ def autocomplete():
         "jsonrpc": "2.0",
         "id": str(job_id),
         "method": "autocomplete",
-        "params": {
-            "prompt": prompt
-        }
+        "params": {"prompt": prompt},
     }
 
     util.send_channel_request(req)

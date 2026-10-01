@@ -3,7 +3,8 @@ import logging
 from google import genai
 from google.genai import types
 
-logger = logging.getLogger('vimini_agent')
+logger = logging.getLogger("vimini_agent")
+
 
 def load_api_key(config=None, api_key_file=None):
     """
@@ -19,12 +20,13 @@ def load_api_key(config=None, api_key_file=None):
         expanded_path = os.path.expanduser(api_key_file)
         if os.path.exists(expanded_path):
             try:
-                with open(expanded_path, 'r', encoding='utf-8') as f:
+                with open(expanded_path, "r", encoding="utf-8") as f:
                     return f.read().strip()
             except Exception as e:
                 logger.error(f"Error reading API key file '{expanded_path}': {e}")
                 raise RuntimeError(f"Error reading API key file '{expanded_path}': {e}")
     return None
+
 
 def get_client(api_key=None, api_key_file=None, config=None):
     """
@@ -36,6 +38,7 @@ def get_client(api_key=None, api_key_file=None, config=None):
         return genai.Client(api_key=api_key)
     return genai.Client()
 
+
 def create_generation_config(
     temperature=None,
     verbose=False,
@@ -46,7 +49,7 @@ def create_generation_config(
     system_instruction=None,
     disable_function_calling=None,
     thinking_config=None,
-    **kwargs
+    **kwargs,
 ):
     """
     Creates and returns a types.GenerateContentConfig tailored for the use case.
@@ -55,27 +58,29 @@ def create_generation_config(
     """
     config_kwargs = {}
     if disable_function_calling is None:
-        disable_function_calling = (tools is None)
+        disable_function_calling = tools is None
 
     if disable_function_calling:
-        config_kwargs['automatic_function_calling'] = types.AutomaticFunctionCallingConfig(disable=True)
+        config_kwargs["automatic_function_calling"] = (
+            types.AutomaticFunctionCallingConfig(disable=True)
+        )
 
     if tools is not None:
-        config_kwargs['tools'] = tools
+        config_kwargs["tools"] = tools
 
     if system_instruction is not None:
-        config_kwargs['system_instruction'] = system_instruction
+        config_kwargs["system_instruction"] = system_instruction
 
     if response_mime_type is not None:
-        config_kwargs['response_mime_type'] = response_mime_type
+        config_kwargs["response_mime_type"] = response_mime_type
 
     if response_schema is not None:
-        config_kwargs['response_schema'] = response_schema
+        config_kwargs["response_schema"] = response_schema
 
     if thinking_config is not None:
-        config_kwargs['thinking_config'] = thinking_config
+        config_kwargs["thinking_config"] = thinking_config
     elif verbose or include_thoughts:
-        config_kwargs['thinking_config'] = types.ThinkingConfig(include_thoughts=True)
+        config_kwargs["thinking_config"] = types.ThinkingConfig(include_thoughts=True)
 
     config_kwargs.update(kwargs)
 

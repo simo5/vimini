@@ -8,10 +8,12 @@ _BUFFER_DATA_STORE = {}
 _DIFF_SEPARATOR = "========== VIMINI DIFF START =========="
 _STREAM_JSON_STORE = {}
 
+
 def _to_str(val):
     if isinstance(val, bytes):
-        return val.decode('utf-8', errors='replace')
+        return val.decode("utf-8", errors="replace")
     return str(val) if val is not None else ""
+
 
 def _find_buffer(req_id):
     try:
@@ -22,6 +24,7 @@ def _find_buffer(req_id):
     except Exception:
         pass
     return None
+
 
 def handle_channel_response(req_id, result):
     """
@@ -48,7 +51,7 @@ def handle_channel_response(req_id, result):
         verbose = result.get("verbose")
         if verbose is None:
             try:
-                verbose = (vim.eval("get(g:, 'vimini_thinking', 'on')") == 'on')
+                verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
             except Exception:
                 verbose = True
         if verbose and thought_text and buf_num:
@@ -75,20 +78,25 @@ def handle_channel_response(req_id, result):
         json_text = _STREAM_JSON_STORE.pop(req_id, "")
         files_to_process = result.get("files", [])
         diff_output = result.get("diff_output", "")
-        project_root = result.get("project_root") or util.get_git_repo_root() or os.getcwd()
+        project_root = (
+            result.get("project_root") or util.get_git_repo_root() or os.getcwd()
+        )
 
         if buf_num:
             _BUFFER_DATA_STORE[buf_num] = {
                 "files_to_apply": files_to_process,
                 "project_root": project_root,
-                "req_id": req_id
+                "req_id": req_id,
             }
 
             if diff_output:
                 separator_block = f"\n{_DIFF_SEPARATOR}\n"
                 util.append_to_buffer(buf_num, separator_block + diff_output)
             else:
-                util.append_to_buffer(buf_num, "\nAI content is identical to the original files or returned empty diff.")
+                util.append_to_buffer(
+                    buf_num,
+                    "\nAI content is identical to the original files or returned empty diff.",
+                )
 
             vim.command(f"call setbufvar({buf_num}, '&filetype', 'diff')")
 
@@ -105,6 +113,7 @@ def handle_channel_response(req_id, result):
         if buf_num:
             util.append_to_buffer(buf_num, f"\nError: {err_msg}")
         util.display_message(f"Error: {err_msg}", error=True)
+
 
 def code(prompt, verbose=False, temperature=None):
     """
@@ -129,31 +138,49 @@ def code(prompt, verbose=False, temperature=None):
                 if os.path.isabs(f):
                     file_paths_to_include.append(os.path.realpath(f))
                 else:
-                    file_paths_to_include.append(os.path.realpath(os.path.join(project_root, f)))
+                    file_paths_to_include.append(
+                        os.path.realpath(os.path.join(project_root, f))
+                    )
     except Exception:
         pass
 
     original_buffer = vim.current.buffer
 
     is_real_file = False
-    if original_buffer.name and os.path.exists(original_buffer.name) and os.path.isfile(original_buffer.name):
+    if (
+        original_buffer.name
+        and os.path.exists(original_buffer.name)
+        and os.path.isfile(original_buffer.name)
+    ):
         try:
-            buftype = original_buffer.options['buftype'] if 'buftype' in original_buffer.options else ''
+            buftype = (
+                original_buffer.options["buftype"]
+                if "buftype" in original_buffer.options
+                else ""
+            )
             if not buftype:
                 is_real_file = True
         except Exception:
             is_real_file = True
 
     if is_real_file:
-        main_file_name = os.path.relpath(original_buffer.name, project_root) if os.path.isabs(original_buffer.name) else original_buffer.name
-        task_instruction = f"Your primary task is to modify the file named '{main_file_name}'."
+        main_file_name = (
+            os.path.relpath(original_buffer.name, project_root)
+            if os.path.isabs(original_buffer.name)
+            else original_buffer.name
+        )
+        task_instruction = (
+            f"Your primary task is to modify the file named '{main_file_name}'."
+        )
     else:
         task_instruction = "Your primary task is to address the concern in the active buffer (if any).\n"
         buffer_content = "\n".join(original_buffer[:])
         if buffer_content.strip():
             task_instruction += f"\n\nAdditional context from the current active buffer:\n{buffer_content}\n"
 
-    context_file_names = sorted([os.path.relpath(f, project_root) for f in file_paths_to_include])
+    context_file_names = sorted(
+        [os.path.relpath(f, project_root) for f in file_paths_to_include]
+    )
 
     job_name = f"Code: {prompt}"
     job_id = str(util.reserve_next_job_id(job_name))
@@ -195,17 +222,18 @@ def code(prompt, verbose=False, temperature=None):
             "file_paths_to_include": file_paths_to_include,
             "buffers": buffers,
             "task_instruction": task_instruction,
-        }
+        },
     }
 
     util.send_channel_request(req)
+
 
 def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
     """
     Helper function to parse x-diff chunks, fix the --- and +++ paths,
     and recount/adjust the line counters in @@ headers if they are incorrect.
     """
-    lines = ai_generated_code.strip('\n').split('\n')
+    lines = ai_generated_code.strip("\n").split("\n")
     if not lines or (len(lines) == 1 and not lines[0]):
         return []
 
@@ -224,24 +252,30 @@ def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
         minus_count = 0
         plus_count = 0
         for hl in current_hunk_data:
-            if hl.startswith('-'):
+            if hl.startswith("-"):
                 minus_count += 1
-            elif hl.startswith('+'):
+            elif hl.startswith("+"):
                 plus_count += 1
-            elif hl.startswith('\\'):
+            elif hl.startswith("\\"):
                 pass
             else:
                 minus_count += 1
                 plus_count += 1
 
-        m = re.match(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$', current_hunk_header)
+        m = re.match(
+            r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$", current_hunk_header
+        )
         if m:
             start_minus = m.group(1)
             start_plus = m.group(2)
             rest = m.group(3)
 
-            new_minus_str = f"{start_minus},{minus_count}" if minus_count != 1 else start_minus
-            new_plus_str = f"{start_plus},{plus_count}" if plus_count != 1 else start_plus
+            new_minus_str = (
+                f"{start_minus},{minus_count}" if minus_count != 1 else start_minus
+            )
+            new_plus_str = (
+                f"{start_plus},{plus_count}" if plus_count != 1 else start_plus
+            )
 
             fixed_header = f"@@ -{new_minus_str} +{new_plus_str} @@{rest}"
             fixed_lines.append(fixed_header)
@@ -280,6 +314,7 @@ def _process_x_diff_chunks(ai_generated_code, relative_path, file_exists):
     flush_hunk()
     return fixed_lines
 
+
 def show_diff():
     """
     Shows the current git modifications in a new buffer.
@@ -288,16 +323,16 @@ def show_diff():
     try:
         repo_path = util.get_git_repo_root()
         if not repo_path:
-            return # Error message handled by helper
+            return  # Error message handled by helper
 
         # Command to get the diff.
         # -C ensures git runs in the correct directory.
-        cmd = ['git', '-C', repo_path, 'diff', '--color=never']
+        cmd = ["git", "-C", repo_path, "diff", "--color=never"]
 
         # Execute the command.
         util.display_message("Running git diff...")
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        util.display_message("") # Clear message
+        util.display_message("")  # Clear message
 
         # Handle git errors (e.g., not a git repository).
         if result.returncode != 0 and not result.stdout.strip():
@@ -321,9 +356,12 @@ def show_diff():
         vim.current.buffer[:] = result.stdout.split("\n")
 
     except FileNotFoundError:
-        util.display_message("Error: `git` command not found. Is it in your PATH?", error=True)
+        util.display_message(
+            "Error: `git` command not found. Is it in your PATH?", error=True
+        )
     except Exception as e:
         util.display_message(f"Error: {e}", error=True)
+
 
 def apply_patch(diff_content, project_root=None, silent=False):
     """
@@ -332,7 +370,8 @@ def apply_patch(diff_content, project_root=None, silent=False):
     """
     if not diff_content:
         msg = "Diff is empty. Nothing to apply."
-        if not silent: util.display_message(msg, history=True)
+        if not silent:
+            util.display_message(msg, history=True)
         return False, msg
 
     if not project_root:
@@ -345,8 +384,11 @@ def apply_patch(diff_content, project_root=None, silent=False):
         # -r - rejects to stdout (avoids .rej files)
         result = subprocess.run(
             ["patch", "-p1", "-N", "-r", "-"],
-            input=diff_content, text=True, check=False,
-            capture_output=True, cwd=project_root
+            input=diff_content,
+            text=True,
+            check=False,
+            capture_output=True,
+            cwd=project_root,
         )
 
         if result.returncode != 0:
@@ -358,8 +400,13 @@ def apply_patch(diff_content, project_root=None, silent=False):
             if stderr_str:
                 output_parts.append(f"STDERR:\n{stderr_str}")
             out_msg = "\n".join(output_parts)
-            err_msg = f"Patch command failed.\n{out_msg}" if out_msg else "Patch command failed with non-zero exit code."
-            if not silent: util.display_message(err_msg, error=True)
+            err_msg = (
+                f"Patch command failed.\n{out_msg}"
+                if out_msg
+                else "Patch command failed with non-zero exit code."
+            )
+            if not silent:
+                util.display_message(err_msg, error=True)
             return False, err_msg
 
         # Success
@@ -369,11 +416,11 @@ def apply_patch(diff_content, project_root=None, silent=False):
         modified_files = set()
         for line in diff_content.split("\n"):
             if line.startswith("--- a/"):
-                path = line[len("--- a/"):].strip()
+                path = line[len("--- a/") :].strip()
                 if path != "/dev/null":
                     modified_files.add(path)
             elif line.startswith("+++ b/"):
-                path = line[len("+++ b/"):].strip()
+                path = line[len("+++ b/") :].strip()
                 if path != "/dev/null":
                     modified_files.add(path)
 
@@ -405,12 +452,15 @@ def apply_patch(diff_content, project_root=None, silent=False):
 
     except FileNotFoundError:
         err_msg = "Error: `patch` command not found. Is it in your PATH?"
-        if not silent: util.display_message(err_msg, error=True)
+        if not silent:
+            util.display_message(err_msg, error=True)
         return False, err_msg
     except Exception as e:
         err_msg = f"Error applying diff: {e}"
-        if not silent: util.display_message(err_msg, error=True)
+        if not silent:
+            util.display_message(err_msg, error=True)
         return False, err_msg
+
 
 def apply_code(job_id=None):
     """
@@ -425,11 +475,13 @@ def apply_code(job_id=None):
     # 1. Find all potential Vimini Code buffers
     candidates = []
     for buf in vim.buffers:
-        if buf.name and 'Vimini Code' in os.path.basename(buf.name):
+        if buf.name and "Vimini Code" in os.path.basename(buf.name):
             candidates.append(buf)
 
     if not candidates:
-        util.display_message("`Vimini Code` buffer not found. Was :ViminiCode run?", error=True)
+        util.display_message(
+            "`Vimini Code` buffer not found. Was :ViminiCode run?", error=True
+        )
         return
 
     # 2. Filter by job_id if provided, or handle selection logic
@@ -448,10 +500,12 @@ def apply_code(job_id=None):
             # Try matching by filename pattern "[{job_id}] Vimini Code"
             basename = os.path.basename(buf.name)
             if f"[{job_id}]" in basename:
-                 target_candidates.append(buf)
+                target_candidates.append(buf)
 
         if not target_candidates:
-            util.display_message(f"No Vimini Code buffer found for Job ID {job_id}.", error=True)
+            util.display_message(
+                f"No Vimini Code buffer found for Job ID {job_id}.", error=True
+            )
             return
 
         # If for some reason multiple buffers match the same ID, take the last one
@@ -474,8 +528,9 @@ def apply_code(job_id=None):
                     pass
 
                 if not bid or bid == "Unknown":
-                     m = re.search(r'\[(\d+)\]', os.path.basename(buf.name))
-                     if m: bid = m.group(1)
+                    m = re.search(r"\[(\d+)\]", os.path.basename(buf.name))
+                    if m:
+                        bid = m.group(1)
 
                 msg += f"- Job {bid} (Buffer {buf.number})\n"
 
@@ -494,7 +549,9 @@ def apply_code(job_id=None):
     is_chat_patch = False
     chat_job_id = None
     try:
-        is_chat_patch = int(_to_str(diff_buffer.vars.get("vimini_is_chat_patch", 0)) or 0) == 1
+        is_chat_patch = (
+            int(_to_str(diff_buffer.vars.get("vimini_is_chat_patch", 0)) or 0) == 1
+        )
         if is_chat_patch:
             chat_job_id = _to_str(diff_buffer.vars.get("vimini_chat_job_id", ""))
     except Exception:
@@ -507,17 +564,24 @@ def apply_code(job_id=None):
             break
 
     if separator_index != -1:
-        diff_content = "\n".join(diff_buffer[separator_index + 1:])
+        diff_content = "\n".join(diff_buffer[separator_index + 1 :])
         # Ensure the patch content ends with a newline
-        if diff_content and not diff_content.endswith('\n'):
-            diff_content += '\n'
+        if diff_content and not diff_content.endswith("\n"):
+            diff_content += "\n"
     else:
         err_msg = "DIFF section not found, did you remove the separator?"
         if is_chat_patch:
             diff_buffer.vars["vimini_patch_handled"] = 1
             from vimini.chat import send_agent_approval
-            send_agent_approval(False, chat_job_id, error=f"Patch failed to apply: {err_msg}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
-            util.display_message("Patch failed to apply. Reported error to agent to retry.", history=True)
+
+            send_agent_approval(
+                False,
+                chat_job_id,
+                error=f"Patch failed to apply: {err_msg}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.",
+            )
+            util.display_message(
+                "Patch failed to apply. Reported error to agent to retry.", history=True
+            )
             if diff_buffer.number in _BUFFER_DATA_STORE:
                 del _BUFFER_DATA_STORE[diff_buffer.number]
             vim.command(f"bdelete! {diff_buffer.number}")
@@ -529,8 +593,16 @@ def apply_code(job_id=None):
         if is_chat_patch:
             diff_buffer.vars["vimini_patch_handled"] = 1
             from vimini.chat import send_agent_approval
-            send_agent_approval(False, chat_job_id, error="Patch failed to apply: Diff is empty.\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
-            util.display_message("Patch failed to apply (empty diff). Reported error to agent to retry.", history=True)
+
+            send_agent_approval(
+                False,
+                chat_job_id,
+                error="Patch failed to apply: Diff is empty.\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.",
+            )
+            util.display_message(
+                "Patch failed to apply (empty diff). Reported error to agent to retry.",
+                history=True,
+            )
         else:
             util.display_message("Diff is empty. Nothing to apply.", history=True)
         vim.command(f"bdelete! {diff_buffer.number}")
@@ -545,6 +617,7 @@ def apply_code(job_id=None):
             try:
                 diff_buffer.vars["vimini_patch_handled"] = 1
                 from vimini.chat import send_agent_approval
+
                 send_agent_approval(True, chat_job_id)
             except Exception as e:
                 util.log_info(f"Error sending agent approval from apply_code: {e}")
@@ -560,8 +633,16 @@ def apply_code(job_id=None):
             try:
                 diff_buffer.vars["vimini_patch_handled"] = 1
                 from vimini.chat import send_agent_approval
-                send_agent_approval(False, chat_job_id, error=f"Patch failed to apply:\n{patch_err}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.")
-                util.display_message("Patch failed to apply. Reported error to agent to retry.", history=True)
+
+                send_agent_approval(
+                    False,
+                    chat_job_id,
+                    error=f"Patch failed to apply:\n{patch_err}\nPlease send the entire file contents using file_path and file_content, or verify that the patch is properly formatted and retry.",
+                )
+                util.display_message(
+                    "Patch failed to apply. Reported error to agent to retry.",
+                    history=True,
+                )
             except Exception as e:
                 util.log_info(f"Error sending agent failure from apply_code: {e}")
 
