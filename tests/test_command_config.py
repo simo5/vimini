@@ -223,6 +223,17 @@ def test_generate_tool_declaration_schema():
     assert "single string" in desc
 
 
+def test_generate_tool_declaration_schema_format():
+    cfg = {
+        "type": "simple",
+        "command": "black .",
+        "description": "Run black formatter"
+    }
+    desc, schema = generate_tool_declaration_schema("format", cfg)
+    assert "Formats the code in the project" in desc
+    assert "black ." in desc
+
+
 def test_comment_stripping_and_json_parsing():
     raw_input = CONFIG_JSON_HELP_HEADER + """
     {
@@ -249,7 +260,8 @@ def test_upgrade_project_data_normalizes_string_commands_to_dict():
         "version": "0.1",
         "configuration": {
             "build-command": "cargo build",
-            "test-command": "cargo test"
+            "test-command": "cargo test",
+            "format-command": "black ."
         }
     }
     upgraded = upgrade_project_data(raw)
@@ -260,6 +272,9 @@ def test_upgrade_project_data_normalizes_string_commands_to_dict():
     assert isinstance(cfg["test-command"], dict)
     assert cfg["test-command"]["command"] == "cargo test"
     assert "description" in cfg["test-command"]
+    assert isinstance(cfg["format-command"], dict)
+    assert cfg["format-command"]["command"] == "black ."
+    assert "description" in cfg["format-command"]
 
 
 def test_format_command_tree_and_72_char_cutoff():

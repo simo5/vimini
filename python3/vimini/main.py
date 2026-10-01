@@ -244,7 +244,7 @@ def help(command_name=None):
         "    Opens a file manager to manage files sent as context (g:context_files).",
         "",
         ":ViminiConfig",
-        "    Opens a guided editor to configure project settings (build/test commands).",
+        "    Opens a guided editor to configure project settings (build/test/format commands).",
         "",
         ":ViminiReview [-c <git_objects>] [--security] [--save[=<path>]] [{prompt}]",
         "    Reviews code in current buffer or git objects.",
