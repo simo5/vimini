@@ -115,12 +115,12 @@ def handle_channel_response(req_id, result):
         util.display_message(f"Error: {err_msg}", error=True)
 
 
-def code(prompt, verbose=False, temperature=None):
+def code(prompt, verbose=False):
     """
     Uploads all open files, sends them to the Gemini API with a prompt
     to generate code via the agent server.
     """
-    util.log_info(f"code({prompt}, verbose={verbose}, temperature={temperature})")
+    util.log_info(f"code({prompt}, verbose={verbose})")
 
     project_root = util.get_git_repo_root()
     if not project_root:
@@ -217,7 +217,6 @@ def code(prompt, verbose=False, temperature=None):
         "params": {
             "prompt": prompt,
             "verbose": verbose,
-            "temperature": temperature,
             "project_root": project_root,
             "file_paths_to_include": file_paths_to_include,
             "buffers": buffers,

@@ -105,14 +105,9 @@ class CodeSession(CommSession):
 
         agent_config = self.agent_config or {}
         model = agent_config.get("model")
-        default_temperature = agent_config.get("temperature")
 
         prompt = params.get("prompt", "")
         verbose = params.get("verbose", False)
-        temperature = params.get("temperature")
-        if temperature is None:
-            temperature = default_temperature
-
         project_root = params.get("project_root")
         if not project_root:
             err_msg = "Project root is missing or empty. Operation aborted."
@@ -201,7 +196,6 @@ class CodeSession(CommSession):
             ]
 
             generation_config = create_generation_config(
-                temperature=temperature,
                 verbose=verbose,
                 response_mime_type="application/json",
                 response_schema=multi_file_output_schema,

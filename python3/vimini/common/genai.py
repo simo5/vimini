@@ -40,7 +40,6 @@ def get_client(api_key=None, api_key_file=None, config=None):
 
 
 def create_generation_config(
-    temperature=None,
     verbose=False,
     include_thoughts=None,
     response_mime_type=None,
@@ -53,7 +52,7 @@ def create_generation_config(
 ):
     """
     Creates and returns a types.GenerateContentConfig tailored for the use case.
-    Handles temperature validation and conversion, thoughts/verbose flags,
+    Handles thoughts/verbose flags,
     automatic function calling configuration, response schemas, and tools.
     """
     config_kwargs = {}
@@ -85,13 +84,5 @@ def create_generation_config(
     config_kwargs.update(kwargs)
 
     config = types.GenerateContentConfig(**config_kwargs)
-
-    if temperature is not None:
-        try:
-            temp_float = float(temperature)
-            if 0.0 <= temp_float <= 2.0:
-                config.temperature = temp_float
-        except (ValueError, TypeError):
-            pass
 
     return config

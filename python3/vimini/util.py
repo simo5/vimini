@@ -288,7 +288,6 @@ def display_message(
 
 def create_generation_kwargs(
     contents,
-    temperature=None,
     verbose=False,
     response_mime_type=None,
     response_schema=None,
@@ -300,7 +299,6 @@ def create_generation_kwargs(
 
     Args:
         contents: The prompt/contents for the API call.
-        temperature (float, optional): The generation temperature.
         verbose (bool, optional): If True, enables streaming of 'thoughts'.
         response_mime_type (str, optional): The desired MIME type for the response.
         response_schema (types.Schema, optional): The desired response schema.
@@ -309,7 +307,6 @@ def create_generation_kwargs(
         dict: A dictionary of keyword arguments for the API call.
     """
     generation_config = create_generation_config(
-        temperature=temperature,
         verbose=verbose,
         response_mime_type=response_mime_type,
         response_schema=response_schema,

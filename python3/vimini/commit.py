@@ -188,7 +188,7 @@ def handle_commit_response(req_id, result):
 
 
 def commit(
-    assistant=True, temperature=None, regenerate=False, amend=False, refinement=None
+    assistant=True, regenerate=False, amend=False, refinement=None
 ):
     """
     Generates a commit message. By default, it stages all changes and creates
@@ -198,7 +198,7 @@ def commit(
     Offloads commit message generation to the agent server.
     """
     util.log_info(
-        f"commit(assistant={assistant}, temperature={temperature}, regenerate={regenerate}, amend={amend}, refinement='{refinement}')"
+        f"commit(assistant={assistant}, regenerate={regenerate}, amend={amend}, refinement='{refinement}')"
     )
     try:
         repo_path = util.get_git_repo_root()
@@ -312,7 +312,6 @@ def commit(
             "method": "commit",
             "params": {
                 "prompt": prompt,
-                "temperature": temperature,
                 "repo_path": repo_path,
                 "diff_stat_output": diff_stat_output,
                 "regenerate": regenerate,

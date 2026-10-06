@@ -133,7 +133,6 @@ def review(
     git_objects=None,
     security_focus=False,
     verbose=False,
-    temperature=None,
     save=False,
     save_path=None,
 ):
@@ -142,7 +141,7 @@ def review(
     If 'save' is True and 'git_objects' are provided, saves reviews to 'save_path'.
     """
     util.log_info(
-        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, temperature={temperature}, save={save}, save_path='{save_path}')"
+        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, save={save}, save_path='{save_path}')"
     )
     try:
         # --- BATCH SAVE MODE ---
@@ -220,7 +219,6 @@ def review(
                     "prompt": prompt,
                     "security_focus": security_focus,
                     "verbose": verbose,
-                    "temperature": temperature,
                     "project_root": repo_path,
                     "commit_list": commit_list,
                     "target_dir": target_dir,
@@ -320,7 +318,6 @@ def review(
                 "content_source_description": content_source_description,
                 "security_focus": security_focus,
                 "verbose": verbose,
-                "temperature": temperature,
                 "project_root": project_root,
             },
         }

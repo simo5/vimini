@@ -242,14 +242,10 @@ class ReviewSession(CommSession):
     def _handle_batch_review(self, req_id, params, conn):
         agent_config = self.agent_config or {}
         model = agent_config.get("model")
-        default_temperature = agent_config.get("temperature")
 
         prompt = params.get("prompt", "")
         security_focus = params.get("security_focus", False)
         verbose = params.get("verbose", False)
-        temperature = params.get("temperature")
-        if temperature is None:
-            temperature = default_temperature
 
         repo_path = params.get("project_root")
         if not repo_path:
@@ -297,7 +293,6 @@ class ReviewSession(CommSession):
 
                 generation_config = create_generation_config(
                     tools=review_tools,
-                    temperature=temperature,
                     verbose=verbose,
                     disable_function_calling=False,
                 )
@@ -426,16 +421,12 @@ class ReviewSession(CommSession):
     def _handle_interactive_review(self, req_id, params, conn):
         agent_config = self.agent_config or {}
         model = agent_config.get("model")
-        default_temperature = agent_config.get("temperature")
 
         prompt = params.get("prompt", "")
         review_content = params.get("review_content", "")
         content_source_description = params.get("content_source_description", "")
         security_focus = params.get("security_focus", False)
         verbose = params.get("verbose", False)
-        temperature = params.get("temperature")
-        if temperature is None:
-            temperature = default_temperature
 
         project_root = params.get("project_root")
         if not project_root:
@@ -450,7 +441,6 @@ class ReviewSession(CommSession):
 
             generation_config = create_generation_config(
                 tools=review_tools,
-                temperature=temperature,
                 verbose=verbose,
                 disable_function_calling=False,
             )

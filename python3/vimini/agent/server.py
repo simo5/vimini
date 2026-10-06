@@ -76,10 +76,7 @@ def execute_function(req_id, method, params, result_queue, conn):
             client = get_client(config=AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-            temperature = AGENT_CONFIG.get("temperature")
-            config = create_generation_config(
-                temperature=temperature, disable_function_calling=True
-            )
+            config = create_generation_config(disable_function_calling=True)
             response = client.models.generate_content(
                 model=model, contents=prompt, config=config
             )
@@ -103,10 +100,7 @@ def execute_function(req_id, method, params, result_queue, conn):
             client = get_client(config=AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-            temperature = AGENT_CONFIG.get("temperature")
-            config = create_generation_config(
-                temperature=temperature, disable_function_calling=True
-            )
+            config = create_generation_config(disable_function_calling=True)
             response = client.models.generate_content(
                 model=model, contents=prompt, config=config
             )

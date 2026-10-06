@@ -793,17 +793,11 @@ def _send_prompt(prompt, buffer):
         verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
     except Exception:
         verbose = True
-    temperature = None
-    try:
-        temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    except Exception:
-        pass
     req = {
         "jsonrpc": "2.0",
         "id": _to_str(buffer.vars.get("vimini_job_id", "")),
         "method": "chat",
         "params": {
-            "temperature": temperature,
             "verbose": verbose,
             "prompt": prompt,
             "project_root": project_root,

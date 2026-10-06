@@ -47,11 +47,6 @@ def send_setup():
     """
     Sends a setup request to the agent server with internal configuration.
     """
-    temperature = None
-    try:
-        temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    except Exception:
-        pass
     req = {
         "jsonrpc": "2.0",
         "id": "setup",
@@ -59,7 +54,6 @@ def send_setup():
         "params": {
             "api_key_file": util._API_KEY_FILE,
             "model": util._MODEL,
-            "temperature": temperature,
         },
     }
     return util.send_channel_request(req, silent=False)

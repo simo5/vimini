@@ -12,9 +12,6 @@ let s:api_key_file = expand('~/.config/gemini.token')
 " Configuration: Model name
 let g:vimini_model = get(g:, 'vimini_model', 'gemini-3.6-flash')
 
-" Configuration: Temperature for generation. Must be between 0.0 and 2.0.
-let g:vimini_temperature = get(g:, 'vimini_temperature', v:null)
-
 " Configuration: How to split new windows ('vertical' or 'horizontal').
 let g:vimini_split_method = get(g:, 'vimini_split_method', 'vertical')
 
@@ -189,8 +186,7 @@ try:
     from vimini import main
     prompt = vim.eval('a:prompt')
     verbose = vim.eval('g:vimini_thinking') == 'on'
-    temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    main.code(prompt, verbose=verbose, temperature=temperature)
+    main.code(prompt, verbose=verbose)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
@@ -280,8 +276,7 @@ try:
     save_review = bool(int(vim.eval('l:save_review')))
     save_path = vim.eval('l:save_path')
     verbose = vim.eval('g:vimini_thinking') == 'on'
-    temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, temperature=temperature, save=save_review, save_path=save_path)
+    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, save=save_review, save_path=save_path)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
@@ -331,8 +326,7 @@ try:
     regenerate = bool(int(vim.eval('l:regenerate')))
     amend = bool(int(vim.eval('l:amend')))
     refinement = vim.eval('l:prompt_refinement')
-    temperature = vim.eval("get(g:, 'vimini_temperature', v:null)")
-    main.commit(assistant=assistant, temperature=temperature, regenerate=regenerate, amend=amend, refinement=refinement)
+    main.commit(assistant=assistant, regenerate=regenerate, amend=amend, refinement=refinement)
 except Exception as e:
     error_message = str(e).replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")

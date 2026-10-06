@@ -399,9 +399,6 @@ class ChatSession(CommSession):
         agent_config = self.agent_config or {}
         api_key = load_api_key(agent_config)
         model = agent_config.get("model")
-        temperature = agent_config.get("temperature")
-        if isinstance(params, dict) and params.get("temperature") is not None:
-            temperature = params.get("temperature")
         verbose = False
         if isinstance(params, dict) and "verbose" in params:
             verbose = bool(params.get("verbose"))
@@ -524,7 +521,6 @@ class ChatSession(CommSession):
             current_tools = get_agent_tools(self.project_root)
             agent_config_obj = create_generation_config(
                 tools=current_tools,
-                temperature=temperature,
                 verbose=verbose,
                 system_instruction=(
                     "When explicitly requested to change code You act as an expert "
