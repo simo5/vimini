@@ -232,6 +232,7 @@ function! ViminiReview(args)
   let l:pr_arg = v:null
   let l:mr_arg = v:null
   let l:remote_arg = 'origin'
+  let l:no_worktree = 0
   let l:args = a:args
 
   " Handle key=value options like --save=path, --pr=123, --mr=123, --remote=origin
@@ -331,6 +332,12 @@ function! ViminiReview(args)
     call remove(l:args, l:save_idx)
   endif
 
+  let l:nw_idx = index(l:args, '--no-worktree')
+  if l:nw_idx != -1
+    let l:no_worktree = 1
+    call remove(l:args, l:nw_idx)
+  endif
+
   let l:prompt_arg = join(l:args, ' ')
 
   py3 << EOF
@@ -344,8 +351,9 @@ try:
     pr = vim.eval('l:pr_arg')
     mr = vim.eval('l:mr_arg')
     remote = vim.eval('l:remote_arg')
+    no_worktree = bool(int(vim.eval('l:no_worktree')))
     verbose = vim.eval('g:vimini_thinking') == 'on'
-    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, save=save_review, save_path=save_path, pr=pr, mr=mr, remote=remote)
+    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, save=save_review, save_path=save_path, pr=pr, mr=mr, remote=remote, no_worktree=no_worktree)
 except Exception as e:
     error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")

@@ -251,7 +251,7 @@ Opens an interactive configuration editor in a new split window to configure pro
 :ViminiConfig
 ```
 
-### `:ViminiReview [-c <git_objects>] [--pr <number>] [--mr <number>] [--remote <remote>] [--security] [--save[=<path>]] [{prompt}]`
+### `:ViminiReview [-c <git_objects>] [--pr <number>] [--mr <number>] [--remote <remote>] [--security] [--save[=<path>]] [--no-worktree] [{prompt}]`
 
 Sends content to the Gemini model for a code review. This command has three main modes:
 
@@ -268,6 +268,7 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 *   `--remote <remote>`: Remote git repository to fetch PR/MR from (defaults to `origin`).
 *   `--security`: Narrows the scope of the review to focus exclusively on security vulnerabilities, insecure coding practices, and potential attack vectors.
 *   `--save[=<path>]`: Used with `-c`, `--pr`, or `--mr`. This option reviews each commit in the given range individually and saves each review to a separate file. If a path is provided (e.g., `--save=./reviews`), files are saved there. Otherwise, they are saved in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
+*   `--no-worktree`: Disables creating a temporary git worktree in `/tmp` when reviewing a PR or MR. By default, Vimini creates an isolated temporary worktree so the review agent can inspect post-change files without altering your working copy or interfering with unstaged changes. For very large repositories where worktree creation is heavy or disk/IO-intensive, pass `--no-worktree` and checkout the PR/MR branch locally in your workspace instead.
 
 **Examples:**
 
