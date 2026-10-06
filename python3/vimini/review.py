@@ -138,6 +138,7 @@ def review(
     pr=None,
     mr=None,
     remote="origin",
+    no_worktree=False,
 ):
     """
     Sends content to the Gemini API for a code review via the background agent.
@@ -145,7 +146,7 @@ def review(
     If 'save' is True and 'git_objects' are provided, saves reviews to 'save_path'.
     """
     util.log_info(
-        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, save={save}, save_path='{save_path}', pr={pr}, mr={mr}, remote='{remote}')"
+        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, save={save}, save_path='{save_path}', pr={pr}, mr={mr}, remote='{remote}', no_worktree={no_worktree})"
     )
     try:
         # Validate remote
@@ -191,7 +192,8 @@ def review(
                 local_ref = f"refs/vimini/mr/{mr_id}"
                 service_desc = f"GitLab MR #{mr_id}"
 
-            worktree_ref = local_ref
+            if not no_worktree:
+                worktree_ref = local_ref
 
             util.display_message(f"Fetching {service_desc} from {remote}...")
             fetch_cmd = ["git", "-C", repo_path, "fetch", remote, refspec]
