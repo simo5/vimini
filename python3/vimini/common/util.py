@@ -1,9 +1,13 @@
 # Vimini Agent Package
 # Common utility module for vimini without vim dependency.
 import os
+import tempfile
+import shutil
+import contextlib
 import json
 import subprocess
 import re
+import logging
 import shlex
 import difflib
 
@@ -876,3 +880,65 @@ def generate_diff_for_file(file_path, file_content, project_root=None):
     diff_header = f"diff --git a/{relative_path} b/{relative_path}"
     diff_text = "\n".join([diff_header] + diff_lines) + "\n"
     return diff_text, None
+
+
+@contextlib.contextmanager
+def temporary_git_worktree(repo_path, ref):
+    """
+    Creates a temporary git worktree detached at `ref` in a temporary directory.
+    Yields the path to the temporary worktree.
+    Cleans up the worktree and temporary directory on exit.
+    If ref is None or empty, or if worktree creation fails, yields repo_path as fallback.
+    """
+    if not ref or not repo_path or not os.path.exists(repo_path):
+        yield repo_path
+        return
+
+    temp_dir = tempfile.mkdtemp(prefix="vimini_worktree_")
+    worktree_path = os.path.join(temp_dir, "workspace")
+    created = False
+    try:
+        cmd = [
+            "git",
+            "-C",
+            repo_path,
+            "worktree",
+            "add",
+            "--detach",
+            worktree_path,
+            ref,
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if res.returncode == 0:
+            created = True
+            yield worktree_path
+        else:
+            logger = logging.getLogger("vimini_agent")
+            err = (res.stderr or "").strip()
+            logger.warning(
+                f"git worktree add failed ({err}), falling back to {repo_path}"
+            )
+            yield repo_path
+    finally:
+        if created:
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    repo_path,
+                    "worktree",
+                    "remove",
+                    "--force",
+                    worktree_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            subprocess.run(
+                ["git", "-C", repo_path, "worktree", "prune"],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        shutil.rmtree(temp_dir, ignore_errors=True)
