@@ -6,7 +6,12 @@ import subprocess
 from google.genai import types
 from vimini.agent.comms import CommSession
 from vimini.common.genai import get_client, create_generation_config
-from vimini.common.util import list_directory, read_file, get_project_root
+from vimini.common.util import (
+    list_directory,
+    read_file,
+    get_project_root,
+    temporary_git_worktree,
+)
 
 logger = logging.getLogger("vimini_agent")
 
@@ -252,150 +257,174 @@ class ReviewSession(CommSession):
             repo_path = get_project_root()
         commit_list = params.get("commit_list", [])
         target_dir = params.get("target_dir", repo_path)
+        worktree_ref = params.get("worktree_ref")
 
         try:
             client = get_client(config=agent_config)
             total_commits = len(commit_list)
 
-            for index, commit_sha in enumerate(commit_list):
-                if not self._check_running(req_id, conn):
-                    break
-                patch_num = index + 1
-                status_msg = f"Reviewing commit {patch_num}/{total_commits}: {commit_sha[:7]}... (Async)"
-                self.send_response(
-                    req_id, conn, result={"status": "progress", "message": status_msg}
-                )
-
-                cmd_show = ["git", "-C", repo_path, "show", commit_sha]
-                result_show = subprocess.run(
-                    cmd_show, capture_output=True, text=True, check=False
-                )
-                if result_show.returncode != 0:
-                    err = (result_show.stderr or "git show failed.").strip()
+            with temporary_git_worktree(repo_path, worktree_ref) as active_root:
+                for index, commit_sha in enumerate(commit_list):
+                    if not self._check_running(req_id, conn):
+                        break
+                    patch_num = index + 1
+                    status_msg = f"Reviewing commit {patch_num}/{total_commits}: {commit_sha[:7]}... (Async)"
                     self.send_response(
                         req_id,
                         conn,
-                        result={
-                            "status": "progress",
-                            "message": f"Skipping {commit_sha[:7]}: {err}",
-                            "error": True,
-                        },
+                        result={"status": "progress", "message": status_msg},
                     )
-                    continue
-                review_content_single = result_show.stdout
 
-                prompt_text = _construct_review_prompt(
-                    prompt,
-                    review_content_single,
-                    f"the output of `git show {commit_sha[:7]}`",
-                    security_focus,
-                )
+                    if active_root != repo_path:
+                        subprocess.run(
+                            [
+                                "git",
+                                "-C",
+                                active_root,
+                                "checkout",
+                                "--detach",
+                                commit_sha,
+                            ],
+                            capture_output=True,
+                            text=True,
+                            check=False,
+                        )
 
-                generation_config = create_generation_config(
-                    tools=review_tools,
-                    verbose=verbose,
-                    disable_function_calling=False,
-                )
-
-                current_review_accumulator = []
-                try:
-                    chat = client.chats.create(model=model, config=generation_config)
-
-                    def on_batch_tool_call(tool_name, tool_args):
-                        args_str = json.dumps(tool_args) if tool_args else ""
+                    cmd_show = ["git", "-C", repo_path, "show", commit_sha]
+                    result_show = subprocess.run(
+                        cmd_show, capture_output=True, text=True, check=False
+                    )
+                    if result_show.returncode != 0:
+                        err = (result_show.stderr or "git show failed.").strip()
                         self.send_response(
                             req_id,
                             conn,
                             result={
                                 "status": "progress",
-                                "message": f"Commit {commit_sha[:7]} tool call: {tool_name}({args_str})",
+                                "message": f"Skipping {commit_sha[:7]}: {err}",
+                                "error": True,
                             },
                         )
+                        continue
+                    review_content_single = result_show.stdout
 
-                    def on_batch_tool_result(
-                        tool_name, tool_args, result_text, is_error
-                    ):
-                        if is_error:
-                            err_line = (
-                                result_text.strip().splitlines()[0]
-                                if result_text
-                                else "Tool execution failed"
-                            )
+                    prompt_text = _construct_review_prompt(
+                        prompt,
+                        review_content_single,
+                        f"the output of `git show {commit_sha[:7]}`",
+                        security_focus,
+                    )
+
+                    generation_config = create_generation_config(
+                        tools=review_tools,
+                        verbose=verbose,
+                        disable_function_calling=False,
+                    )
+
+                    current_review_accumulator = []
+                    try:
+                        chat = client.chats.create(
+                            model=model, config=generation_config
+                        )
+
+                        def on_batch_tool_call(tool_name, tool_args):
+                            args_str = json.dumps(tool_args) if tool_args else ""
                             self.send_response(
                                 req_id,
                                 conn,
                                 result={
                                     "status": "progress",
-                                    "message": f"Commit {commit_sha[:7]} tool call failed: {err_line}",
-                                    "error": True,
+                                    "message": f"Commit {commit_sha[:7]} tool call: {tool_name}({args_str})",
                                 },
                             )
 
-                    _execute_review_stream(
-                        chat,
-                        prompt_text,
-                        repo_path,
-                        on_chunk=lambda text: current_review_accumulator.append(text),
-                        on_tool_call=on_batch_tool_call,
-                        on_tool_result=on_batch_tool_result,
-                        check_running=lambda: self._check_running(req_id, conn),
-                    )
+                        def on_batch_tool_result(
+                            tool_name, tool_args, result_text, is_error
+                        ):
+                            if is_error:
+                                err_line = (
+                                    result_text.strip().splitlines()[0]
+                                    if result_text
+                                    else "Tool execution failed"
+                                )
+                                self.send_response(
+                                    req_id,
+                                    conn,
+                                    result={
+                                        "status": "progress",
+                                        "message": f"Commit {commit_sha[:7]} tool call failed: {err_line}",
+                                        "error": True,
+                                    },
+                                )
 
-                    if not self.running:
-                        break
+                        _execute_review_stream(
+                            chat,
+                            prompt_text,
+                            active_root,
+                            on_chunk=lambda text: current_review_accumulator.append(
+                                text
+                            ),
+                            on_tool_call=on_batch_tool_call,
+                            on_tool_result=on_batch_tool_result,
+                            check_running=lambda: self._check_running(req_id, conn),
+                        )
 
-                    subject_cmd = [
-                        "git",
-                        "-C",
-                        repo_path,
-                        "log",
-                        "-1",
-                        "--pretty=%s",
-                        commit_sha,
-                    ]
-                    subject_result = subprocess.run(
-                        subject_cmd, capture_output=True, text=True, check=False
-                    )
-                    subject = (
-                        subject_result.stdout.strip()
-                        if subject_result.returncode == 0
-                        else "commit"
-                    )
+                        if not self.running:
+                            break
 
-                    sanitized_subject = (
-                        re.sub(r"[^a-zA-Z0-9]+", "-", subject).strip("-").lower()
-                    )
-                    sanitized_subject = sanitized_subject[:50]
+                        subject_cmd = [
+                            "git",
+                            "-C",
+                            repo_path,
+                            "log",
+                            "-1",
+                            "--pretty=%s",
+                            commit_sha,
+                        ]
+                        subject_result = subprocess.run(
+                            subject_cmd, capture_output=True, text=True, check=False
+                        )
+                        subject = (
+                            subject_result.stdout.strip()
+                            if subject_result.returncode == 0
+                            else "commit"
+                        )
 
-                    filename = f"{patch_num:04d}-{sanitized_subject}.review.txt"
-                    filepath = os.path.join(target_dir, filename)
+                        sanitized_subject = (
+                            re.sub(r"[^a-zA-Z0-9]+", "-", subject).strip("-").lower()
+                        )
+                        sanitized_subject = sanitized_subject[:50]
 
-                    content = "".join(current_review_accumulator)
-                    with open(filepath, "w", encoding="utf-8") as f:
-                        f.write(content)
+                        filename = f"{patch_num:04d}-{sanitized_subject}.review.txt"
+                        filepath = os.path.join(target_dir, filename)
 
-                    self.send_response(
-                        req_id,
-                        conn,
-                        result={
-                            "status": "progress",
-                            "message": f"Saved review to {filename}",
-                        },
-                    )
+                        content = "".join(current_review_accumulator)
+                        with open(filepath, "w", encoding="utf-8") as f:
+                            f.write(content)
 
-                except Exception as e:
-                    logger.error(
-                        f"Error reviewing commit {commit_sha[:7]}: {e}", exc_info=True
-                    )
-                    self.send_response(
-                        req_id,
-                        conn,
-                        result={
-                            "status": "progress",
-                            "message": f"Error reviewing {commit_sha[:7]}: {e}",
-                            "error": True,
-                        },
-                    )
+                        self.send_response(
+                            req_id,
+                            conn,
+                            result={
+                                "status": "progress",
+                                "message": f"Saved review to {filename}",
+                            },
+                        )
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error reviewing commit {commit_sha[:7]}: {e}",
+                            exc_info=True,
+                        )
+                        self.send_response(
+                            req_id,
+                            conn,
+                            result={
+                                "status": "progress",
+                                "message": f"Error reviewing {commit_sha[:7]}: {e}",
+                                "error": True,
+                            },
+                        )
 
             if not self.running:
                 return
@@ -431,6 +460,7 @@ class ReviewSession(CommSession):
         project_root = params.get("project_root")
         if not project_root:
             project_root = get_project_root()
+        worktree_ref = params.get("worktree_ref")
 
         try:
             client = get_client(config=agent_config)
@@ -470,15 +500,16 @@ class ReviewSession(CommSession):
                     },
                 )
 
-            _execute_review_stream(
-                chat,
-                prompt_text,
-                project_root,
-                on_chunk=on_chunk,
-                on_thought=on_thought,
-                on_tool_call=on_tool_call,
-                check_running=lambda: self._check_running(req_id, conn),
-            )
+            with temporary_git_worktree(project_root, worktree_ref) as active_root:
+                _execute_review_stream(
+                    chat,
+                    prompt_text,
+                    active_root,
+                    on_chunk=on_chunk,
+                    on_thought=on_thought,
+                    on_tool_call=on_tool_call,
+                    check_running=lambda: self._check_running(req_id, conn),
+                )
 
             if not self.running:
                 return

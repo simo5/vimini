@@ -163,6 +163,7 @@ def review(
         # Handle GitHub PR or GitLab MR fetching
         pr_id = str(pr).strip() if pr is not None else None
         mr_id = str(mr).strip() if mr is not None else None
+        worktree_ref = None
 
         if pr_id or mr_id:
             if pr_id and not pr_id.isdigit():
@@ -189,6 +190,8 @@ def review(
                 refspec = f"+refs/merge-requests/{mr_id}/head:refs/vimini/mr/{mr_id}"
                 local_ref = f"refs/vimini/mr/{mr_id}"
                 service_desc = f"GitLab MR #{mr_id}"
+
+            worktree_ref = local_ref
 
             util.display_message(f"Fetching {service_desc} from {remote}...")
             fetch_cmd = ["git", "-C", repo_path, "fetch", remote, refspec]
@@ -348,6 +351,7 @@ def review(
                     "project_root": repo_path,
                     "commit_list": commit_list,
                     "target_dir": target_dir,
+                    "worktree_ref": worktree_ref,
                 },
             }
 
@@ -445,6 +449,7 @@ def review(
                 "security_focus": security_focus,
                 "verbose": verbose,
                 "project_root": project_root,
+                "worktree_ref": worktree_ref,
             },
         }
 
