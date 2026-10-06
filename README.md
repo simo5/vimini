@@ -12,7 +12,7 @@ coding environment.
 *   **Context-Aware Code Generation**: Use all open buffers as context to
     generate code.
 *   **Code Review**: Get AI-powered reviews for the code in your current
-    buffer or from your git history.
+    buffer, git history, GitHub PRs, or GitLab MRs.
 *   **Git Integration**: Generate commit messages and view diffs using
     AI.
 *   **Real-time Autocomplete**: Get code suggestions as you type in
@@ -251,19 +251,23 @@ Opens an interactive configuration editor in a new split window to configure pro
 :ViminiConfig
 ```
 
-### `:ViminiReview [-c <git_objects>] [--security] [--save[=<path>]] [{prompt}]`
+### `:ViminiReview [-c <git_objects>] [--pr <number>] [--mr <number>] [--remote <remote>] [--security] [--save[=<path>]] [{prompt}]`
 
-Sends content to the Gemini model for a code review. This command has two main modes:
+Sends content to the Gemini model for a code review. This command has three main modes:
 
-1.  **Current Buffer Review**: If no `-c` option is provided, it sends the content of the current buffer for review.
+1.  **Current Buffer Review**: If no `-c`, `--pr`, or `--mr` option is provided, it sends the content of the current buffer for review.
 2.  **Git Object Review**: If the `-c <git_objects>` option is provided, it reviews the changes specified by the git objects. It sends the `git show` output (the diff) to the AI, and critically, it also uploads the full content of all changed files to provide complete context for the review. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or a range like `HEAD~3..HEAD`.
+3.  **GitHub PR / GitLab MR Review**: Use `--pr <number>` (or `--github <number>`) or `--mr <number>` (or `--gitlab <number>`) to automatically fetch the branch from the remote repository and run the review on its commits. You can optionally specify `--remote <remote>` (default: `origin`).
 
 You can add an optional `{prompt}` to guide the AI's review. The review will be displayed in a new vertical split buffer. If `g:vimini_thinking` is `on`, an additional buffer showing the AI's thought process will also be opened.
 
 **Additional Options:**
 
+*   `--pr <number>` / `--github <number>`: Fetches and reviews the specified GitHub Pull Request number.
+*   `--mr <number>` / `--gitlab <number>`: Fetches and reviews the specified GitLab Merge Request number.
+*   `--remote <remote>`: Remote git repository to fetch PR/MR from (defaults to `origin`).
 *   `--security`: Narrows the scope of the review to focus exclusively on security vulnerabilities, insecure coding practices, and potential attack vectors.
-*   `--save[=<path>]`: Used with `-c`. This option reviews each commit in the given range individually and saves each review to a separate file. If a path is provided (e.g., `--save=./reviews`), files are saved there. Otherwise, they are saved in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
+*   `--save[=<path>]`: Used with `-c`, `--pr`, or `--mr`. This option reviews each commit in the given range individually and saves each review to a separate file. If a path is provided (e.g., `--save=./reviews`), files are saved there. Otherwise, they are saved in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
 
 **Examples:**
 
@@ -280,11 +284,17 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 " Review changes from two commits ago, focusing only on security
 :ViminiReview -c HEAD~2 --security
 
-" Review the last 3 commits and save each review to a file
-:ViminiReview -c HEAD~3..HEAD --save
+" Fetch and review GitHub Pull Request #123
+:ViminiReview --pr 123
 
-" Review the last 3 commits and save each review to a specific directory
-:ViminiReview -c HEAD~3..HEAD --save=./reviews
+" Fetch and review GitLab Merge Request #456 from remote upstream
+:ViminiReview --mr 456 --remote upstream
+
+" Review GitHub PR #123, focusing on security
+:ViminiReview --pr 123 --security
+
+" Review GitHub PR #123 and save each commit review to a file
+:ViminiReview --pr 123 --save=./reviews
 ```
 
 ### Autocomplete

@@ -35,7 +35,7 @@ try:
     msg = vim.eval('a:msg')
     main.handle_channel_message(msg)
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Channel callback error: {error_message}'")
 EOF
 endfunction
@@ -61,7 +61,7 @@ try:
     if socket_path:
         vim.command(f"let s:socket_path = '{socket_path}'")
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 
@@ -74,7 +74,7 @@ import vim
 try:
     main.send_setup()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 
@@ -103,7 +103,7 @@ try:
     from vimini import main
     main.chat()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -170,7 +170,7 @@ try:
     else:
         main.logging()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error setting log state: {error_message}'")
 EOF
 
@@ -188,7 +188,7 @@ try:
     verbose = vim.eval('g:vimini_thinking') == 'on'
     main.code(prompt, verbose=verbose)
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -210,7 +210,7 @@ try:
     job_id = int(job_id_arg) if job_id_arg is not None else None
     main.apply_code(job_id=job_id)
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -219,6 +219,9 @@ command! -nargs=* ViminiApply call ViminiApply(<f-args>)
 
 function! ViminiReview(args)
   " Reviews git diffs. Git objects can be specified with "-c <refs>".
+  " GitHub PRs can be specified with "--pr <number>" (or "--github <number>").
+  " GitLab MRs can be specified with "--mr <number>" (or "--gitlab <number>").
+  " A custom git remote can be specified with "--remote <remote>".
   " A security-focused review can be requested with "--security".
   " The rest of the arguments are treated as a prompt.
   let l:git_objects_arg = v:null
@@ -226,9 +229,12 @@ function! ViminiReview(args)
   let l:security_focus = 0
   let l:save_review = 0
   let l:save_path = ''
+  let l:pr_arg = v:null
+  let l:mr_arg = v:null
+  let l:remote_arg = 'origin'
   let l:args = a:args
 
-  " Handle --save=path
+  " Handle key=value options like --save=path, --pr=123, --mr=123, --remote=origin
   let l:idx = 0
   while l:idx < len(l:args)
     if l:args[l:idx] =~# '^--save='
@@ -236,6 +242,18 @@ function! ViminiReview(args)
       call remove(l:args, l:idx)
       " Specifying a path implies saving
       let l:save_review = 1
+      continue
+    elseif l:args[l:idx] =~# '^\%(--pr\|--github\|-pr\)=\d\+$'
+      let l:pr_arg = substitute(l:args[l:idx], '^\%(--pr\|--github\|-pr\)=', '', '')
+      call remove(l:args, l:idx)
+      continue
+    elseif l:args[l:idx] =~# '^\%(--mr\|--gitlab\|-mr\)=\d\+$'
+      let l:mr_arg = substitute(l:args[l:idx], '^\%(--mr\|--gitlab\|-mr\)=', '', '')
+      call remove(l:args, l:idx)
+      continue
+    elseif l:args[l:idx] =~# '^--remote='
+      let l:remote_arg = substitute(l:args[l:idx], '^--remote=', '', '')
+      call remove(l:args, l:idx)
       continue
     endif
     let l:idx += 1
@@ -249,6 +267,54 @@ function! ViminiReview(args)
       call remove(l:args, l:c_idx, l:c_idx + 1)
     else
       echoerr "[Vimini] Error: -c option requires an argument."
+      return
+    endif
+  endif
+
+  " Handle --pr / --github / -pr <number>
+  let l:pr_idx = index(l:args, '--pr')
+  if l:pr_idx == -1
+    let l:pr_idx = index(l:args, '--github')
+  endif
+  if l:pr_idx == -1
+    let l:pr_idx = index(l:args, '-pr')
+  endif
+  if l:pr_idx != -1
+    if l:pr_idx + 1 < len(l:args)
+      let l:pr_arg = l:args[l:pr_idx + 1]
+      call remove(l:args, l:pr_idx, l:pr_idx + 1)
+    else
+      echoerr "[Vimini] Error: --pr option requires an argument."
+      return
+    endif
+  endif
+
+  " Handle --mr / --gitlab / -mr <number>
+  let l:mr_idx = index(l:args, '--mr')
+  if l:mr_idx == -1
+    let l:mr_idx = index(l:args, '--gitlab')
+  endif
+  if l:mr_idx == -1
+    let l:mr_idx = index(l:args, '-mr')
+  endif
+  if l:mr_idx != -1
+    if l:mr_idx + 1 < len(l:args)
+      let l:mr_arg = l:args[l:mr_idx + 1]
+      call remove(l:args, l:mr_idx, l:mr_idx + 1)
+    else
+      echoerr "[Vimini] Error: --mr option requires an argument."
+      return
+    endif
+  endif
+
+  " Handle --remote <remote>
+  let l:remote_idx = index(l:args, '--remote')
+  if l:remote_idx != -1
+    if l:remote_idx + 1 < len(l:args)
+      let l:remote_arg = l:args[l:remote_idx + 1]
+      call remove(l:args, l:remote_idx, l:remote_idx + 1)
+    else
+      echoerr "[Vimini] Error: --remote option requires an argument."
       return
     endif
   endif
@@ -275,10 +341,13 @@ try:
     security_focus = bool(int(vim.eval('l:security_focus')))
     save_review = bool(int(vim.eval('l:save_review')))
     save_path = vim.eval('l:save_path')
+    pr = vim.eval('l:pr_arg')
+    mr = vim.eval('l:mr_arg')
+    remote = vim.eval('l:remote_arg')
     verbose = vim.eval('g:vimini_thinking') == 'on'
-    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, save=save_review, save_path=save_path)
+    main.review(prompt, git_objects=git_objects, security_focus=security_focus, verbose=verbose, save=save_review, save_path=save_path, pr=pr, mr=mr, remote=remote)
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -292,7 +361,7 @@ try:
     from vimini import main
     main.show_diff()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -328,7 +397,7 @@ try:
     refinement = vim.eval('l:prompt_refinement')
     main.commit(assistant=assistant, regenerate=regenerate, amend=amend, refinement=refinement)
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -342,7 +411,7 @@ try:
     from vimini import main
     main.files_command()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -356,7 +425,7 @@ try:
     from vimini import main
     main.context_files_command()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -370,7 +439,7 @@ try:
     from vimini import main
     main.config_command()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -385,7 +454,7 @@ try:
     from vimini import main
     main.autocomplete()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -503,7 +572,7 @@ try:
     arg_string = vim.eval('a:q_args')
     main.ripgrep_command(arg_string)
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -517,7 +586,7 @@ try:
     from vimini import main
     main.ripgrep_apply()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -533,7 +602,7 @@ try:
     cmd = vim.eval('l:cmd')
     main.help(cmd)
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -548,7 +617,7 @@ try:
     from vimini import main
     main.status_command()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
@@ -574,7 +643,7 @@ try:
     if socket_path:
         vim.command(f"let s:socket_path = '{socket_path}'")
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error reloading: {error_message}'")
 EOF
 
@@ -587,7 +656,7 @@ import vim
 try:
     main.send_setup()
 except Exception as e:
-    error_message = str(e).replace("'", "''")
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
     vim.command(f"echoerr '[Vimini] Error: {error_message}'")
 EOF
 endfunction
