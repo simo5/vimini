@@ -135,15 +135,141 @@ def review(
     verbose=False,
     save=False,
     save_path=None,
+    pr=None,
+    mr=None,
+    remote="origin",
 ):
     """
     Sends content to the Gemini API for a code review via the background agent.
+    If 'pr' or 'mr' is provided, fetches the GitHub PR or GitLab MR branch first.
     If 'save' is True and 'git_objects' are provided, saves reviews to 'save_path'.
     """
     util.log_info(
-        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, save={save}, save_path='{save_path}')"
+        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, save={save}, save_path='{save_path}', pr={pr}, mr={mr}, remote='{remote}')"
     )
     try:
+        # Validate remote
+        if remote is None or str(remote).strip() == "":
+            remote = "origin"
+        else:
+            remote = str(remote).strip()
+
+        if remote.startswith("-") or not re.match(r"^[a-zA-Z0-9_\-\./]+$", remote):
+            util.display_message(
+                f"Security error: Invalid remote name '{remote}'.", error=True
+            )
+            return
+
+        # Handle GitHub PR or GitLab MR fetching
+        pr_id = str(pr).strip() if pr is not None else None
+        mr_id = str(mr).strip() if mr is not None else None
+
+        if pr_id or mr_id:
+            if pr_id and not pr_id.isdigit():
+                util.display_message(
+                    f"Error: PR number must be numeric, got '{pr_id}'.", error=True
+                )
+                return
+
+            if mr_id and not mr_id.isdigit():
+                util.display_message(
+                    f"Error: MR number must be numeric, got '{mr_id}'.", error=True
+                )
+                return
+
+            repo_path = util.get_git_repo_root()
+            if not repo_path:
+                return
+
+            if pr_id:
+                refspec = f"+refs/pull/{pr_id}/head:refs/vimini/pr/{pr_id}"
+                local_ref = f"refs/vimini/pr/{pr_id}"
+                service_desc = f"GitHub PR #{pr_id}"
+            else:
+                refspec = f"+refs/merge-requests/{mr_id}/head:refs/vimini/mr/{mr_id}"
+                local_ref = f"refs/vimini/mr/{mr_id}"
+                service_desc = f"GitLab MR #{mr_id}"
+
+            util.display_message(f"Fetching {service_desc} from {remote}...")
+            fetch_cmd = ["git", "-C", repo_path, "fetch", remote, refspec]
+            res = subprocess.run(fetch_cmd, capture_output=True, text=True, check=False)
+            if res.returncode != 0:
+                err = (res.stderr or "git fetch failed.").strip()
+                util.display_message(f"Git fetch error: {err}", error=True)
+                return
+
+            if not git_objects:
+                base_target = None
+                sym_cmd = [
+                    "git",
+                    "-C",
+                    repo_path,
+                    "symbolic-ref",
+                    "--short",
+                    f"refs/remotes/{remote}/HEAD",
+                ]
+                sym_res = subprocess.run(
+                    sym_cmd, capture_output=True, text=True, check=False
+                )
+                if sym_res.returncode == 0 and sym_res.stdout.strip():
+                    base_target = sym_res.stdout.strip()
+                else:
+                    for candidate in [
+                        f"{remote}/main",
+                        f"{remote}/master",
+                        "main",
+                        "master",
+                    ]:
+                        check_cmd = [
+                            "git",
+                            "-C",
+                            repo_path,
+                            "rev-parse",
+                            "--verify",
+                            candidate,
+                        ]
+                        if (
+                            subprocess.run(
+                                check_cmd,
+                                capture_output=True,
+                                text=True,
+                                check=False,
+                            ).returncode
+                            == 0
+                        ):
+                            base_target = candidate
+                            break
+
+                if not base_target:
+                    base_target = "HEAD"
+
+                mb_cmd = [
+                    "git",
+                    "-C",
+                    repo_path,
+                    "merge-base",
+                    base_target,
+                    local_ref,
+                ]
+                mb_res = subprocess.run(
+                    mb_cmd, capture_output=True, text=True, check=False
+                )
+                if mb_res.returncode == 0 and mb_res.stdout.strip():
+                    base_sha = mb_res.stdout.strip()
+                    rev_cmd = ["git", "-C", repo_path, "rev-parse", local_ref]
+                    rev_res = subprocess.run(
+                        rev_cmd, capture_output=True, text=True, check=False
+                    )
+                    target_sha = (
+                        rev_res.stdout.strip() if rev_res.returncode == 0 else ""
+                    )
+                    if base_sha != target_sha and target_sha:
+                        git_objects = f"{base_sha}..{local_ref}"
+                    else:
+                        git_objects = local_ref
+                else:
+                    git_objects = local_ref
+
         # --- BATCH SAVE MODE ---
         if git_objects and save:
             repo_path = util.get_git_repo_root()
