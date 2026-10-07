@@ -5,129 +5,82 @@ import shlex
 import os
 import re
 from vimini import util
+from vimini.handler import StreamBufferHandler, register_handler, unregister_handler
 from vimini.common.util import get_project_config
 
-_STREAM_FIRST_CHUNK_MAP = set()
 
-
-def _to_str(val):
-    return util.to_str(val)
-
-
-def _find_buffer(req_id):
-    return util.find_buffer_by_job_id(req_id, name_hint="Vimini Review")
-
-
-def handle_channel_response(req_id, result):
+class ReviewChannelHandler(StreamBufferHandler):
     """
-    Handles channel responses from the agent server for review requests.
-    Statuses: 'thought', 'chunk', 'completed', 'progress', 'batch_completed', 'error'
+    Handles channel responses from the agent server for code review requests.
+    Supports interactive stream reviews and batch save reviews.
     """
 
-    if not isinstance(result, dict):
-        return
+    def __init__(self, req_id, buffer=None, is_batch=False):
+        super().__init__(req_id, buffer=buffer, name_hint="Vimini Review")
+        self.is_batch = is_batch
 
-    status = result.get("status")
+    def handle_response(self, result):
+        if not isinstance(result, dict):
+            return
 
-    if status == "progress":
-        msg = result.get("message", "")
-        is_err = result.get("error", False)
-        util.display_message(msg, error=is_err, history=True)
-        return
+        status = result.get("status")
 
-    if status == "batch_completed":
-        msg = result.get("message", "All reviews completed and saved.")
-        util.display_message(msg, history=True)
-        return
+        if status == "progress":
+            msg = result.get("message", "")
+            is_err = result.get("error", False)
+            util.display_message(msg, error=is_err, history=True)
+            return
 
-    verbose = result.get("verbose")
-    if verbose is None:
-        try:
-            verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
-        except Exception:
-            verbose = True
+        if status == "batch_completed":
+            msg = result.get("message", "All reviews completed and saved.")
+            util.display_message(msg, history=True)
+            self.finished = True
+            return
 
-    buf = util.find_buffer_by_job_id(req_id, name_hint="Vimini Review")
-    if buf is None:
-        return
+        buf = self.get_buffer()
+        if buf is None:
+            return
 
-    if status == "thought":
-        try:
-            if "[->G?]" in buf.name:
-                buf.name = buf.name.replace("[->G?]", "[<-G]")
-            elif "[->G]" in buf.name:
-                buf.name = buf.name.replace("[->G]", "[<-G]")
-        except Exception:
-            pass
-        thought_text = result.get("thought", "")
-        if verbose and thought_text:
-            util.write_to_buffer(buf, thought_text, append_to_last=True, redraw=True)
-        else:
-            vim.command("redraw")
+        if status == "thought":
+            thought_text = result.get("thought", "")
+            verbose = result.get("verbose")
+            self.handle_thought(thought_text, verbose=verbose)
 
-    elif status == "tool_use_requested":
-        text = result.get("text")
-        if text:
-            req_line = text
-        else:
-            tool = result.get("tool", "")
-            args = result.get("args")
-            if args:
-                args_str = json.dumps(args) if isinstance(args, dict) else str(args)
-                req_line = f"\n[Agent requested tool execution: {tool}({args_str})]\n"
+        elif status == "tool_use_requested":
+            self.handle_tool_request(result)
+
+        elif status == "chunk":
+            if not self.first_chunk:
+                self.first_chunk = True
+                util.write_to_buffer(
+                    buf, "\n========== REVIEW START ==========\n", append_to_last=True
+                )
+            chunk_text = result.get("text", "")
+            self.handle_chunk(chunk_text)
+
+        elif status in ("completed", "terminated"):
+            self.finished = True
+            base_buffer_name = f"[{self.req_id}] Vimini Review"
+            try:
+                buf.name = base_buffer_name
+            except Exception:
+                pass
+            if status == "completed":
+                util.display_message("Review completed.")
             else:
-                cmd = result.get("command")
-                cmd_str = f": {cmd}" if cmd else ""
-                req_line = f"\nAgent Requested: {tool}{cmd_str}\n"
-        util.write_to_buffer(buf, req_line, append_to_last=True, redraw=True)
+                util.display_message("Review terminated.", history=True)
 
-    elif status == "chunk":
-        try:
-            spin_map = {
-                "[->G?]": "[<-G]",
-                "[->G]": "[<-G]",
-                "[<-G]": "[<-\\]",
-                "[<-\\]": "[<-|]",
-                "[<-|]": "[<-/]",
-                "[<-/]": "[<-G]",
-            }
-            for spin in spin_map.items():
-                if spin[0] in buf.name:
-                    buf.name = buf.name.replace(spin[0], spin[1])
-                    break
-        except Exception:
-            pass
-
-        if req_id not in _STREAM_FIRST_CHUNK_MAP:
-            _STREAM_FIRST_CHUNK_MAP.add(req_id)
+        elif status == "error":
+            self.finished = True
+            err_msg = result.get("error", "Unknown error")
             util.write_to_buffer(
-                buf, "\n========== REVIEW START ==========\n", append_to_last=True
+                buf, f"\nError: {err_msg}\n", append_to_last=True, redraw=True
             )
-
-        chunk_text = result.get("text", "")
-        if chunk_text:
-            util.write_to_buffer(buf, chunk_text, append_to_last=True, redraw=True)
-
-    elif status in ("completed", "terminated"):
-        _STREAM_FIRST_CHUNK_MAP.discard(req_id)
-        base_buffer_name = f"[{req_id}] Vimini Review"
-        try:
-            buf.name = base_buffer_name
-        except Exception:
-            pass
-        if status == "completed":
-            util.display_message("Review completed.")
-        else:
-            util.display_message("Review terminated.", history=True)
-
-    elif status == "error":
-        _STREAM_FIRST_CHUNK_MAP.discard(req_id)
-        err_msg = result.get("error", "Unknown error")
-        util.write_to_buffer(buf, f"\nError: {err_msg}\n", append_to_last=True, redraw=True)
-        util.display_message(f"Error: {err_msg}", error=True)
+            util.display_message(f"Error: {err_msg}", error=True)
 
 
 def send_review_termination(req_id):
+    unregister_handler(req_id)
     req = {
         "jsonrpc": "2.0",
         "id": str(req_id),
@@ -377,6 +330,9 @@ def review(
             job_name = f"Review batch: {git_objects} {prompt}"
             job_id = str(util.reserve_next_job_id(job_name))
 
+            handler = ReviewChannelHandler(job_id, is_batch=True)
+            register_handler(job_id, handler)
+
             util.display_message("Processing batch review via agent... (Async)")
 
             req = {
@@ -474,6 +430,9 @@ def review(
             review_buffer.vars["vimini_job_id"] = str(job_id)
         except Exception as e:
             util.log_info(f"Error setting vimini_job_id on review buffer: {e}")
+
+        handler = ReviewChannelHandler(job_id, buffer=review_buffer)
+        register_handler(job_id, handler)
 
         util.append_job_summary(review_buf_num, job_id, prompt, [])
 

@@ -124,6 +124,19 @@ def handle_channel_message(msg):
     error = msg.get("error")
     result = msg.get("result")
 
+    # Check for registered object-based handler first
+    from vimini.handler import get_handler, unregister_handler
+
+    handler = get_handler(req_id) if req_id is not None else None
+    if handler is not None:
+        if error is not None:
+            handler.handle_error(error)
+        elif isinstance(result, dict):
+            handler.handle_response(result)
+        if handler.is_finished():
+            unregister_handler(req_id)
+        return
+
     if error is not None:
         err_msg = (
             error.get("message", "Unknown error")
@@ -143,10 +156,6 @@ def handle_channel_message(msg):
             from vimini.chat import handle_channel_response
 
             handle_channel_response(req_id, err_result)
-        elif method == "review":
-            from vimini.review import handle_channel_response
-
-            handle_channel_response(req_id, err_result)
         elif method == "commit":
             util.display_message(f"Error: {err_msg}", error=True)
         elif method == "list_models":
@@ -162,10 +171,6 @@ def handle_channel_message(msg):
             handle_channel_response(req_id, result)
         elif method == "code":
             from vimini.code import handle_channel_response
-
-            handle_channel_response(req_id, result)
-        elif method == "review":
-            from vimini.review import handle_channel_response
 
             handle_channel_response(req_id, result)
         elif method == "setup":
