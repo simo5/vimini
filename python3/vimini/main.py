@@ -7,7 +7,6 @@ from vimini.autocomplete import autocomplete, cancel_autocomplete
 from vimini.code import code, show_diff, apply_code
 from vimini.commit import (
     commit,
-    handle_commit_response,
     finalize_commit,
     _finalize_commit,
 )
@@ -24,6 +23,7 @@ from vimini.context import (
     restore_context_files,
 )
 from vimini.config import config_command
+from vimini.handler import BaseChannelHandler, register_handler, unregister_handler, get_handler
 
 
 def initialize(api_key_file, model, logfile=None):
@@ -43,10 +43,49 @@ def initialize(api_key_file, model, logfile=None):
         )
 
 
+class SetupChannelHandler(BaseChannelHandler):
+    """Handles responses for agent setup."""
+
+    def handle_response(self, result):
+        self.finished = True
+        util.log_info("Agent server setup completed.")
+
+    def handle_error(self, error):
+        self.finished = True
+        err_msg = (
+            error.get("message", "Unknown error")
+            if isinstance(error, dict)
+            else str(error)
+        )
+        util.log_info(f"Agent server setup error: {err_msg}")
+
+
+class ListModelsChannelHandler(BaseChannelHandler):
+    """Handles responses for list_models requests."""
+
+    def handle_response(self, result):
+        self.finished = True
+        models = result.get("models", [])
+        from vimini.models import show_models_list
+
+        show_models_list(models)
+
+    def handle_error(self, error):
+        self.finished = True
+        err_msg = (
+            error.get("message", "Unknown error")
+            if isinstance(error, dict)
+            else str(error)
+        )
+        util.display_message(f"Error: {err_msg}", error=True)
+
+
 def send_setup():
     """
     Sends a setup request to the agent server with internal configuration.
     """
+    handler = SetupChannelHandler("setup")
+    register_handler("setup", handler)
     req = {
         "jsonrpc": "2.0",
         "id": "setup",
@@ -114,18 +153,15 @@ def _send_channel_request(req_dict, silent=False):
 def handle_channel_message(msg):
     """
     Handles JSON channel messages received from the agent server via Vim channel.
+    Dispatches directly to registered BaseChannelHandler instances by request ID.
     """
     util.log_info(f"Received channel message: {msg}")
     if not isinstance(msg, dict):
         return
 
     req_id = msg.get("id")
-    method = msg.get("method")
     error = msg.get("error")
     result = msg.get("result")
-
-    # Check for registered object-based handler first
-    from vimini.handler import get_handler, unregister_handler
 
     handler = get_handler(req_id) if req_id is not None else None
     if handler is not None:
@@ -137,41 +173,14 @@ def handle_channel_message(msg):
             unregister_handler(req_id)
         return
 
+    # Fallback for unexpected or untracked error messages
     if error is not None:
         err_msg = (
             error.get("message", "Unknown error")
             if isinstance(error, dict)
             else str(error)
         )
-        err_result = {"status": "error", "error": err_msg}
-        if method == "autocomplete":
-            from vimini.autocomplete import handle_channel_response
-
-            handle_channel_response(req_id, err_result)
-        elif method == "commit":
-            util.display_message(f"Error: {err_msg}", error=True)
-        elif method == "list_models":
-            util.display_message(f"Error: {err_msg}", error=True)
-        else:
-            util.display_message(f"Error: {err_msg}", error=True)
-        return
-
-    if isinstance(result, dict):
-        if method == "autocomplete":
-            from vimini.autocomplete import handle_channel_response
-
-            handle_channel_response(req_id, result)
-        elif method == "setup":
-            util.log_info("Agent server setup completed.")
-        elif method == "list_models":
-            models = result.get("models", [])
-            from vimini.models import show_models_list
-
-            show_models_list(models)
-        elif method == "commit":
-            from vimini.commit import handle_commit_response
-
-            handle_commit_response(req_id, result)
+        util.display_message(f"Error: {err_msg}", error=True)
 
 
 # This new function is needed because vimini.vim calls main.logging()
@@ -233,6 +242,8 @@ def list_models():
     Lists the available Gemini models.
     """
     util.log_info("list_models()")
+    handler = ListModelsChannelHandler("list_models")
+    register_handler("list_models", handler)
     return {
         "jsonrpc": "2.0",
         "id": "list_models",

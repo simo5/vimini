@@ -2,10 +2,51 @@ import vim
 import uuid
 import json
 from vimini import util
+from vimini.handler import BaseChannelHandler, register_handler, unregister_handler
 
 # --- Autocomplete state ---
 _current_autocomplete_job_id = None
 _original_cursor_hl = {}
+
+
+class AutocompleteChannelHandler(BaseChannelHandler):
+    """
+    Handles channel responses for autocomplete suggestions.
+    """
+
+    def handle_response(self, result):
+        global _current_autocomplete_job_id
+        self.finished = True
+        _current_autocomplete_job_id = None
+
+        if not isinstance(result, dict):
+            return
+
+        if "error" in result:
+            err_msg = result["error"].get("message", "Unknown error")
+            util.log_info(f"Autocomplete error: {err_msg}")
+            return
+
+        text = result.get("text", "")
+        if not text:
+            return
+
+        suggestion = text.strip().split("\n")[0]
+        if not suggestion:
+            return
+
+        _show_autocomplete_popup(suggestion)
+
+    def handle_error(self, error):
+        global _current_autocomplete_job_id
+        self.finished = True
+        _current_autocomplete_job_id = None
+        err_msg = (
+            error.get("message", "Unknown error")
+            if isinstance(error, dict)
+            else str(error)
+        )
+        util.log_info(f"Autocomplete error: {err_msg}")
 
 
 def cancel_autocomplete():
@@ -14,7 +55,9 @@ def cancel_autocomplete():
     This is called from Vimscript when the user types or leaves insert mode.
     """
     global _current_autocomplete_job_id
-    _current_autocomplete_job_id = None
+    if _current_autocomplete_job_id is not None:
+        unregister_handler(_current_autocomplete_job_id)
+        _current_autocomplete_job_id = None
 
 
 def _show_autocomplete_popup(suggestion):
@@ -59,36 +102,6 @@ def _show_autocomplete_popup(suggestion):
         vim.command(f"echoerr '[Vimini] Autocomplete popup Error: {error_message}'")
 
 
-def handle_channel_response(result):
-    """
-    Callback function invoked when the agent sends back an autocomplete response via Vim's channel.
-    """
-    global _current_autocomplete_job_id
-
-    if _current_autocomplete_job_id is None:
-        return
-
-    _current_autocomplete_job_id = None
-
-    if not isinstance(result, dict):
-        return
-
-    if "error" in result:
-        err_msg = result["error"].get("message", "Unknown error")
-        util.log_info(f"Autocomplete error: {err_msg}")
-        return
-
-    text = result.get("text", "")
-    if not text:
-        return
-
-    suggestion = text.strip().split("\n")[0]
-    if not suggestion:
-        return
-
-    _show_autocomplete_popup(suggestion)
-
-
 def autocomplete():
     """
     Gets context from the current buffer and sends an autocomplete request
@@ -101,8 +114,11 @@ def autocomplete():
     if _original_cursor_hl:
         return
 
-    job_id = util.reserve_next_job_id("Autocomplete")
+    job_id = str(util.reserve_next_job_id("Autocomplete"))
     _current_autocomplete_job_id = job_id
+
+    handler = AutocompleteChannelHandler(job_id)
+    register_handler(job_id, handler)
 
     buffer_content = list(vim.current.buffer)
     cursor_pos = vim.current.window.cursor
@@ -112,6 +128,8 @@ def autocomplete():
     context_lines = buffer_content[start_line_index:row]
 
     if not context_lines:
+        unregister_handler(job_id)
+        _current_autocomplete_job_id = None
         return
 
     current_line_content = context_lines[-1]
@@ -132,7 +150,7 @@ def autocomplete():
 
     req = {
         "jsonrpc": "2.0",
-        "id": str(job_id),
+        "id": job_id,
         "method": "autocomplete",
         "params": {"prompt": prompt},
     }

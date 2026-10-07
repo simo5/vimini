@@ -10,6 +10,8 @@ from vimini import handler
 from vimini import main
 from vimini import chat
 from vimini import code
+from vimini import autocomplete
+from vimini import commit
 
 
 class MockVimDictionary:
@@ -240,3 +242,77 @@ def test_code_channel_handler_flow():
 
         # Clean up store
         del code._BUFFER_DATA_STORE[70]
+
+
+def test_autocomplete_channel_handler_flow():
+    handler.clear_handlers()
+    autocomplete.cancel_autocomplete()
+
+    h = autocomplete.AutocompleteChannelHandler("auto_1")
+    handler.register_handler("auto_1", h)
+
+    with patch("vimini.autocomplete._show_autocomplete_popup") as mock_popup:
+        main.handle_channel_message({
+            "id": "auto_1",
+            "result": {"text": "return True\nmore"},
+        })
+        mock_popup.assert_called_once_with("return True")
+        assert h.is_finished()
+        assert handler.get_handler("auto_1") is None
+
+
+def test_autocomplete_channel_handler_error():
+    handler.clear_handlers()
+    h = autocomplete.AutocompleteChannelHandler("auto_2")
+    handler.register_handler("auto_2", h)
+
+    with patch("vimini.util.log_info") as mock_log:
+        main.handle_channel_message({"id": "auto_2", "error": {"message": "Cancelled"}})
+        assert h.is_finished()
+        assert handler.get_handler("auto_2") is None
+        assert any("Cancelled" in str(c) for c in mock_log.call_args_list)
+
+
+def test_setup_channel_handler_flow():
+    handler.clear_handlers()
+    h = main.SetupChannelHandler("setup")
+    handler.register_handler("setup", h)
+
+    with patch("vimini.util.log_info") as mock_log:
+        main.handle_channel_message({"id": "setup", "result": {"status": "ok"}})
+        assert h.is_finished()
+        assert handler.get_handler("setup") is None
+        assert any("setup completed" in str(c) for c in mock_log.call_args_list)
+
+
+def test_list_models_channel_handler_flow():
+    handler.clear_handlers()
+    h = main.ListModelsChannelHandler("list_models")
+    handler.register_handler("list_models", h)
+
+    with patch("vimini.models.show_models_list") as mock_show:
+        main.handle_channel_message({
+            "id": "list_models",
+            "result": {"status": "ok", "models": [{"name": "gemini-flash"}]},
+        })
+        mock_show.assert_called_once_with([{"name": "gemini-flash"}])
+        assert h.is_finished()
+        assert handler.get_handler("list_models") is None
+
+
+def test_commit_channel_handler_flow():
+    handler.clear_handlers()
+    h = commit.CommitChannelHandler("commit_1")
+    handler.register_handler("commit_1", h)
+
+    with patch("vimini.commit.handle_commit_response") as mock_commit_resp:
+        main.handle_channel_message({
+            "id": "commit_1",
+            "result": {
+                "status": "ok",
+                "text": "feat: new feature",
+            },
+        })
+        mock_commit_resp.assert_called_once()
+        assert h.is_finished()
+        assert handler.get_handler("commit_1") is None

@@ -5,6 +5,7 @@ import textwrap
 import tempfile
 from vimini import util
 from vimini.util import get_model_name
+from vimini.handler import BaseChannelHandler, register_handler, unregister_handler
 
 
 def _run_format_command(repo_path):
@@ -119,6 +120,25 @@ def _stage_changes(repo_path, message="Staging changes..."):
             return False
 
     return True
+
+
+class CommitChannelHandler(BaseChannelHandler):
+    """
+    Handles channel responses for commit message generation requests.
+    """
+
+    def handle_response(self, result):
+        self.finished = True
+        handle_commit_response(self.req_id, result)
+
+    def handle_error(self, error):
+        self.finished = True
+        err_msg = (
+            error.get("message", "Unknown error")
+            if isinstance(error, dict)
+            else str(error)
+        )
+        util.display_message(f"Error: {err_msg}", error=True)
 
 
 def handle_commit_response(req_id, result):
@@ -341,9 +361,14 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
             "Generating commit message via agent server... (this may take a moment)"
         )
 
+        job_id = str(util.reserve_next_job_id("Commit"))
+
+        handler = CommitChannelHandler(job_id)
+        register_handler(job_id, handler)
+
         req = {
             "jsonrpc": "2.0",
-            "id": "commit",
+            "id": job_id,
             "method": "commit",
             "params": {
                 "prompt": prompt,
@@ -355,6 +380,7 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
         }
 
         if not util.send_channel_request(req):
+            unregister_handler(job_id)
             msg = "Commit cancelled (sending request to agent server failed)."
             if not regenerate:
                 msg += " Reverting `git add`."
