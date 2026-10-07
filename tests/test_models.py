@@ -209,9 +209,9 @@ def test_select_supported_model():
 
     vim.current.window.cursor = (target_line, 3)
     mock_buffer = list(buffer_lines)
-    vim.current.buffer = mock_buffer
 
     with (
+        patch.object(vim.current, "buffer", mock_buffer),
         patch("vimini.main.send_setup") as mock_setup,
         patch("vimini.util.display_message") as mock_display,
     ):
@@ -239,11 +239,12 @@ def test_select_unsupported_model_emits_error():
     )
 
     import vim
+
     vim.current.window.cursor = (target_line, 3)
     mock_buffer = list(buffer_lines)
-    vim.current.buffer = mock_buffer
 
     with (
+        patch.object(vim.current, "buffer", mock_buffer),
         patch("vimini.main.send_setup") as mock_setup,
         patch("vimini.util.display_message") as mock_display,
     ):

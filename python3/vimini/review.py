@@ -197,7 +197,14 @@ def review(
 
             util.display_message(f"Fetching {service_desc} from {remote}...")
             fetch_cmd = ["git", "-C", repo_path, "fetch", remote, refspec]
-            res = subprocess.run(fetch_cmd, capture_output=True, text=True, check=False)
+            res = subprocess.run(
+                fetch_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
             if res.returncode != 0:
                 err = (res.stderr or "git fetch failed.").strip()
                 util.display_message(f"Git fetch error: {err}", error=True)
@@ -214,7 +221,12 @@ def review(
                     f"refs/remotes/{remote}/HEAD",
                 ]
                 sym_res = subprocess.run(
-                    sym_cmd, capture_output=True, text=True, check=False
+                    sym_cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
                 )
                 if sym_res.returncode == 0 and sym_res.stdout.strip():
                     base_target = sym_res.stdout.strip()
@@ -238,6 +250,8 @@ def review(
                                 check_cmd,
                                 capture_output=True,
                                 text=True,
+                                encoding="utf-8",
+                                errors="replace",
                                 check=False,
                             ).returncode
                             == 0
@@ -257,7 +271,12 @@ def review(
                     local_ref,
                 ]
                 mb_res = subprocess.run(
-                    mb_cmd, capture_output=True, text=True, check=False
+                    mb_cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
                 )
                 if mb_res.returncode == 0 and mb_res.stdout.strip():
                     base_sha = mb_res.stdout.strip()
@@ -300,7 +319,14 @@ def review(
                 + rev_list_args
                 + objects_to_resolve
             )
-            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
 
             if result.returncode != 0:
                 error_message = (result.stderr or "git rev-list failed.").strip()
@@ -381,7 +407,14 @@ def review(
 
             cmd = ["git", "-C", repo_path, "show"] + objects_to_show
             util.display_message(f"Running git show {git_objects}... ")
-            result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
 
             if result.returncode != 0:
                 error_message = (result.stderr or "git show failed.").strip()
@@ -422,9 +455,10 @@ def review(
         )
 
         review_buffer = vim.current.buffer
-        review_buf_num = review_buffer.number
+        review_buf_num = getattr(review_buffer, "number", 1) or 1
 
-        review_buffer.vars["vimini_job_id"] = str(job_id)
+        if hasattr(review_buffer, "vars") and isinstance(review_buffer.vars, dict):
+            review_buffer.vars["vimini_job_id"] = str(job_id)
 
         util.append_job_summary(review_buf_num, job_id, prompt, [])
 

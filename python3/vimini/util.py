@@ -131,7 +131,12 @@ def get_git_repo_root():
 
     try:
         repo_path_result = subprocess.run(
-            rev_parse_cmd, capture_output=True, text=True, check=False
+            rev_parse_cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
     except Exception as e:
         message = "Git command not found or failed."
@@ -274,7 +279,10 @@ def display_message(
         command = "echo"
 
     try:
-        vim.command(f"{command} '{full_message}'")
+        if error:
+            vim.command(f"echohl ErrorMsg | echomsg '{full_message}' | echohl None")
+        else:
+            vim.command(f"{command} '{full_message}'")
         # For transient messages, redraw to show them immediately without a 'Press ENTER' prompt.
         if not error and not history:
             vim.command("redraw")

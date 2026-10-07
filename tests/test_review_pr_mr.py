@@ -198,6 +198,43 @@ def test_review_pr_no_worktree(tmp_path):
         assert req_params.get("worktree_ref") is None
 
 
+def test_review_subprocess_non_utf8_handling(tmp_path):
+    repo_path = str(tmp_path)
+    with (
+        patch("vimini.util.get_git_repo_root", return_value=repo_path),
+        patch("subprocess.run") as mock_run,
+        patch("vimini.util.send_channel_request") as mock_send,
+        patch("vimini.util.new_split"),
+        patch("vim.command"),
+    ):
+        mock_fetch = MagicMock(returncode=0, stdout="", stderr="")
+        mock_sym = MagicMock(returncode=0, stdout="origin/main\n", stderr="")
+        mock_mb = MagicMock(returncode=0, stdout="sha_base\n", stderr="")
+        mock_rev = MagicMock(returncode=0, stdout="sha_pr\n", stderr="")
+        # Simulate stdout with replaced non-utf8 characters (\ufffd)
+        mock_show = MagicMock(
+            returncode=0, stdout="diff with binary byte: \ufffd\n", stderr=""
+        )
+
+        mock_run.side_effect = [mock_fetch, mock_sym, mock_mb, mock_rev, mock_show]
+
+        review_module.review("Review non-utf8 PR", pr="123", remote="origin")
+
+        # Verify encoding and errors parameters in git show and fetch calls
+        fetch_call = mock_run.call_args_list[0]
+        assert fetch_call.kwargs.get("encoding") == "utf-8"
+        assert fetch_call.kwargs.get("errors") == "replace"
+
+        show_call = mock_run.call_args_list[4]
+        assert show_call.kwargs.get("encoding") == "utf-8"
+        assert show_call.kwargs.get("errors") == "replace"
+
+        # Verify request sent to channel with replacement character preserved
+        mock_send.assert_called_once()
+        req_params = mock_send.call_args[0][0]["params"]
+        assert req_params["review_content"] == "diff with binary byte: \ufffd\n"
+
+
 def test_temporary_git_worktree_none_or_empty_ref():
     with temporary_git_worktree("/some/path", None) as path:
         assert path == "/some/path"

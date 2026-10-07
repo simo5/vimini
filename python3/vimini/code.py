@@ -330,7 +330,14 @@ def show_diff():
 
         # Execute the command.
         util.display_message("Running git diff...")
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
         util.display_message("")  # Clear message
 
         # Handle git errors (e.g., not a git repository).
@@ -384,6 +391,8 @@ def apply_patch(diff_content, project_root=None, silent=False):
         result = subprocess.run(
             ["patch", "-p1", "-N", "-r", "-"],
             input=diff_content,
+            encoding="utf-8",
+            errors="replace",
             text=True,
             check=False,
             capture_output=True,
