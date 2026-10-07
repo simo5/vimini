@@ -3,6 +3,7 @@ import json
 import subprocess
 import os
 from vimini import util, context
+from vimini.handler import StreamBufferHandler, register_handler, unregister_handler
 from vimini.common.util import get_project_config
 from vimini.code import _DIFF_SEPARATOR, _process_x_diff_chunks
 
@@ -16,9 +17,7 @@ A_prefix = "> "
 
 
 def _to_str(val):
-    if isinstance(val, bytes):
-        return val.decode("utf-8", errors="replace")
-    return str(val) if val is not None else ""
+    return util.to_str(val)
 
 
 def _get_buffer(buf_num):
@@ -34,16 +33,18 @@ def _get_buffer(buf_num):
 
 
 def _find_chat_buffer(req_id):
-    if not req_id:
-        return None
-    try:
-        for b in vim.buffers:
-            job_id = b.vars.get("vimini_job_id")
-            if job_id is not None and _to_str(job_id) == str(req_id):
-                return b
-    except Exception:
-        pass
-    return None
+    return util.find_buffer_by_job_id(req_id, name_hint="Vimini Chat")
+
+
+def _write_to_buffer(buffer, content, clear=False, append_to_last=False):
+    util.write_to_buffer(
+        buffer,
+        content,
+        clear=clear,
+        append_to_last=append_to_last,
+        lock_unmodifiable=True,
+        redraw=True,
+    )
 
 
 def _set_waiting(buffer, waiting):
@@ -325,6 +326,7 @@ def _on_chat_buffer_closed(buf_num):
                 pass
 
         if req_id:
+            unregister_handler(req_id)
             send_chat_termination(req_id)
         util.display_message("Chat session has been terminated.", history=True)
     except Exception as e:
@@ -650,106 +652,127 @@ def _request_tool_permission(req_id, tool, cmd=None):
     return confirmed
 
 
-def handle_channel_response(req_id, result):
-    status = result.get("status")
-    buffer = _find_chat_buffer(req_id)
+class ChatChannelHandler(StreamBufferHandler):
+    """
+    Handles channel responses from the agent server for interactive chat sessions.
+    Chat sessions are multi-turn and persist until explicitly terminated or closed.
+    """
 
-    if buffer is None:
-        return
+    def __init__(self, req_id, buffer=None):
+        super().__init__(req_id, buffer=buffer, name_hint="Vimini Chat")
 
-    if status == "thought":
-        thought_text = result.get("thought", "")
-        verbose = result.get("verbose")
-        if verbose is None:
-            try:
-                verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
-            except Exception:
-                verbose = True
-        if verbose and thought_text:
-            _write_to_buffer(buffer, thought_text, append_to_last=True)
+    def handle_response(self, result):
+        if not isinstance(result, dict):
+            return
 
-    elif status == "chunk":
-        text = result.get("text", "")
-        if text:
-            _write_to_buffer(buffer, text, append_to_last=True)
+        status = result.get("status")
+        buffer = self.get_buffer()
 
-    elif status == "tool_use_requested":
-        tool = result.get("tool", "")
-        temp_file = result.get("temp_file")
+        if buffer is None:
+            return
 
-        if tool == "apply_patch":
-            file_path = result.get("file_path")
-            target_str = f" for {file_path}" if file_path else f"({temp_file})"
-            req_line = f"\nAgent Requested: apply_patch{target_str}"
-        elif tool in ("build_code", "test_code", "fix_format"):
-            cmd = result.get("command")
-            cmd_str = f": {cmd}" if cmd else ""
-            req_line = f"\nAgent Requested: {tool}{cmd_str}"
-        else:
-            args = result.get("args", {})
-            if isinstance(args, dict):
-                args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
+        if status == "thought":
+            thought_text = result.get("thought", "")
+            verbose = result.get("verbose")
+            if verbose is None:
+                try:
+                    verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
+                except Exception:
+                    verbose = True
+            if verbose and thought_text:
+                _write_to_buffer(buffer, thought_text, append_to_last=True)
+
+        elif status == "chunk":
+            text = result.get("text", "")
+            if text:
+                _write_to_buffer(buffer, text, append_to_last=True)
+
+        elif status == "tool_use_requested":
+            tool = result.get("tool", "")
+            temp_file = result.get("temp_file")
+
+            if tool == "apply_patch":
+                file_path = result.get("file_path")
+                target_str = f" for {file_path}" if file_path else f"({temp_file})"
+                req_line = f"\nAgent Requested: apply_patch{target_str}"
+            elif tool in ("build_code", "test_code", "fix_format"):
+                cmd = result.get("command")
+                cmd_str = f": {cmd}" if cmd else ""
+                req_line = f"\nAgent Requested: {tool}{cmd_str}"
             else:
-                args_str = str(args) if args else ""
-            req_line = f"\nAgent Requested: {tool}({args_str})"
+                args = result.get("args", {})
+                if isinstance(args, dict):
+                    args_str = ", ".join(f"{k}={repr(v)}" for k, v in args.items())
+                else:
+                    args_str = str(args) if args else ""
+                req_line = f"\nAgent Requested: {tool}({args_str})"
 
-        _write_to_buffer(buffer, req_line, append_to_last=True)
+            _write_to_buffer(buffer, req_line, append_to_last=True)
 
-        if tool in ("list_directory", "read_file"):
-            send_agent_approval(True, req_id)
-        elif tool == "apply_patch":
-            _open_patch_buffer(temp_file, req_id)
-        elif tool in ("build_code", "test_code", "fix_format"):
-            if tool == "build_code":
-                tool_label = "build"
-            elif tool == "fix_format":
-                tool_label = "format"
+            if tool in ("list_directory", "read_file"):
+                send_agent_approval(True, self.req_id)
+            elif tool == "apply_patch":
+                _open_patch_buffer(temp_file, self.req_id)
+            elif tool in ("build_code", "test_code", "fix_format"):
+                if tool == "build_code":
+                    tool_label = "build"
+                elif tool == "fix_format":
+                    tool_label = "format"
+                else:
+                    tool_label = "test"
+                cmd = result.get("command")
+                project_root = (
+                    (buffer.vars.get("vimini_project_root") if buffer else None)
+                    or util.get_git_repo_root()
+                    or os.getcwd()
+                )
+                perm = get_project_config(
+                    f"{tool_label}-permission",
+                    start_dir=project_root,
+                    default="Allow" if tool_label == "format" else "Ask",
+                )
+                perm_val = perm.strip().lower() if isinstance(perm, str) else "ask"
+
+                if perm_val == "allow":
+                    approved = True
+                elif perm_val == "deny":
+                    approved = False
+                else:
+                    approved = _request_tool_permission(self.req_id, tool, cmd)
+                send_agent_approval(approved, self.req_id)
             else:
-                tool_label = "test"
-            cmd = result.get("command")
-            project_root = (
-                (buffer.vars.get("vimini_project_root") if buffer else None)
-                or util.get_git_repo_root()
-                or os.getcwd()
-            )
-            perm = get_project_config(
-                f"{tool_label}-permission",
-                start_dir=project_root,
-                default="Allow" if tool_label == "format" else "Ask",
-            )
-            perm_val = perm.strip().lower() if isinstance(perm, str) else "ask"
+                send_agent_approval(False, self.req_id)
 
-            if perm_val == "allow":
-                approved = True
-            elif perm_val == "deny":
-                approved = False
-            else:
-                approved = _request_tool_permission(req_id, tool, cmd)
-            send_agent_approval(approved, req_id)
-        else:
-            send_agent_approval(False, req_id)
+        elif status in ("done", "ok"):
+            _set_waiting(buffer, False)
+            text = result.get("text", "")
+            if text:
+                _write_to_buffer(buffer, text, append_to_last=True)
+            _write_to_buffer(buffer, ["", WAITING_MSG])
 
-    elif status in ("done", "ok"):
-        _set_waiting(buffer, False)
-        text = result.get("text", "")
-        if text:
-            _write_to_buffer(buffer, text, append_to_last=True)
-        _write_to_buffer(buffer, ["", WAITING_MSG])
+        elif status == "terminated":
+            _set_waiting(buffer, False)
+            self.finished = True
 
-    elif status == "terminated":
-        _set_waiting(buffer, False)
+        elif status == "error":
+            _set_waiting(buffer, False)
+            err_msg = result.get("error", "Unknown error")
+            error_lines = [""]
+            for line in str(err_msg).split("\n"):
+                if line.startswith("Error: ") or line.startswith("[Error:"):
+                    error_lines.append(line)
+                else:
+                    error_lines.append(f"Error: {line}")
+            error_lines.extend(["Please prompt again to retry later.", "", WAITING_MSG])
+            _write_to_buffer(buffer, error_lines)
 
-    elif status == "error":
-        _set_waiting(buffer, False)
-        err_msg = result.get("error", "Unknown error")
-        error_lines = [""]
-        for line in str(err_msg).split("\n"):
-            if line.startswith("Error: ") or line.startswith("[Error:"):
-                error_lines.append(line)
-            else:
-                error_lines.append(f"Error: {line}")
-        error_lines.extend(["Please prompt again to retry later.", "", WAITING_MSG])
-        _write_to_buffer(buffer, error_lines)
+    def handle_error(self, error):
+        err_msg = (
+            error.get("message", "Unknown error")
+            if isinstance(error, dict)
+            else str(error)
+        )
+        self.handle_response({"status": "error", "error": err_msg})
 
 
 def _send_prompt(prompt, buffer):
@@ -858,63 +881,8 @@ def chat():
     buffer.vars["vimini_job_id"] = req_id
     _set_waiting(buffer, False)
 
+    handler = ChatChannelHandler(req_id, buffer=buffer)
+    register_handler(req_id, handler)
+
     _write_to_buffer(buffer, [WELCOME_MSG], clear=True)
     _open_prompt_window(req_id)
-
-
-def _write_to_buffer(buffer, content, clear=False, append_to_last=False):
-    buffer.options["modifiable"] = 1
-    try:
-        if isinstance(content, str):
-            lines = content.split("\n")
-        elif isinstance(content, list):
-            lines = []
-            for item in content:
-                if isinstance(item, str):
-                    lines.extend(item.split("\n"))
-                else:
-                    lines.append(str(item))
-        else:
-            lines = [str(content)]
-
-        if clear:
-            buffer[:] = lines
-        else:
-            if append_to_last:
-                if len(buffer) > 0 and buffer[-1].startswith("Agent Requested:"):
-                    if isinstance(content, str) and not content.startswith("\n"):
-                        lines.insert(0, "")
-                if len(buffer) > 0:
-                    buffer[-1] += lines[0]
-                else:
-                    buffer[:] = [lines[0]]
-                if len(lines) > 1:
-                    buffer.append(lines[1:])
-            else:
-                if len(buffer) == 1 and buffer[0] == "":
-                    buffer[:] = lines
-                else:
-                    buffer.append(lines)
-
-        chat_win_nr = None
-        curr_win_nr = None
-        for w in vim.windows:
-            if w.buffer.number == buffer.number:
-                chat_win_nr = w.number
-            if w == vim.current.window:
-                curr_win_nr = w.number
-
-        if chat_win_nr is not None:
-            if curr_win_nr == chat_win_nr:
-                vim.command("normal! G")
-            else:
-                vim.command(f"noautocmd {chat_win_nr}wincmd w")
-                vim.command("normal! G")
-                if curr_win_nr is not None:
-                    vim.command(f"noautocmd {curr_win_nr}wincmd w")
-
-        vim.command("redraw")
-    except Exception as e:
-        util.log_info(f"Error writing to chat buffer: {e}")
-    finally:
-        buffer.options["modifiable"] = 0

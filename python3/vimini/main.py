@@ -152,10 +152,6 @@ def handle_channel_message(msg):
             from vimini.code import handle_channel_response
 
             handle_channel_response(req_id, err_result)
-        elif method == "chat":
-            from vimini.chat import handle_channel_response
-
-            handle_channel_response(req_id, err_result)
         elif method == "commit":
             util.display_message(f"Error: {err_msg}", error=True)
         elif method == "list_models":
@@ -180,10 +176,6 @@ def handle_channel_message(msg):
             from vimini.models import show_models_list
 
             show_models_list(models)
-        elif method == "chat":
-            from vimini.chat import handle_channel_response
-
-            handle_channel_response(req_id, result)
         elif method == "commit":
             from vimini.commit import handle_commit_response
 

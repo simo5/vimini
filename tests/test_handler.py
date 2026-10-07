@@ -8,6 +8,7 @@ sys.path.insert(
 
 from vimini import handler
 from vimini import main
+from vimini import chat
 
 
 class MockVimDictionary:
@@ -144,3 +145,46 @@ def test_main_handle_channel_message_error_dispatches_to_handler():
     main.handle_channel_message(msg)
 
     mock_handler.handle_error.assert_called_once_with({"message": "Bad request"})
+
+
+def test_chat_channel_handler_turn_persists():
+    handler.clear_handlers()
+    import vim
+
+    buf = MockBuffer([], number=60, name="[60] Vimini Chat")
+    buf.vars["vimini_job_id"] = "60"
+
+    h = chat.ChatChannelHandler("60", buffer=buf)
+    handler.register_handler("60", h)
+
+    with patch.object(vim, "buffers", [buf]):
+        # Send first turn chunk
+        main.handle_channel_message({
+            "id": "60",
+            "result": {"status": "chunk", "text": "Turn 1 answer"},
+        })
+        assert any("Turn 1 answer" in line for line in buf)
+
+        # Send done: chat handler must NOT be finished (multi-turn conversation)
+        main.handle_channel_message({
+            "id": "60",
+            "result": {"status": "done"},
+        })
+        assert not h.is_finished()
+        assert handler.get_handler("60") is h
+        assert any(chat.WAITING_MSG in line for line in buf)
+
+        # Send second turn chunk
+        main.handle_channel_message({
+            "id": "60",
+            "result": {"status": "chunk", "text": "Turn 2 answer"},
+        })
+        assert any("Turn 2 answer" in line for line in buf)
+
+        # Send terminated: handler is now finished
+        main.handle_channel_message({
+            "id": "60",
+            "result": {"status": "terminated"},
+        })
+        assert h.is_finished()
+        assert handler.get_handler("60") is None

@@ -150,7 +150,8 @@ def test_handle_channel_response_done_does_not_open_prompt_window():
         patch("vimini.chat._find_chat_buffer", return_value=chat_buf),
         patch("vimini.chat._open_prompt_window") as mock_open_prompt,
     ):
-        chat.handle_channel_response("1", {"status": "done", "text": "Task finished."})
+        h = chat.ChatChannelHandler("1", buffer=chat_buf)
+        h.handle_response({"status": "done", "text": "Task finished."})
 
         # Verify prompt window was NOT opened
         mock_open_prompt.assert_not_called()
@@ -391,8 +392,8 @@ def test_handle_channel_response_fix_format_approved_by_permission():
         patch("vimini.chat.get_project_config", return_value="Allow"),
         patch("vimini.chat.send_agent_approval") as mock_send_approval,
     ):
-        chat.handle_channel_response(
-            "1",
+        h = chat.ChatChannelHandler("1", buffer=chat_buf)
+        h.handle_response(
             {
                 "status": "tool_use_requested",
                 "tool": "fix_format",
