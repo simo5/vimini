@@ -1,118 +1,101 @@
 import vim
 import os, subprocess, tempfile, re
 from vimini import util, context
+from vimini.handler import StreamBufferHandler, register_handler, unregister_handler
 
 # Global data store keyed by buffer number to exchange data between python calls.
 _BUFFER_DATA_STORE = {}
 # Separator line to distinguish between thoughts/summary and the actual diff
 _DIFF_SEPARATOR = "========== VIMINI DIFF START =========="
-_STREAM_JSON_STORE = {}
 
 
-def _to_str(val):
-    if isinstance(val, bytes):
-        return val.decode("utf-8", errors="replace")
-    return str(val) if val is not None else ""
-
-
-def _find_buffer(req_id):
-    try:
-        for buf in vim.buffers:
-            bid = buf.vars.get("vimini_job_id")
-            if bid is not None and _to_str(bid) == str(req_id):
-                return buf
-    except Exception:
-        pass
-    return None
-
-
-def handle_channel_response(req_id, result):
+class CodeChannelHandler(StreamBufferHandler):
     """
-    Handles channel responses from the agent server for code requests.
-    Statuses: 'thought', 'chunk', 'completed', 'error'
+    Handles channel responses from the agent server for code generation requests.
     """
-    if not isinstance(result, dict):
-        return
 
-    status = result.get("status")
-    buf = _find_buffer(req_id)
-    if buf is None:
-        return
-    buf_num = buf.number
+    def __init__(self, req_id, buffer=None):
+        super().__init__(req_id, buffer=buffer, name_hint="Vimini Code")
+        self.stream_json = ""
 
-    errs = result.get("processing_errors")
-    if errs:
-        util.append_to_buffer("**Processing Errors**\n" + "\n".join(errs))
+    def handle_response(self, result):
+        if not isinstance(result, dict):
+            return
 
-    if status == "thought":
-        if "[->G]" in buf.name:
-            buf.name = buf.name.replace("[->G]", "[<-G]")
-        thought_text = result.get("thought", "")
-        verbose = result.get("verbose")
-        if verbose is None:
-            try:
-                verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
-            except Exception:
-                verbose = True
-        if verbose and thought_text and buf_num:
-            util.append_to_buffer(buf_num, thought_text)
+        status = result.get("status")
+        buf = self.get_buffer()
+        if buf is None:
+            return
+        buf_num = buf.number
 
-    elif status == "chunk":
-        spin_map = {
-            "[->G]": "[<-G]",
-            "[<-G]": "[<-\\]",
-            "[<-\\]": "[<-|]",
-            "[<-|]": "[<-/]",
-            "[<-/]": "[<-G]",
-        }
-        for spin in spin_map.items():
-            if spin[0] in buf.name:
-                buf.name = buf.name.replace(spin[0], spin[1])
-                break
+        errs = result.get("processing_errors")
+        if errs:
+            util.write_to_buffer(
+                buf, "**Processing Errors**\n" + "\n".join(errs), append_to_last=True
+            )
 
-        chunk_text = result.get("text", "")
-        if req_id is not None:
-            _STREAM_JSON_STORE[req_id] = _STREAM_JSON_STORE.get(req_id, "") + chunk_text
+        if status == "thought":
+            thought_text = result.get("thought", "")
+            verbose = result.get("verbose")
+            self.handle_thought(thought_text, verbose=verbose)
 
-    elif status == "completed":
-        json_text = _STREAM_JSON_STORE.pop(req_id, "")
-        files_to_process = result.get("files", [])
-        diff_output = result.get("diff_output", "")
-        project_root = (
-            result.get("project_root") or util.get_git_repo_root() or os.getcwd()
-        )
+        elif status == "chunk":
+            self.update_spinner()
+            chunk_text = result.get("text", "")
+            if chunk_text:
+                self.stream_json += chunk_text
 
-        if buf_num:
-            _BUFFER_DATA_STORE[buf_num] = {
-                "files_to_apply": files_to_process,
-                "project_root": project_root,
-                "req_id": req_id,
-            }
+        elif status == "completed":
+            self.finished = True
+            files_to_process = result.get("files", [])
+            diff_output = result.get("diff_output", "")
+            project_root = (
+                result.get("project_root") or util.get_git_repo_root() or os.getcwd()
+            )
 
-            if diff_output:
-                separator_block = f"\n{_DIFF_SEPARATOR}\n"
-                util.append_to_buffer(buf_num, separator_block + diff_output)
-            else:
-                util.append_to_buffer(
-                    buf_num,
-                    "\nAI content is identical to the original files or returned empty diff.",
-                )
+            if buf_num:
+                _BUFFER_DATA_STORE[buf_num] = {
+                    "files_to_apply": files_to_process,
+                    "project_root": project_root,
+                    "req_id": self.req_id,
+                }
 
-            vim.command(f"call setbufvar({buf_num}, '&filetype', 'diff')")
+                if diff_output:
+                    separator_block = f"\n{_DIFF_SEPARATOR}\n"
+                    util.write_to_buffer(
+                        buf, separator_block + diff_output, append_to_last=True
+                    )
+                else:
+                    util.write_to_buffer(
+                        buf,
+                        "\nAI content is identical to the original files or returned empty diff.",
+                        append_to_last=True,
+                    )
 
-            if buf:
-                base_buffer_name = f"[{req_id}] Vimini Code"
+                vim.command(f"call setbufvar({buf_num}, '&filetype', 'diff')")
+
+                base_buffer_name = f"[{self.req_id}] Vimini Code"
                 try:
                     buf.name = base_buffer_name
                 except Exception:
                     pass
 
-    elif status == "error":
-        _STREAM_JSON_STORE.pop(req_id, None)
-        err_msg = result.get("error", "Unknown error")
-        if buf_num:
-            util.append_to_buffer(buf_num, f"\nError: {err_msg}")
-        util.display_message(f"Error: {err_msg}", error=True)
+        elif status == "error":
+            self.finished = True
+            err_msg = result.get("error", "Unknown error")
+            if buf_num:
+                util.write_to_buffer(
+                    buf, f"\nError: {err_msg}\n", append_to_last=True, redraw=True
+                )
+            util.display_message(f"Error: {err_msg}", error=True)
+
+    def handle_error(self, error):
+        err_msg = (
+            error.get("message", "Unknown error")
+            if isinstance(error, dict)
+            else str(error)
+        )
+        self.handle_response({"status": "error", "error": err_msg})
 
 
 def code(prompt, verbose=False):
@@ -199,6 +182,9 @@ def code(prompt, verbose=False):
 
     code_buffer.vars["vimini_project_root"] = project_root
     code_buffer.vars["vimini_job_id"] = job_id
+
+    handler = CodeChannelHandler(job_id, buffer=code_buffer)
+    register_handler(job_id, handler)
 
     util.append_job_summary(code_buffer_num, job_id, prompt, context_file_names)
 
@@ -499,7 +485,7 @@ def apply_code(job_id=None):
             # Try matching by internal buffer variable
             try:
                 bid = buf.vars.get("vimini_job_id")
-                if bid is not None and _to_str(bid) == str(job_id):
+                if bid is not None and util.to_str(bid) == str(job_id):
                     target_candidates.append(buf)
                     continue
             except Exception:
@@ -531,7 +517,7 @@ def apply_code(job_id=None):
                 try:
                     raw_bid = buf.vars.get("vimini_job_id")
                     if raw_bid is not None:
-                        bid = _to_str(raw_bid)
+                        bid = util.to_str(raw_bid)
                 except Exception:
                     pass
 
@@ -550,7 +536,7 @@ def apply_code(job_id=None):
             diff_buffer = candidates[0]
 
     # 4. Extract diff content using separator
-    project_root = _to_str(diff_buffer.vars.get("vimini_project_root", ""))
+    project_root = util.to_str(diff_buffer.vars.get("vimini_project_root", ""))
     if not project_root:
         project_root = util.get_git_repo_root() or vim.eval("getcwd()")
 
@@ -558,10 +544,10 @@ def apply_code(job_id=None):
     chat_job_id = None
     try:
         is_chat_patch = (
-            int(_to_str(diff_buffer.vars.get("vimini_is_chat_patch", 0)) or 0) == 1
+            int(util.to_str(diff_buffer.vars.get("vimini_is_chat_patch", 0)) or 0) == 1
         )
         if is_chat_patch:
-            chat_job_id = _to_str(diff_buffer.vars.get("vimini_chat_job_id", ""))
+            chat_job_id = util.to_str(diff_buffer.vars.get("vimini_chat_job_id", ""))
     except Exception:
         pass
 

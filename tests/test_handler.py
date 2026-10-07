@@ -9,6 +9,7 @@ sys.path.insert(
 from vimini import handler
 from vimini import main
 from vimini import chat
+from vimini import code
 
 
 class MockVimDictionary:
@@ -188,3 +189,54 @@ def test_chat_channel_handler_turn_persists():
         })
         assert h.is_finished()
         assert handler.get_handler("60") is None
+
+
+def test_code_channel_handler_flow():
+    handler.clear_handlers()
+    import vim
+
+    buf = MockBuffer([], number=70, name="[70] Vimini Code [->G]")
+    buf.vars["vimini_job_id"] = "70"
+
+    h = code.CodeChannelHandler("70", buffer=buf)
+    handler.register_handler("70", h)
+
+    with (
+        patch.object(vim, "buffers", [buf]),
+        patch.object(vim, "command") as mock_cmd,
+        patch("vim.eval", return_value="on"),
+    ):
+        # Send thought
+        main.handle_channel_message({
+            "id": "70",
+            "result": {"status": "thought", "thought": "Refactoring code...", "verbose": True},
+        })
+        assert any("Refactoring code..." in line for line in buf)
+        assert "[<-G]" in buf.name
+
+        # Send chunk
+        main.handle_channel_message({
+            "id": "70",
+            "result": {"status": "chunk", "text": "{\"diff\": 1}"},
+        })
+        assert h.stream_json == "{\"diff\": 1}"
+
+        # Send completed
+        main.handle_channel_message({
+            "id": "70",
+            "result": {
+                "status": "completed",
+                "files": ["main.py"],
+                "diff_output": "--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-old\n+new",
+            },
+        })
+        assert h.is_finished()
+        assert handler.get_handler("70") is None
+        assert buf.name == "[70] Vimini Code"
+        assert any(code._DIFF_SEPARATOR in line for line in buf)
+        assert any("+new" in line for line in buf)
+        assert 70 in code._BUFFER_DATA_STORE
+        assert code._BUFFER_DATA_STORE[70]["files_to_apply"] == ["main.py"]
+
+        # Clean up store
+        del code._BUFFER_DATA_STORE[70]

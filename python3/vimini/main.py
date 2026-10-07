@@ -148,10 +148,6 @@ def handle_channel_message(msg):
             from vimini.autocomplete import handle_channel_response
 
             handle_channel_response(req_id, err_result)
-        elif method == "code":
-            from vimini.code import handle_channel_response
-
-            handle_channel_response(req_id, err_result)
         elif method == "commit":
             util.display_message(f"Error: {err_msg}", error=True)
         elif method == "list_models":
@@ -163,10 +159,6 @@ def handle_channel_message(msg):
     if isinstance(result, dict):
         if method == "autocomplete":
             from vimini.autocomplete import handle_channel_response
-
-            handle_channel_response(req_id, result)
-        elif method == "code":
-            from vimini.code import handle_channel_response
 
             handle_channel_response(req_id, result)
         elif method == "setup":
