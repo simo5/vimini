@@ -191,7 +191,6 @@ def test_validate_command_with_options_and_arguments():
                 "name": "log_level",
                 "flag": "--log-level",
                 "type": "option",
-                "has_value": True,
                 "choices": ["DEBUG", "INFO", "WARNING"],
             },
             {
@@ -485,6 +484,19 @@ def test_refresh_config_buffer_options(tmp_path):
         for call_args in vim.command.call_args_list:
             cmd_str = call_args[0][0]
             assert "setbufvar" not in cmd_str
+
+
+def test_worktree_config_schema_and_defaults():
+    from vimini.common.util import PROJECT_CONFIG_SCHEMA, create_default_project_data
+
+    assert "worktree" in PROJECT_CONFIG_SCHEMA
+    schema = PROJECT_CONFIG_SCHEMA["worktree"]
+    assert schema["type"] == "string"
+    assert schema["default"] is None
+    assert ".var/vimini/worktrees" in schema["description"]
+
+    default_data = create_default_project_data()
+    assert default_data["configuration"]["worktree"] is None
 
 
 def test_finalize_json_config_uses_buffer_vars(tmp_path):

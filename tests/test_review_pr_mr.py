@@ -10,13 +10,14 @@ sys.path.insert(
 )
 
 import vimini.review as review_module
-from vimini.common.util import temporary_git_worktree
+from vimini.common.util import temporary_git_worktree, resolve_worktree_dir
 
 
 def test_review_github_pr_success(tmp_path):
     repo_path = str(tmp_path)
     with (
         patch("vimini.util.get_git_repo_root", return_value=repo_path),
+        patch("vimini.review.get_project_config", return_value=".var/vimini/worktrees"),
         patch("subprocess.run") as mock_run,
         patch("vimini.util.send_channel_request") as mock_send,
         patch("vimini.util.new_split"),
@@ -81,6 +82,7 @@ def test_review_gitlab_mr_success(tmp_path):
     repo_path = str(tmp_path)
     with (
         patch("vimini.util.get_git_repo_root", return_value=repo_path),
+        patch("vimini.review.get_project_config", return_value=".var/vimini/worktrees"),
         patch("subprocess.run") as mock_run,
         patch("vimini.util.send_channel_request") as mock_send,
         patch("vimini.util.new_split"),
@@ -172,10 +174,11 @@ def test_review_pr_fetch_failure(tmp_path):
         assert "remote not found" in err_msgs[0]
 
 
-def test_review_pr_no_worktree(tmp_path):
+def test_review_pr_without_worktree_config(tmp_path):
     repo_path = str(tmp_path)
     with (
         patch("vimini.util.get_git_repo_root", return_value=repo_path),
+        patch("vimini.review.get_project_config", return_value=None),
         patch("subprocess.run") as mock_run,
         patch("vimini.util.send_channel_request") as mock_send,
         patch("vimini.util.new_split"),
@@ -189,9 +192,7 @@ def test_review_pr_no_worktree(tmp_path):
 
         mock_run.side_effect = [mock_fetch, mock_sym, mock_mb, mock_rev, mock_show]
 
-        review_module.review(
-            "Review this PR", pr="123", remote="origin", no_worktree=True
-        )
+        review_module.review("Review this PR", pr="123", remote="origin")
 
         mock_send.assert_called_once()
         req_params = mock_send.call_args[0][0]["params"]
@@ -242,9 +243,32 @@ def test_temporary_git_worktree_none_or_empty_ref():
         assert path == "/some/path"
 
 
+def test_resolve_worktree_dir():
+    assert resolve_worktree_dir(None) is None
+    assert resolve_worktree_dir("") is None
+    expected_dot_var = os.path.realpath(os.path.expanduser("~/.var/vimini/worktrees"))
+    assert resolve_worktree_dir(".var/vimini/worktrees") == expected_dot_var
+    assert resolve_worktree_dir("~/.var/vimini/worktrees") == expected_dot_var
+    assert resolve_worktree_dir("/abs/path") == os.path.realpath("/abs/path")
+    assert resolve_worktree_dir("my_worktree", repo_path="/repo") == os.path.realpath(
+        "/repo/my_worktree"
+    )
+
+
+def test_temporary_git_worktree_not_allowed_when_not_set(tmp_path):
+    repo_dir = str(tmp_path)
+    with patch("vimini.common.util.get_project_config", return_value=None):
+        with temporary_git_worktree(repo_dir, "refs/heads/foo") as path:
+            # When worktree option is not set, worktrees are not allowed and yields repo_dir
+            assert path == repo_dir
+
+
 def test_temporary_git_worktree_failure_fallback(tmp_path):
     repo_dir = str(tmp_path)
-    with patch("subprocess.run") as mock_run:
+    with (
+        patch("subprocess.run") as mock_run,
+        patch("vimini.common.util.get_project_config", return_value="/tmp/some_wt"),
+    ):
         mock_run.return_value = MagicMock(returncode=1, stderr="fatal: not a git repo")
         with temporary_git_worktree(repo_dir, "refs/heads/foo") as path:
             assert path == repo_dir
@@ -284,12 +308,18 @@ def test_temporary_git_worktree_real_repo(tmp_path):
     subprocess.run(["git", "checkout", "main"], cwd=str(repo_dir), check=True)
     assert not os.path.exists(str(repo_dir / "file2.txt"))
 
+    wt_base = tmp_path / "custom_worktrees"
+    wt_base.mkdir()
     # Create temporary worktree pointing to feature
     captured_worktree_path = None
-    with temporary_git_worktree(str(repo_dir), "feature") as worktree_path:
+    with temporary_git_worktree(
+        str(repo_dir), "feature", worktree_dir=str(wt_base)
+    ) as worktree_path:
         captured_worktree_path = worktree_path
         assert os.path.isdir(worktree_path)
         assert worktree_path != str(repo_dir)
+        # Worktree path must be inside wt_base (not in /tmp)
+        assert str(wt_base) in worktree_path
         # Feature file must be present in the worktree
         assert os.path.exists(os.path.join(worktree_path, "file2.txt"))
         # Main directory must remain untouched without feature file

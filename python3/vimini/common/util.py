@@ -60,6 +60,12 @@ PROJECT_CONFIG_SCHEMA = {
         "default": False,
         "type": "boolean",
     },
+    "worktree": {
+        "label": "Worktree Directory",
+        "description": "Path where temporary git worktrees can be created (e.g. .var/vimini/worktrees). If not set, worktrees are not allowed",
+        "default": None,
+        "type": "string",
+    },
 }
 
 
@@ -623,7 +629,9 @@ def validate_tool_call(tool_label, args_dict, tool_config):
 
             if item["type"] == "option":
                 flag = item["flag"]
-                has_value = item["has_value"]
+                has_value = item.get("has_value")
+                if has_value is None:
+                    has_value = bool(item.get("choices") or item.get("takes_value"))
                 if not has_value:
                     if isinstance(val, bool):
                         if val:
@@ -884,19 +892,63 @@ def generate_diff_for_file(file_path, file_content, project_root=None):
     return diff_text, None
 
 
-@contextlib.contextmanager
-def temporary_git_worktree(repo_path, ref):
+def resolve_worktree_dir(worktree_base, repo_path=None):
     """
-    Creates a temporary git worktree detached at `ref` in a temporary directory.
+    Resolves the base directory for git worktrees.
+    Supports:
+    - '~/.var/vimini/worktrees' or '~/<path>' (expanded via user home)
+    - '.var/vimini/worktrees' (relative to user home)
+    - absolute paths ('/path/to/worktrees')
+    - relative paths (relative to repo_path or cwd)
+    """
+    if not worktree_base:
+        return None
+    expanded = os.path.expanduser(os.path.expandvars(str(worktree_base).strip()))
+    if not expanded:
+        return None
+    if not os.path.isabs(expanded):
+        if expanded.startswith(".var"):
+            expanded = os.path.join(os.path.expanduser("~"), expanded)
+        elif repo_path:
+            expanded = os.path.join(repo_path, expanded)
+        else:
+            expanded = os.path.abspath(expanded)
+    return os.path.realpath(expanded)
+
+
+@contextlib.contextmanager
+def temporary_git_worktree(repo_path, ref, worktree_dir=None):
+    """
+    Creates a temporary git worktree detached at `ref` in the configured worktree directory.
     Yields the path to the temporary worktree.
     Cleans up the worktree and temporary directory on exit.
     If ref is None or empty, or if worktree creation fails, yields repo_path as fallback.
+    If worktree_dir is not configured or set, worktrees are not allowed and yields repo_path.
     """
     if not ref or not repo_path or not os.path.exists(repo_path):
         yield repo_path
         return
 
-    temp_dir = tempfile.mkdtemp(prefix="vimini_worktree_")
+    worktree_option = worktree_dir
+    if worktree_option is None:
+        worktree_option = get_project_config("worktree", start_dir=repo_path)
+
+    if not worktree_option or not str(worktree_option).strip():
+        logger = logging.getLogger("vimini_agent")
+        logger.info(
+            "Worktrees are not allowed (no worktree path configured). Falling back to repository root."
+        )
+        yield repo_path
+        return
+
+    resolved_base_dir = resolve_worktree_dir(worktree_option, repo_path)
+    if not resolved_base_dir:
+        yield repo_path
+        return
+
+    os.makedirs(resolved_base_dir, exist_ok=True)
+
+    temp_dir = tempfile.mkdtemp(prefix="vimini_worktree_", dir=resolved_base_dir)
     worktree_path = os.path.join(temp_dir, "workspace")
     created = False
     try:

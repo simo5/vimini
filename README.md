@@ -127,15 +127,16 @@ customizations.
     let g:context_files = ['package.json', 'src/main.js', 'src/utils/api.js']
     ```
 
-8.  **Build and Test Commands**:
-    Configure per-project settings such as whether compilation is needed and shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`). Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
+8.  **Project Configuration (`ViminiConfig`)**:
+    Configure per-project settings such as whether compilation is needed, shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`), and the directory path where temporary git worktrees can be created. Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
     ```json
     {
       "version": "0.1",
       "configuration": {
         "build-command": "make -j$(nproc)",
         "test-command": "pytest",
-        "compilation-needed": false
+        "compilation-needed": false,
+        "worktree": ".var/vimini/worktrees"
       },
       "files": []
     }
@@ -238,7 +239,7 @@ When you are done, simply close the window (e.g., with `:q`). A popup will ask y
 
 ### `:ViminiConfig`
 
-Opens an interactive configuration editor in a new split window to configure project-specific settings (such as `build-command` and `test-command`).
+Opens an interactive configuration editor in a new split window to configure project-specific settings (such as `build-command`, `test-command`, and `worktree`).
 
 **How to use the configuration manager:**
 *   Move the cursor to any configuration option line.
@@ -251,7 +252,7 @@ Opens an interactive configuration editor in a new split window to configure pro
 :ViminiConfig
 ```
 
-### `:ViminiReview [-c <git_objects>] [--pr <number>] [--mr <number>] [--remote <remote>] [--security] [--save[=<path>]] [--no-worktree] [{prompt}]`
+### `:ViminiReview [-c <git_objects>] [--pr <number>] [--mr <number>] [--remote <remote>] [--security] [--save[=<path>]] [{prompt}]`
 
 Sends content to the Gemini model for a code review. This command has three main modes:
 
@@ -268,7 +269,8 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 *   `--remote <remote>`: Remote git repository to fetch PR/MR from (defaults to `origin`).
 *   `--security`: Narrows the scope of the review to focus exclusively on security vulnerabilities, insecure coding practices, and potential attack vectors.
 *   `--save[=<path>]`: Used with `-c`, `--pr`, or `--mr`. This option reviews each commit in the given range individually and saves each review to a separate file. If a path is provided (e.g., `--save=./reviews`), files are saved there. Otherwise, they are saved in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
-*   `--no-worktree`: Disables creating a temporary git worktree in `/tmp` when reviewing a PR or MR. By default, Vimini creates an isolated temporary worktree so the review agent can inspect post-change files without altering your working copy or interfering with unstaged changes. For very large repositories where worktree creation is heavy or disk/IO-intensive, pass `--no-worktree` and checkout the PR/MR branch locally in your workspace instead.
+
+> **Note on Worktrees:** When reviewing PRs or MRs, Vimini creates an isolated temporary git worktree so the review agent can inspect post-change files without altering your working copy or interfering with unstaged changes. Worktrees are only created if the `worktree` option is set in `:ViminiConfig` (e.g., `.var/vimini/worktrees`). If not set (default), worktrees are not allowed and Vimini falls back to your local repository directory.
 
 **Examples:**
 
