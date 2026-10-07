@@ -68,8 +68,22 @@ def execute_function(req_id, method, params, result_queue, conn):
             models_iter = client.models.list()
             models = []
             for m in models_iter:
+                actions = (
+                    getattr(m, "supported_actions", None)
+                    or getattr(m, "supported_generation_methods", None)
+                    or []
+                )
+                if isinstance(actions, (list, tuple, set)):
+                    actions = list(actions)
+                else:
+                    actions = []
                 models.append(
-                    {"name": m.name, "display_name": getattr(m, "display_name", m.name)}
+                    {
+                        "name": m.name,
+                        "display_name": getattr(m, "display_name", m.name),
+                        "description": getattr(m, "description", "") or "",
+                        "supported_actions": actions,
+                    }
                 )
             result = {"status": "ok", "models": models}
         elif method == "commit":
