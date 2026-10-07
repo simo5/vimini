@@ -21,7 +21,12 @@ from vimini import util
 def test_categorize_model():
     # Multimodal & Text Generation
     assert (
-        categorize_model({"name": "models/gemini-2.5-flash", "supported_actions": ["generateContent"]})
+        categorize_model(
+            {
+                "name": "models/gemini-2.5-flash",
+                "supported_actions": ["generateContent"],
+            }
+        )
         == SUPPORTED_CATEGORY
     )
     assert categorize_model("gemini-1.5-pro") == SUPPORTED_CATEGORY
@@ -29,17 +34,24 @@ def test_categorize_model():
 
     # Image Generation
     assert (
-        categorize_model({"name": "models/imagen-3.0-generate-002", "supported_actions": ["generateImages"]})
+        categorize_model(
+            {
+                "name": "models/imagen-3.0-generate-002",
+                "supported_actions": ["generateImages"],
+            }
+        )
         == "Image Generation"
     )
     assert categorize_model("imagen-3.0") == "Image Generation"
     assert (
-        categorize_model({
-            "name": "models/nano-banana",
-            "display_name": "Nano Banana",
-            "description": "State-of-the-art image generation",
-            "supported_actions": ["generateContent"],
-        })
+        categorize_model(
+            {
+                "name": "models/nano-banana",
+                "display_name": "Nano Banana",
+                "description": "State-of-the-art image generation",
+                "supported_actions": ["generateContent"],
+            }
+        )
         == "Image Generation"
     )
     assert categorize_model("nano-banana") == "Image Generation"
@@ -47,46 +59,106 @@ def test_categorize_model():
     # Audio Generation
     assert categorize_model({"name": "chirp-v2"}) == "Audio Generation"
     assert categorize_model({"name": "tts-1"}) == "Audio Generation"
-    assert categorize_model({"name": "models/lyria-2", "description": "Music generation model"}) == "Audio Generation"
+    assert (
+        categorize_model(
+            {"name": "models/lyria-2", "description": "Music generation model"}
+        )
+        == "Audio Generation"
+    )
     assert categorize_model("lyria-2") == "Audio Generation"
-    assert categorize_model({"name": "models/gemini-transcribe-001", "description": "Audio transcription"}) == "Audio Generation"
+    assert (
+        categorize_model(
+            {
+                "name": "models/gemini-transcribe-001",
+                "description": "Audio transcription",
+            }
+        )
+        == "Audio Generation"
+    )
     assert categorize_model("gemini-transcribe") == "Audio Generation"
-    assert categorize_model({"name": "models/some-model", "description": "Features high quality TTS outputs"}) == "Audio Generation"
-    assert categorize_model({"name": "models/some-music-model", "description": "Generates background music"}) == "Audio Generation"
-    assert categorize_model({"name": "models/audio-processor", "description": "A model for audio processing"}) == "Audio Generation"
-    assert categorize_model({"name": "models/whisper-variant", "description": "Can transcribe speech quickly"}) == "Audio Generation"
+    assert (
+        categorize_model(
+            {
+                "name": "models/some-model",
+                "description": "Features high quality TTS outputs",
+            }
+        )
+        == "Audio Generation"
+    )
+    assert (
+        categorize_model(
+            {
+                "name": "models/some-music-model",
+                "description": "Generates background music",
+            }
+        )
+        == "Audio Generation"
+    )
+    assert (
+        categorize_model(
+            {
+                "name": "models/audio-processor",
+                "description": "A model for audio processing",
+            }
+        )
+        == "Audio Generation"
+    )
+    assert (
+        categorize_model(
+            {
+                "name": "models/whisper-variant",
+                "description": "Can transcribe speech quickly",
+            }
+        )
+        == "Audio Generation"
+    )
 
     # Video Generation
-    assert categorize_model({"name": "models/veo-2.0-generate-001"}) == "Video Generation"
+    assert (
+        categorize_model({"name": "models/veo-2.0-generate-001"}) == "Video Generation"
+    )
 
     # Embeddings
     assert (
-        categorize_model({"name": "models/text-embedding-004", "supported_actions": ["embedContent"]})
+        categorize_model(
+            {"name": "models/text-embedding-004", "supported_actions": ["embedContent"]}
+        )
         == "Embeddings"
     )
 
     # Other
     assert categorize_model({"name": "models/aqa"}) == "Other / Specialized"
     assert (
-        categorize_model({
-            "name": "models/gemini-robotics-001",
-            "description": "Embodied robotics foundation model",
-        })
+        categorize_model(
+            {
+                "name": "models/gemini-robotics-001",
+                "description": "Embodied robotics foundation model",
+            }
+        )
         == "Other / Specialized"
     )
     assert (
-        categorize_model({
-            "name": "models/gemini-2.0-flash-realtime",
-            "supported_actions": ["bidiGenerateContent"],
-        })
+        categorize_model(
+            {
+                "name": "models/gemini-2.0-flash-realtime",
+                "supported_actions": ["bidiGenerateContent"],
+            }
+        )
         == "Other / Specialized"
     )
     assert (
-        categorize_model({"name": "models/gemini-agent-exp", "supported_actions": ["generateContent"]})
+        categorize_model(
+            {
+                "name": "models/gemini-agent-exp",
+                "supported_actions": ["generateContent"],
+            }
+        )
         == "Other / Specialized"
     )
     assert (
-        categorize_model({"name": "models/custom-model", "description": "An autonomous coding agent"})
+        categorize_model(
+            {"name": "models/custom-model", "description": "An autonomous coding agent"}
+        )
         == "Other / Specialized"
     )
 
@@ -128,10 +200,13 @@ def test_select_supported_model():
 
     # Find line of gemini-2.5-flash
     target_line = next(
-        ln for ln, item in line_map.items() if item and item["name"] == "gemini-2.5-flash"
+        ln
+        for ln, item in line_map.items()
+        if item and item["name"] == "gemini-2.5-flash"
     )
 
     import vim
+
     vim.current.window.cursor = (target_line, 3)
     mock_buffer = list(buffer_lines)
     vim.current.buffer = mock_buffer
@@ -152,7 +227,9 @@ def test_select_unsupported_model_emits_error():
         {"name": "imagen-3.0", "display_name": "Imagen 3"},
     ]
     util._MODEL = "gemini-2.5-flash"
-    buffer_lines, line_map, _ = build_models_buffer(models, current_model="gemini-2.5-flash")
+    buffer_lines, line_map, _ = build_models_buffer(
+        models, current_model="gemini-2.5-flash"
+    )
     models_module._VIMINI_MODELS = models
     models_module._LINE_TO_MODEL = line_map
 

@@ -56,9 +56,13 @@ def categorize_model(model):
 
     # 1. Embeddings
     if (
-        any("embed" in a for a in actions_lower)
-        and not any("generatecontent" in a for a in actions_lower)
-    ) or "embedding" in name_lower or "embedding" in display_lower:
+        (
+            any("embed" in a for a in actions_lower)
+            and not any("generatecontent" in a for a in actions_lower)
+        )
+        or "embedding" in name_lower
+        or "embedding" in display_lower
+    ):
         return "Embeddings"
 
     # 2. Image Generation
@@ -88,14 +92,37 @@ def categorize_model(model):
         return "Video Generation"
 
     # 4. Audio & Speech Generation / Transcription
-    if any(k in desc_lower for k in ["audio", "music", "tts", "transcribe"]) or any(
-        k in desc_lower for k in [
-        "audio generation", "generate audio", "music generation",
-        "speech generation", "text-to-speech", "text to speech",
-        "speech-to-text", "speech to text", "transcription", "transcribe",
-    ]) or any(k in name_lower or k in display_lower for k in [
-        "chirp", "tts", "speech", "sound", "lyria", "transcribe", "transcription",
-    ]) or ("audio" in name_lower and not name_lower.startswith("gemini-")):
+    if (
+        any(k in desc_lower for k in ["audio", "music", "tts", "transcribe"])
+        or any(
+            k in desc_lower
+            for k in [
+                "audio generation",
+                "generate audio",
+                "music generation",
+                "speech generation",
+                "text-to-speech",
+                "text to speech",
+                "speech-to-text",
+                "speech to text",
+                "transcription",
+                "transcribe",
+            ]
+        )
+        or any(
+            k in name_lower or k in display_lower
+            for k in [
+                "chirp",
+                "tts",
+                "speech",
+                "sound",
+                "lyria",
+                "transcribe",
+                "transcription",
+            ]
+        )
+        or ("audio" in name_lower and not name_lower.startswith("gemini-"))
+    ):
         return "Audio Generation"
 
     # 5. Robotics / Embodied AI (placed under Other / Specialized)
