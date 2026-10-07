@@ -145,7 +145,7 @@ def _format_command_tree(key, val, default_desc=""):
     if not parsed:
         lines.append(f"  {key} = (not set)")
         if default_desc:
-            lines.append(_truncate_72(f"    # {default_desc}"))
+            lines.append(f"    # {default_desc}")
         return lines
 
     cmd_type = parsed.get("type")
@@ -160,13 +160,13 @@ def _format_command_tree(key, val, default_desc=""):
             != "Select one of the configured alternative commands (all-or-nothing)"
         ):
             prefix = "├── " if has_alts else "└── "
-            lines.append(_truncate_72(f"    {prefix}description: {desc}"))
+            lines.append(f"    {prefix}description: {desc}")
         for i, alt in enumerate(alts):
             prefix = "└── " if i == len(alts) - 1 else "├── "
             c = alt.get("command", "")
             d = alt.get("description", "")
             alt_str = f"{c}: {d}" if d else c
-            lines.append(_truncate_72(f"    {prefix}{alt_str}"))
+            lines.append(f"    {prefix}{alt_str}")
         return lines
 
     base_cmd = parsed.get("command", "")
@@ -177,7 +177,7 @@ def _format_command_tree(key, val, default_desc=""):
     has_options = bool(options)
     if desc:
         prefix = "├── " if has_options else "└── "
-        lines.append(_truncate_72(f"    {prefix}description: {desc}"))
+        lines.append(f"    {prefix}description: {desc}")
     elif not has_options:
         lines.append("    └── description: (none)")
 
@@ -209,7 +209,7 @@ def _format_command_tree(key, val, default_desc=""):
                 if opt_desc
                 else f"        {prefix}{spec}"
             )
-            lines.append(_truncate_72(line_str))
+            lines.append(line_str)
 
     return lines
 
@@ -242,9 +242,9 @@ def _draw_config_listing(project_name, project_root, config_data, metadata_data)
             buffer_lines.extend(_format_command_tree(key, val, desc))
         else:
             val_str = str(val) if val is not None else "(not set)"
-            buffer_lines.append(_truncate_72(f"  {key} = {val_str}"))
+            buffer_lines.append(f"  {key} = {val_str}")
             if desc:
-                buffer_lines.append(_truncate_72(f"    # {desc}"))
+                buffer_lines.append(f"    # {desc}")
 
     buffer_lines.extend(
         [
@@ -384,6 +384,10 @@ def config_command():
         buf.options["swapfile"] = False
         buf.options["modifiable"] = False
         buf.options["readonly"] = True
+        try:
+            vim.current.window.options["wrap"] = True
+        except Exception:
+            pass
         buf.vars["vimini_config_root"] = project_root
         buf.vars["vimini_config_name"] = project_name
 
@@ -934,6 +938,10 @@ def _refresh_config_buffer(win=None, line_num=None, col=None, buf_nr=None):
 
     for w in vim.windows:
         if w.buffer.number == target_buf.number:
+            try:
+                w.options["wrap"] = True
+            except Exception:
+                pass
             if line_num is not None and col is not None:
                 try:
                     w.cursor = (min(line_num, len(buffer_lines)), col)

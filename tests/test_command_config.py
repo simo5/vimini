@@ -25,6 +25,7 @@ from vimini.config import (
     load_project_config_or_prompt,
     validate_config_json_content,
     _format_command_tree,
+    _draw_config_listing,
     _truncate_72,
 )
 
@@ -331,7 +332,7 @@ def test_upgrade_project_data_normalizes_string_commands_to_dict():
     assert "description" in cfg["format-command"]
 
 
-def test_format_command_tree_and_72_char_cutoff():
+def test_format_command_tree_not_truncated():
     cmd_dict = {
         "command": "pytest",
         "description": "Run the entire project test suite with all coverage and security reporting enabled",
@@ -342,7 +343,7 @@ def test_format_command_tree_and_72_char_cutoff():
                 "type": "option",
                 "choices": ["CHOICE_A", "CHOICE_B", "CHOICE_C", "CHOICE_D"],
                 "has_value": True,
-                "description": "This is an extremely long option description designed to test line truncation at 72 characters",
+                "description": "This is an extremely long option description designed to test that descriptions are not truncated",
             },
             {
                 "name": "verbose",
@@ -362,9 +363,30 @@ def test_format_command_tree_and_72_char_cutoff():
     # Verify tree formatting characters are present
     assert any("├──" in l or "└──" in l for l in lines)
 
-    # Verify every line is cut after 72 characters
-    for line in lines:
-        assert len(line) <= 72
+    # Verify full descriptions are preserved and not truncated
+    assert "Run the entire project test suite with all coverage and security reporting enabled" in lines[1]
+    assert any("descriptions are not truncated" in line for line in lines)
+
+
+def test_truncate_72_helper():
+    assert _truncate_72("a" * 100) == "a" * 72
+    assert _truncate_72("short") == "short"
+
+
+def test_draw_config_listing_descriptions_not_truncated():
+    config_data = {
+        "build-command": None,
+        "worktree": None,
+    }
+    metadata = {"files": [], "version": "0.1"}
+    lines = _draw_config_listing("test_proj", "/test/path", config_data, metadata)
+    full_text = "\n".join(lines)
+    # Ensure worktree description is present and not truncated
+    assert "Directory for temporary worktrees (e.g. .var/vimini/worktrees)" in full_text
+    # Ensure build-command description is present and not truncated
+    assert "Command to compile or build the project" in full_text
+    # Ensure compilation-needed description is present and not truncated
+    assert "Whether compilation is required (true/false, default false)" in full_text
 
 
 def test_validate_config_json_content():
