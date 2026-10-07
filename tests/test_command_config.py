@@ -382,7 +382,7 @@ def test_draw_config_listing_descriptions_not_truncated():
     lines = _draw_config_listing("test_proj", "/test/path", config_data, metadata)
     full_text = "\n".join(lines)
     # Ensure worktree description is present and not truncated
-    assert "Directory for temporary worktrees (e.g. .var/vimini/worktrees)" in full_text
+    assert "Directory for temporary worktrees (e.g. ~/.var/vimini/worktree)" in full_text
     # Ensure build-command description is present and not truncated
     assert "Command to compile or build the project" in full_text
     # Ensure compilation-needed description is present and not truncated
@@ -515,7 +515,7 @@ def test_worktree_config_schema_and_defaults():
     schema = PROJECT_CONFIG_SCHEMA["worktree"]
     assert schema["type"] == "string"
     assert schema["default"] is None
-    assert ".var/vimini/worktrees" in schema["description"]
+    assert "~/.var/vimini/worktree" in schema["description"]
 
     default_data = create_default_project_data()
     assert default_data["configuration"]["worktree"] is None

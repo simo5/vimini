@@ -136,7 +136,7 @@ customizations.
         "build-command": "make -j$(nproc)",
         "test-command": "pytest",
         "compilation-needed": false,
-        "worktree": ".var/vimini/worktrees"
+        "worktree": "~/.var/vimini/worktree"
       },
       "files": []
     }
@@ -270,7 +270,7 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 *   `--security`: Narrows the scope of the review to focus exclusively on security vulnerabilities, insecure coding practices, and potential attack vectors.
 *   `--save[=<path>]`: Used with `-c`, `--pr`, or `--mr`. This option reviews each commit in the given range individually and saves each review to a separate file. If a path is provided (e.g., `--save=./reviews`), files are saved there. Otherwise, they are saved in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
 
-> **Note on Worktrees:** When reviewing PRs or MRs, Vimini creates an isolated temporary git worktree so the review agent can inspect post-change files without altering your working copy or interfering with unstaged changes. Worktrees are only created if the `worktree` option is set in `:ViminiConfig` (e.g., `.var/vimini/worktrees`). If not set (default), worktrees are not allowed and Vimini falls back to your local repository directory.
+> **Note on Worktrees:** When reviewing PRs or MRs, Vimini creates an isolated temporary git worktree so the review agent can inspect post-change files without altering your working copy or interfering with unstaged changes. Worktrees are only created if the `worktree` option is set in `:ViminiConfig` (e.g., `~/.var/vimini/worktree`). If not set (default), worktrees are not allowed and Vimini falls back to your local repository directory.
 
 **Examples:**
 

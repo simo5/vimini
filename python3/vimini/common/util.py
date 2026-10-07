@@ -62,7 +62,7 @@ PROJECT_CONFIG_SCHEMA = {
     },
     "worktree": {
         "label": "Worktree Directory",
-        "description": "Directory for temporary worktrees (e.g. .var/vimini/worktrees)",
+        "description": "Directory for temporary worktrees (e.g. ~/.var/vimini/worktree)",
         "default": None,
         "type": "string",
     },
@@ -896,10 +896,9 @@ def resolve_worktree_dir(worktree_base, repo_path=None):
     """
     Resolves the base directory for git worktrees.
     Supports:
-    - '~/.var/vimini/worktrees' or '~/<path>' (expanded via user home)
-    - '.var/vimini/worktrees' (relative to user home)
+    - '~/.var/vimini/worktree' or '~/<path>' (expanded via user home)
     - absolute paths ('/path/to/worktrees')
-    - relative paths (relative to repo_path or cwd)
+    - relative paths when repo_path is provided (relative to repo_path)
     """
     if not worktree_base:
         return None
@@ -907,12 +906,10 @@ def resolve_worktree_dir(worktree_base, repo_path=None):
     if not expanded:
         return None
     if not os.path.isabs(expanded):
-        if expanded.startswith(".var"):
-            expanded = os.path.join(os.path.expanduser("~"), expanded)
-        elif repo_path:
+        if repo_path:
             expanded = os.path.join(repo_path, expanded)
-        else:
-            expanded = os.path.abspath(expanded)
+    if not os.path.isabs(expanded):
+        return None
     return os.path.realpath(expanded)
 
 

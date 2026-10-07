@@ -246,13 +246,21 @@ def test_temporary_git_worktree_none_or_empty_ref():
 def test_resolve_worktree_dir():
     assert resolve_worktree_dir(None) is None
     assert resolve_worktree_dir("") is None
-    expected_dot_var = os.path.realpath(os.path.expanduser("~/.var/vimini/worktrees"))
-    assert resolve_worktree_dir(".var/vimini/worktrees") == expected_dot_var
-    assert resolve_worktree_dir("~/.var/vimini/worktrees") == expected_dot_var
-    assert resolve_worktree_dir("/abs/path") == os.path.realpath("/abs/path")
+    # Arbitrary dir starting with .var without repo_path is no longer expanded to ~/.var
+    assert resolve_worktree_dir(".var/vimini/worktrees") is None
+    assert resolve_worktree_dir(".var/vimini/worktree") is None
+    # Relative paths without repo_path return None
+    assert resolve_worktree_dir("my_worktree") is None
+    # Relative paths with repo_path are supported
     assert resolve_worktree_dir("my_worktree", repo_path="/repo") == os.path.realpath(
         "/repo/my_worktree"
     )
+    assert resolve_worktree_dir(".var/vimini/worktree", repo_path="/repo") == os.path.realpath(
+        "/repo/.var/vimini/worktree"
+    )
+    expected_worktree = os.path.realpath(os.path.expanduser("~/.var/vimini/worktree"))
+    assert resolve_worktree_dir("~/.var/vimini/worktree") == expected_worktree
+    assert resolve_worktree_dir("/abs/path") == os.path.realpath("/abs/path")
 
 
 def test_temporary_git_worktree_not_allowed_when_not_set(tmp_path):
