@@ -5,6 +5,7 @@ import shlex
 import os
 import re
 from vimini import util
+from vimini.common.util import get_project_config
 
 _STREAM_FIRST_CHUNK_MAP = set()
 
@@ -138,7 +139,6 @@ def review(
     pr=None,
     mr=None,
     remote="origin",
-    no_worktree=False,
 ):
     """
     Sends content to the Gemini API for a code review via the background agent.
@@ -146,7 +146,7 @@ def review(
     If 'save' is True and 'git_objects' are provided, saves reviews to 'save_path'.
     """
     util.log_info(
-        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, save={save}, save_path='{save_path}', pr={pr}, mr={mr}, remote='{remote}', no_worktree={no_worktree})"
+        f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, save={save}, save_path='{save_path}', pr={pr}, mr={mr}, remote='{remote}')"
     )
     try:
         # Validate remote
@@ -192,7 +192,11 @@ def review(
                 local_ref = f"refs/vimini/mr/{mr_id}"
                 service_desc = f"GitLab MR #{mr_id}"
 
-            if not no_worktree:
+            project_name = util.get_git_repo_name() or os.path.basename(repo_path)
+            worktree_config = get_project_config(
+                "worktree", project_name=project_name, start_dir=repo_path
+            )
+            if worktree_config and str(worktree_config).strip():
                 worktree_ref = local_ref
 
             util.display_message(f"Fetching {service_desc} from {remote}...")
