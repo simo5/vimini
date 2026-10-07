@@ -9,6 +9,8 @@ from vimini.common.genai import get_client, create_generation_config
 from vimini.common.util import (
     list_directory,
     read_file,
+    list_git_commits,
+    get_git_commit,
     get_project_root,
     temporary_git_worktree,
 )
@@ -45,6 +47,49 @@ review_tools = [
                     },
                 ),
             ),
+            types.FunctionDeclaration(
+                name="list_git_commits",
+                description="Lists recent git commits in the repository. Use this to inspect history, identify commit IDs, or track changes to specific files.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "max_count": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Maximum number of commits to list (default 10, max 50).",
+                        ),
+                        "revision": types.Schema(
+                            type=types.Type.STRING,
+                            description="Git revision, branch, or range to list commits from (e.g. 'HEAD', 'main', 'HEAD~5..HEAD'). Defaults to 'HEAD'.",
+                        ),
+                        "file_path": types.Schema(
+                            type=types.Type.STRING,
+                            description="Optional relative file or directory path to filter commits affecting that path.",
+                        ),
+                    },
+                ),
+            ),
+            types.FunctionDeclaration(
+                name="get_git_commit",
+                description="Retrieves the commit message and diff/patch for a specific git commit ID. Use this to inspect what changed in a previous commit.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "commit_id": types.Schema(
+                            type=types.Type.STRING,
+                            description="The commit hash, short hash, or ref to inspect (e.g., 'a1b2c3d', 'HEAD~1').",
+                        ),
+                        "file_path": types.Schema(
+                            type=types.Type.STRING,
+                            description="Optional relative file path to view diff for that specific file only.",
+                        ),
+                        "stat_only": types.Schema(
+                            type=types.Type.BOOLEAN,
+                            description="If true, returns only the diffstat instead of the full patch diff. Useful for large commits.",
+                        ),
+                    },
+                    required=["commit_id"],
+                ),
+            ),
         ]
     )
 ]
@@ -71,9 +116,9 @@ def _construct_review_prompt(
         )
 
     tools_guideline = (
-        "You have access to `read_file` and `list_directory` tools to inspect project files "
-        "and directory structure if you need additional context to perform an accurate review. "
-        "Directory listing and file reading should be used sparingly and only as needed. "
+        "You have access to `read_file`, `list_directory`, `list_git_commits`, and `get_git_commit` tools to inspect project files, "
+        "directory structure, and git commit history if you need additional context to perform an accurate review. "
+        "Directory listing, file reading, and commit inspections should be used sparingly and only as needed. "
         "There is a maximum limit of 15 tool iterations, so inspect only essential files and conclude your review promptly."
     )
 
@@ -214,6 +259,26 @@ def _execute_review_stream(
                 elif tool_call.name == "read_file":
                     filepath = args_dict.get("filepath", "")
                     raw_result = read_file(filepath, project_root=project_root)
+                elif tool_call.name == "list_git_commits":
+                    max_count = args_dict.get("max_count", 10)
+                    revision = args_dict.get("revision", "HEAD")
+                    file_path = args_dict.get("file_path")
+                    raw_result = list_git_commits(
+                        project_root=project_root,
+                        max_count=max_count,
+                        revision=revision,
+                        file_path=file_path,
+                    )
+                elif tool_call.name == "get_git_commit":
+                    commit_id = args_dict.get("commit_id", "")
+                    file_path = args_dict.get("file_path")
+                    stat_only = bool(args_dict.get("stat_only", False))
+                    raw_result = get_git_commit(
+                        commit_id=commit_id,
+                        project_root=project_root,
+                        file_path=file_path,
+                        stat_only=stat_only,
+                    )
                 else:
                     raw_result = f"Unknown tool: {tool_call.name}"
             except Exception as e:

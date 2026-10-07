@@ -709,7 +709,7 @@ class ChatChannelHandler(StreamBufferHandler):
 
             _write_to_buffer(buffer, req_line, append_to_last=True)
 
-            if tool in ("list_directory", "read_file"):
+            if tool in ("list_directory", "read_file", "list_git_commits", "get_git_commit"):
                 send_agent_approval(True, self.req_id)
             elif tool == "apply_patch":
                 _open_patch_buffer(temp_file, self.req_id)

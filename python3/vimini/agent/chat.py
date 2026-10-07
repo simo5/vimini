@@ -17,6 +17,8 @@ from vimini.common.util import (
     list_directory,
     parse_tool_command_config,
     read_file,
+    list_git_commits,
+    get_git_commit,
     generate_diff_for_file,
 )
 from vimini.agent.comms import CommSession
@@ -223,6 +225,49 @@ def get_agent_tools(project_root=None):
                                 description='The relative path to the directory to list. Defaults to "." for the current directory.',
                             )
                         },
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="list_git_commits",
+                    description="Lists recent git commits in the repository. Use this to inspect history, identify commit IDs, or track changes to specific files.",
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "max_count": types.Schema(
+                                type=types.Type.INTEGER,
+                                description="Maximum number of commits to list (default 10, max 50).",
+                            ),
+                            "revision": types.Schema(
+                                type=types.Type.STRING,
+                                description="Git revision, branch, or range to list commits from (e.g. 'HEAD', 'main', 'HEAD~5..HEAD'). Defaults to 'HEAD'.",
+                            ),
+                            "file_path": types.Schema(
+                                type=types.Type.STRING,
+                                description="Optional relative file or directory path to filter commits affecting that path.",
+                            ),
+                        },
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="get_git_commit",
+                    description="Retrieves the commit message and diff/patch for a specific git commit ID. Use this to inspect what changed in a previous commit.",
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "commit_id": types.Schema(
+                                type=types.Type.STRING,
+                                description="The commit hash, short hash, or ref to inspect (e.g., 'a1b2c3d', 'HEAD~1').",
+                            ),
+                            "file_path": types.Schema(
+                                type=types.Type.STRING,
+                                description="Optional relative file path to view diff for that specific file only.",
+                            ),
+                            "stat_only": types.Schema(
+                                type=types.Type.BOOLEAN,
+                                description="If true, returns only the diffstat instead of the full patch diff. Useful for large commits.",
+                            ),
+                        },
+                        required=["commit_id"],
                     ),
                 ),
                 types.FunctionDeclaration(
@@ -532,7 +577,7 @@ class ChatSession(CommSession):
                     "Your identity is Vimini, and you are integrated into the vimini project. "
                     "Follow these guidelines for optimal performance ONLY when "
                     "acting as a coding agent:\n"
-                    "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory` and `read_file` tools to understand the repository structure and exact file contents. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
+                    "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory`, `read_file`, `list_git_commits`, and `get_git_commit` tools to understand the repository structure, code contents, and previous git commit history. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
                     "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` (strongly preferred, as a unified diff will be generated locally to show the user) or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
                     "3. **Patch Reliability:** `apply_patch` should ideally be the final action in your response. If a patch fails due to a formatting or context mismatch, do not blindly retry the exact same patch. Re-read the file to obtain up-to-date content and send the entire file contents using `file_path` and `file_content`.\n"
                     f"{build_test_guideline}\n"
@@ -898,6 +943,46 @@ class ChatSession(CommSession):
                         if is_approved:
                             filepath = args_dict.get("filepath", "")
                             result_text = read_file(filepath, self.project_root)
+                        else:
+                            result_text = (
+                                "Tool execution cancelled or rejected by user."
+                            )
+                        responses.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, response={"result": result_text}
+                            )
+                        )
+                    elif tool_call.name == "list_git_commits":
+                        if is_approved:
+                            max_count = args_dict.get("max_count", 10)
+                            revision = args_dict.get("revision", "HEAD")
+                            file_path = args_dict.get("file_path")
+                            result_text = list_git_commits(
+                                project_root=self.project_root,
+                                max_count=max_count,
+                                revision=revision,
+                                file_path=file_path,
+                            )
+                        else:
+                            result_text = (
+                                "Tool execution cancelled or rejected by user."
+                            )
+                        responses.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, response={"result": result_text}
+                            )
+                        )
+                    elif tool_call.name == "get_git_commit":
+                        if is_approved:
+                            commit_id = args_dict.get("commit_id", "")
+                            file_path = args_dict.get("file_path")
+                            stat_only = bool(args_dict.get("stat_only", False))
+                            result_text = get_git_commit(
+                                commit_id=commit_id,
+                                project_root=self.project_root,
+                                file_path=file_path,
+                                stat_only=stat_only,
+                            )
                         else:
                             result_text = (
                                 "Tool execution cancelled or rejected by user."

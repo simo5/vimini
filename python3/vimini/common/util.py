@@ -822,6 +822,124 @@ def read_file(filepath, project_root=None):
         return f"Error reading file: {e}"
 
 
+def list_git_commits(project_root=None, max_count=10, revision="HEAD", file_path=None):
+    """
+    Lists recent git commits in the repository.
+    Returns formatted string with commit hashes, authors, dates, and subjects.
+    """
+    repo_path = get_git_repo_root(project_root)
+    if not repo_path:
+        return "Error: Not inside a git repository."
+
+    try:
+        max_count = int(max_count)
+        if max_count < 1:
+            max_count = 10
+        elif max_count > 50:
+            max_count = 50
+    except (ValueError, TypeError):
+        max_count = 10
+
+    if revision is None or str(revision).strip() == "":
+        revision = "HEAD"
+    else:
+        revision = str(revision).strip()
+
+    if revision.startswith("-"):
+        return "Security error: Git options starting with '-' are not allowed."
+
+    if not re.match(r"^[a-zA-Z0-9_\-\./\^~@{}]+$", revision):
+        return f"Security error: Invalid revision '{revision}'."
+
+    cmd = [
+        "git",
+        "-C",
+        repo_path,
+        "log",
+        f"-n{max_count}",
+        "--pretty=format:%h | %an | %ad | %s",
+        "--date=short",
+        revision,
+    ]
+
+    if file_path:
+        file_path_str = str(file_path).strip()
+        if file_path_str.startswith("-"):
+            return "Security error: File paths starting with '-' are not allowed."
+        cmd.extend(["--", file_path_str])
+
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if res.returncode != 0:
+            err = (res.stderr or "git log failed.").strip()
+            return f"Error listing git commits: {err}"
+        out = res.stdout.strip()
+        if not out:
+            return "No commits found."
+        return out
+    except Exception as e:
+        return f"Error executing git log: {e}"
+
+
+def get_git_commit(commit_id, project_root=None, file_path=None, stat_only=False, max_lines=1000):
+    """
+    Retrieves commit information and patch/diff for a specific commit ID.
+    """
+    repo_path = get_git_repo_root(project_root)
+    if not repo_path:
+        return "Error: Not inside a git repository."
+
+    if not commit_id or not str(commit_id).strip():
+        return "Error: commit_id parameter is required."
+
+    commit_id = str(commit_id).strip()
+    if commit_id.startswith("-"):
+        return "Security error: Git options starting with '-' are not allowed."
+
+    if not re.match(r"^[a-zA-Z0-9_\-\./\^~@{}]+$", commit_id):
+        return f"Security error: Invalid commit ID '{commit_id}'."
+
+    show_cmd = ["git", "-C", repo_path, "show", "--stat"]
+    if not stat_only:
+        show_cmd.append("--patch")
+    show_cmd.append(commit_id)
+
+    if file_path:
+        file_path_str = str(file_path).strip()
+        if file_path_str.startswith("-"):
+            return "Security error: File paths starting with '-' are not allowed."
+        show_cmd.extend(["--", file_path_str])
+
+    try:
+        res = subprocess.run(
+            show_cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if res.returncode != 0:
+            err = (res.stderr or "git show failed.").strip()
+            return f"Error retrieving commit '{commit_id}': {err}"
+
+        output = res.stdout
+        lines = output.splitlines()
+        if max_lines and len(lines) > max_lines:
+            truncated = "\n".join(lines[:max_lines])
+            return f"{truncated}\n\n[Output truncated at {max_lines} lines (total {len(lines)} lines). Specify file_path or set stat_only=True to inspect specific changes.]"
+        return output
+    except Exception as e:
+        return f"Error executing git show: {e}"
+
+
 def generate_diff_for_file(file_path, file_content, project_root=None):
     """
     Generates a unified diff comparing the existing file on disk with file_content.
