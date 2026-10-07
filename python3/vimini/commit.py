@@ -187,9 +187,7 @@ def handle_commit_response(req_id, result):
     vim.command("redraw!")
 
 
-def commit(
-    assistant=True, regenerate=False, amend=False, refinement=None
-):
+def commit(assistant=True, regenerate=False, amend=False, refinement=None):
     """
     Generates a commit message. By default, it stages all changes and creates
     a new commit. If `regenerate` is True, it regenerates the message for the
