@@ -11,20 +11,11 @@ _STREAM_FIRST_CHUNK_MAP = set()
 
 
 def _to_str(val):
-    if isinstance(val, bytes):
-        return val.decode("utf-8", errors="replace")
-    return str(val) if val is not None else ""
+    return util.to_str(val)
 
 
 def _find_buffer(req_id):
-    try:
-        for buf in vim.buffers:
-            bid = buf.vars.get("vimini_job_id")
-            if bid is not None and _to_str(bid) == str(req_id):
-                return buf
-    except Exception:
-        pass
-    return None
+    return util.find_buffer_by_job_id(req_id, name_hint="Vimini Review")
 
 
 def handle_channel_response(req_id, result):
@@ -49,63 +40,81 @@ def handle_channel_response(req_id, result):
         util.display_message(msg, history=True)
         return
 
-    buf = _find_buffer(req_id)
-    buf_num = buf.number if buf else None
+    verbose = result.get("verbose")
+    if verbose is None:
+        try:
+            verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
+        except Exception:
+            verbose = True
+
+    buf = util.find_buffer_by_job_id(req_id, name_hint="Vimini Review")
+    if buf is None:
+        return
 
     if status == "thought":
-        if buf:
-            try:
-                if "[->G?]" in buf.name:
-                    buf.name = buf.name.replace("[->G?]", "[<-G]")
-                elif "[->G]" in buf.name:
-                    buf.name = buf.name.replace("[->G]", "[<-G]")
-            except Exception:
-                pass
+        try:
+            if "[->G?]" in buf.name:
+                buf.name = buf.name.replace("[->G?]", "[<-G]")
+            elif "[->G]" in buf.name:
+                buf.name = buf.name.replace("[->G]", "[<-G]")
+        except Exception:
+            pass
         thought_text = result.get("thought", "")
-        verbose = result.get("verbose")
-        if verbose is None:
-            try:
-                verbose = vim.eval("get(g:, 'vimini_thinking', 'on')") == "on"
-            except Exception:
-                verbose = True
-        if verbose and thought_text and buf_num:
-            util.append_to_buffer(buf_num, thought_text)
+        if verbose and thought_text:
+            util.write_to_buffer(buf, thought_text, append_to_last=True, redraw=True)
+        else:
+            vim.command("redraw")
 
-    elif status in ("chunk", "tool_use_requested"):
-        if buf:
-            try:
-                spin_map = {
-                    "[->G?]": "[<-G]",
-                    "[->G]": "[<-G]",
-                    "[<-G]": "[<-\\]",
-                    "[<-\\]": "[<-|]",
-                    "[<-|]": "[<-/]",
-                    "[<-/]": "[<-G]",
-                }
-                for spin in spin_map.items():
-                    if spin[0] in buf.name:
-                        buf.name = buf.name.replace(spin[0], spin[1])
-                        break
-            except Exception:
-                pass
+    elif status == "tool_use_requested":
+        text = result.get("text")
+        if text:
+            req_line = text
+        else:
+            tool = result.get("tool", "")
+            args = result.get("args")
+            if args:
+                args_str = json.dumps(args) if isinstance(args, dict) else str(args)
+                req_line = f"\n[Agent requested tool execution: {tool}({args_str})]\n"
+            else:
+                cmd = result.get("command")
+                cmd_str = f": {cmd}" if cmd else ""
+                req_line = f"\nAgent Requested: {tool}{cmd_str}\n"
+        util.write_to_buffer(buf, req_line, append_to_last=True, redraw=True)
 
-        if buf_num:
-            if req_id not in _STREAM_FIRST_CHUNK_MAP:
-                _STREAM_FIRST_CHUNK_MAP.add(req_id)
-                util.append_to_buffer(buf_num, "\n========== REVIEW START ==========\n")
+    elif status == "chunk":
+        try:
+            spin_map = {
+                "[->G?]": "[<-G]",
+                "[->G]": "[<-G]",
+                "[<-G]": "[<-\\]",
+                "[<-\\]": "[<-|]",
+                "[<-|]": "[<-/]",
+                "[<-/]": "[<-G]",
+            }
+            for spin in spin_map.items():
+                if spin[0] in buf.name:
+                    buf.name = buf.name.replace(spin[0], spin[1])
+                    break
+        except Exception:
+            pass
 
-            chunk_text = result.get("text", "")
-            if chunk_text:
-                util.append_to_buffer(buf_num, chunk_text)
+        if req_id not in _STREAM_FIRST_CHUNK_MAP:
+            _STREAM_FIRST_CHUNK_MAP.add(req_id)
+            util.write_to_buffer(
+                buf, "\n========== REVIEW START ==========\n", append_to_last=True
+            )
+
+        chunk_text = result.get("text", "")
+        if chunk_text:
+            util.write_to_buffer(buf, chunk_text, append_to_last=True, redraw=True)
 
     elif status in ("completed", "terminated"):
         _STREAM_FIRST_CHUNK_MAP.discard(req_id)
-        if buf:
-            base_buffer_name = f"[{req_id}] Vimini Review"
-            try:
-                buf.name = base_buffer_name
-            except Exception:
-                pass
+        base_buffer_name = f"[{req_id}] Vimini Review"
+        try:
+            buf.name = base_buffer_name
+        except Exception:
+            pass
         if status == "completed":
             util.display_message("Review completed.")
         else:
@@ -114,8 +123,7 @@ def handle_channel_response(req_id, result):
     elif status == "error":
         _STREAM_FIRST_CHUNK_MAP.discard(req_id)
         err_msg = result.get("error", "Unknown error")
-        if buf_num:
-            util.append_to_buffer(buf_num, f"\nError: {err_msg}")
+        util.write_to_buffer(buf, f"\nError: {err_msg}\n", append_to_last=True, redraw=True)
         util.display_message(f"Error: {err_msg}", error=True)
 
 
@@ -377,6 +385,7 @@ def review(
                 "method": "review",
                 "params": {
                     "batch": True,
+                    "save": True,
                     "prompt": prompt,
                     "security_focus": security_focus,
                     "verbose": verbose,
@@ -461,8 +470,10 @@ def review(
         review_buffer = vim.current.buffer
         review_buf_num = getattr(review_buffer, "number", 1) or 1
 
-        if hasattr(review_buffer, "vars") and isinstance(review_buffer.vars, dict):
+        try:
             review_buffer.vars["vimini_job_id"] = str(job_id)
+        except Exception as e:
+            util.log_info(f"Error setting vimini_job_id on review buffer: {e}")
 
         util.append_job_summary(review_buf_num, job_id, prompt, [])
 
@@ -483,6 +494,7 @@ def review(
             "method": "review",
             "params": {
                 "batch": False,
+                "save": False,
                 "prompt": prompt,
                 "review_content": review_content,
                 "content_source_description": content_source_description,

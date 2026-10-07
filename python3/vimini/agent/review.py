@@ -89,54 +89,87 @@ def _construct_review_prompt(
 
 
 def _execute_review_stream(
+    session,
+    req_id,
+    conn,
     chat_session,
     initial_prompt,
     project_root,
-    on_chunk=None,
-    on_thought=None,
-    on_tool_call=None,
-    on_tool_result=None,
-    check_running=None,
+    verbose=False,
+    save=False,
+    commit_sha=None,
     max_turns=15,
 ):
     """
     Executes a review stream loop, handling tool calls (read_file, list_directory)
     automatically until completion or reaching max_turns limit.
+    Output batching is done only when save is True, otherwise thoughts and text chunks
+    are streamed directly to the client.
     """
+    accumulator = []
     current_input = initial_prompt
     turn = 0
     while True:
-        if check_running and not check_running():
+        if not session._check_running(req_id, conn):
             break
 
         response_stream = chat_session.send_message_stream(current_input)
         pending_tool_calls = []
 
         for chunk in response_stream:
-            if check_running and not check_running():
+            if not session._check_running(req_id, conn):
                 break
 
-            if hasattr(chunk, "candidates") and chunk.candidates:
+            if (
+                hasattr(chunk, "candidates")
+                and chunk.candidates
+                and chunk.candidates[0].content
+                and chunk.candidates[0].content.parts
+            ):
                 candidate = chunk.candidates[0]
-                if candidate.content and candidate.content.parts:
-                    for part in candidate.content.parts:
-                        if hasattr(part, "function_call") and part.function_call:
-                            pending_tool_calls.append(part.function_call)
-                        elif getattr(part, "thought", False):
-                            thought_chunk = getattr(part, "text", "") or ""
-                            if thought_chunk and on_thought:
-                                on_thought(thought_chunk)
-                        elif hasattr(part, "text") and part.text:
-                            if on_chunk:
-                                on_chunk(part.text)
+                modified_text = ""
+                for part in candidate.content.parts:
+                    if hasattr(part, "function_call") and part.function_call:
+                        pending_tool_calls.append(part.function_call)
+                    elif getattr(part, "thought", False):
+                        thought_chunk = getattr(part, "text", "") or ""
+                        if thought_chunk and not save:
+                            session.send_response(
+                                req_id,
+                                conn,
+                                result={
+                                    "status": "thought",
+                                    "thought": thought_chunk,
+                                    "verbose": verbose,
+                                },
+                            )
+                    elif hasattr(part, "text") and part.text:
+                        modified_text += part.text
+
+                if modified_text:
+                    if save:
+                        accumulator.append(modified_text)
+                    else:
+                        session.send_response(
+                            req_id,
+                            conn,
+                            result={"status": "chunk", "text": modified_text},
+                        )
             elif hasattr(chunk, "text"):
                 try:
-                    if chunk.text and on_chunk:
-                        on_chunk(chunk.text)
+                    if chunk.text:
+                        if save:
+                            accumulator.append(chunk.text)
+                        else:
+                            session.send_response(
+                                req_id,
+                                conn,
+                                result={"status": "chunk", "text": chunk.text},
+                            )
                 except Exception:
                     pass
 
-        if not pending_tool_calls or (check_running and not check_running()):
+        if not pending_tool_calls or not session._check_running(req_id, conn):
             break
 
         turn += 1
@@ -150,12 +183,28 @@ def _execute_review_stream(
         for tool_call in pending_tool_calls:
             args_dict = dict(tool_call.args) if tool_call.args else {}
             logger.info(f"Review tool call: {tool_call.name}({args_dict})")
-            if on_tool_call:
-                on_tool_call(tool_call.name, args_dict)
-            elif on_chunk:
-                args_str = json.dumps(args_dict) if args_dict else ""
-                on_chunk(
-                    f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n"
+            args_str = json.dumps(args_dict) if args_dict else ""
+
+            if save:
+                commit_prefix = f"Commit {commit_sha[:7]} " if commit_sha else ""
+                session.send_response(
+                    req_id,
+                    conn,
+                    result={
+                        "status": "progress",
+                        "message": f"{commit_prefix}tool call: {tool_call.name}({args_str})",
+                    },
+                )
+            else:
+                session.send_response(
+                    req_id,
+                    conn,
+                    result={
+                        "status": "tool_use_requested",
+                        "tool": tool_call.name,
+                        "args": args_dict,
+                        "text": f"\n[Agent requested tool execution: {tool_call.name}({args_str})]\n",
+                    },
                 )
 
             try:
@@ -177,9 +226,22 @@ def _execute_review_stream(
                 logger.warning(
                     f"Review tool call failed: {tool_call.name}({args_dict}) -> {raw_result}"
                 )
-
-            if on_tool_result:
-                on_tool_result(tool_call.name, args_dict, raw_result, is_error)
+                if save:
+                    err_line = (
+                        raw_result.strip().splitlines()[0]
+                        if raw_result
+                        else "Tool execution failed"
+                    )
+                    commit_prefix = f"Commit {commit_sha[:7]} " if commit_sha else ""
+                    session.send_response(
+                        req_id,
+                        conn,
+                        result={
+                            "status": "progress",
+                            "message": f"{commit_prefix}tool call failed: {err_line}",
+                            "error": True,
+                        },
+                    )
 
             if max_turns is not None and turn == max_turns:
                 note = f"\n\n[Note: Maximum tool iteration limit reached ({max_turns}). Please conclude your review now without requesting further tool calls.]"
@@ -194,6 +256,8 @@ def _execute_review_stream(
             )
 
         current_input = responses
+
+    return "".join(accumulator)
 
 
 class ReviewSession(CommSession):
@@ -238,7 +302,7 @@ class ReviewSession(CommSession):
             self.send_response(req_id, conn, result={"status": "terminated"})
             return
 
-        if params.get("batch"):
+        if params.get("batch") or params.get("save"):
             self._handle_batch_review(req_id, params, conn)
             return
 
@@ -328,52 +392,21 @@ class ReviewSession(CommSession):
                         disable_function_calling=False,
                     )
 
-                    current_review_accumulator = []
                     try:
                         chat = client.chats.create(
                             model=model, config=generation_config
                         )
 
-                        def on_batch_tool_call(tool_name, tool_args):
-                            args_str = json.dumps(tool_args) if tool_args else ""
-                            self.send_response(
-                                req_id,
-                                conn,
-                                result={
-                                    "status": "progress",
-                                    "message": f"Commit {commit_sha[:7]} tool call: {tool_name}({args_str})",
-                                },
-                            )
-
-                        def on_batch_tool_result(
-                            tool_name, tool_args, result_text, is_error
-                        ):
-                            if is_error:
-                                err_line = (
-                                    result_text.strip().splitlines()[0]
-                                    if result_text
-                                    else "Tool execution failed"
-                                )
-                                self.send_response(
-                                    req_id,
-                                    conn,
-                                    result={
-                                        "status": "progress",
-                                        "message": f"Commit {commit_sha[:7]} tool call failed: {err_line}",
-                                        "error": True,
-                                    },
-                                )
-
-                        _execute_review_stream(
+                        content = _execute_review_stream(
+                            self,
+                            req_id,
+                            conn,
                             chat,
                             prompt_text,
                             active_root,
-                            on_chunk=lambda text: current_review_accumulator.append(
-                                text
-                            ),
-                            on_tool_call=on_batch_tool_call,
-                            on_tool_result=on_batch_tool_result,
-                            check_running=lambda: self._check_running(req_id, conn),
+                            verbose=verbose,
+                            save=True,
+                            commit_sha=commit_sha,
                         )
 
                         if not self.running:
@@ -410,7 +443,6 @@ class ReviewSession(CommSession):
                         filename = f"{patch_num:04d}-{sanitized_subject}.review.txt"
                         filepath = os.path.join(target_dir, filename)
 
-                        content = "".join(current_review_accumulator)
                         with open(filepath, "w", encoding="utf-8") as f:
                             f.write(content)
 
@@ -489,38 +521,16 @@ class ReviewSession(CommSession):
 
             chat = client.chats.create(model=model, config=generation_config)
 
-            def on_chunk(text):
-                self.send_response(
-                    req_id, conn, result={"status": "chunk", "text": text}
-                )
-
-            def on_thought(thought_text):
-                self.send_response(
-                    req_id, conn, result={"status": "thought", "thought": thought_text}
-                )
-
-            def on_tool_call(tool_name, tool_args):
-                args_str = json.dumps(tool_args) if tool_args else ""
-                self.send_response(
-                    req_id,
-                    conn,
-                    result={
-                        "status": "tool_use_requested",
-                        "tool": tool_name,
-                        "args": tool_args,
-                        "text": f"\n[Agent requested tool execution: {tool_name}({args_str})]\n",
-                    },
-                )
-
             with temporary_git_worktree(project_root, worktree_ref) as active_root:
                 _execute_review_stream(
+                    self,
+                    req_id,
+                    conn,
                     chat,
                     prompt_text,
                     active_root,
-                    on_chunk=on_chunk,
-                    on_thought=on_thought,
-                    on_tool_call=on_tool_call,
-                    check_running=lambda: self._check_running(req_id, conn),
+                    verbose=verbose,
+                    save=False,
                 )
 
             if not self.running:

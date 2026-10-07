@@ -29,6 +29,141 @@ _JOB_NAMES = {}
 _JOB_CLIENTS = {}
 
 
+def to_str(val):
+    """
+    Converts a value (str, bytes, int) to a string safely.
+    """
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="replace")
+    return str(val) if val is not None else ""
+
+
+def find_buffer_by_job_id(job_id, name_hint=None):
+    """
+    Finds a buffer by its vimini_job_id variable or optional buffer name pattern.
+    """
+    if job_id is None:
+        return None
+    target_id = to_str(job_id)
+    try:
+        for buf in vim.buffers:
+            try:
+                bid = buf.vars.get("vimini_job_id")
+                if bid is not None and to_str(bid) == target_id:
+                    return buf
+            except Exception:
+                pass
+            if name_hint and buf.name and f"[{target_id}] {name_hint}" in buf.name:
+                return buf
+    except Exception:
+        pass
+    return None
+
+
+def write_to_buffer(
+    buffer_or_number,
+    content,
+    clear=False,
+    append_to_last=False,
+    lock_unmodifiable=False,
+    redraw=False,
+):
+    """
+    Safely writes or appends content to a Vim buffer.
+    Handles string or list of lines, modifiable protection,
+    window auto-scrolling across splits, and redraw.
+    """
+    if buffer_or_number is None or buffer_or_number == -1:
+        return
+
+    buf = None
+    if isinstance(buffer_or_number, int):
+        for b in vim.buffers:
+            if b.number == buffer_or_number:
+                buf = b
+                break
+    else:
+        buf = buffer_or_number
+
+    if buf is None:
+        return
+
+    was_modifiable = bool(buf.options.get("modifiable", True)) if hasattr(buf, "options") and hasattr(buf.options, "get") else True
+    try:
+        buf.options["modifiable"] = 1
+    except Exception:
+        pass
+
+    try:
+        if isinstance(content, str):
+            lines = content.split("\n")
+        elif isinstance(content, (list, tuple)):
+            lines = []
+            for item in content:
+                if isinstance(item, str):
+                    lines.extend(item.split("\n"))
+                else:
+                    lines.append(str(item))
+        else:
+            lines = [str(content)]
+
+        if clear:
+            buf[:] = lines
+        else:
+            if append_to_last:
+                if len(buf) > 0 and str(buf[-1]).startswith("Agent Requested:"):
+                    if isinstance(content, str) and not content.startswith("\n"):
+                        lines.insert(0, "")
+                if len(buf) > 0:
+                    buf[-1] += lines[0]
+                else:
+                    buf[:] = [lines[0]]
+                if len(lines) > 1:
+                    buf.append(lines[1:])
+            else:
+                if len(buf) == 1 and buf[0] == "":
+                    buf[:] = lines
+                else:
+                    buf.append(lines)
+
+        # Scroll matching window to bottom
+        _scroll_buffer_windows(buf)
+
+        if redraw:
+            vim.command("redraw")
+    except Exception as e:
+        log_info(f"Error writing to buffer {getattr(buf, 'number', '?')}: {e}")
+    finally:
+        if lock_unmodifiable or not was_modifiable:
+            try:
+                buf.options["modifiable"] = 0
+            except Exception:
+                pass
+
+
+def _scroll_buffer_windows(buf):
+    """Scrolls any window displaying the buffer to the bottom."""
+    try:
+        buf_win_nr = None
+        curr_win_nr = None
+        for w in vim.windows:
+            if getattr(w.buffer, "number", None) == buf.number:
+                buf_win_nr = getattr(w, "number", None)
+            if w == vim.current.window:
+                curr_win_nr = getattr(w, "number", None)
+
+        if buf_win_nr is not None:
+            if curr_win_nr == buf_win_nr:
+                vim.command("normal! G")
+            else:
+                vim.command(f"noautocmd {buf_win_nr}wincmd w")
+                vim.command("normal! G")
+                if curr_win_nr is not None:
+                    vim.command(f"noautocmd {curr_win_nr}wincmd w")
+    except Exception:
+        pass
+
+
 def send_channel_request(req_dict, silent=False):
     if not vim.eval(
         "exists('g:vimini_channel') && type(g:vimini_channel) == v:t_channel && ch_status(g:vimini_channel) ==# 'open'"
@@ -621,37 +756,7 @@ def create_thoughts_buffer(job_id):
 
 def append_to_buffer(buffer_number, text):
     """Helper to append text to a buffer without switching windows if possible."""
-    if buffer_number == -1:
-        return
-
-    buf = None
-    for b in vim.buffers:
-        if b.number == buffer_number:
-            buf = b
-            break
-    if not buf:
-        return
-
-    try:
-        # Split text by newlines
-        lines = text.split("\n")
-
-        # Append to the last line
-        if len(buf) > 0:
-            buf[-1] += lines[0]
-        else:
-            buf[:] = [lines[0]]
-
-        # Append remaining lines
-        if len(lines) > 1:
-            buf.append(lines[1:])
-
-        # If the buffer is in the current window, scroll to bottom
-        if vim.current.buffer.number == buffer_number:
-            vim.command("normal! G")
-            # vim.command("redraw") # Redraw handled by display_message usually
-    except Exception:
-        pass
+    write_to_buffer(buffer_number, text, clear=False, append_to_last=True, redraw=False)
 
 
 def append_job_summary(buffer_num, job_id, prompt, context_files):
