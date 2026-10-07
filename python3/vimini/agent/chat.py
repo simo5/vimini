@@ -532,7 +532,7 @@ class ChatSession(CommSession):
                     "Your identity is Vimini, and you are integrated into the vimini project. "
                     "Follow these guidelines for optimal performance ONLY when "
                     "acting as a coding agent:\n"
-                    "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory` and `read_file` tools to understand the repository structure and exact file contents. Never assume or guess code.\n"
+                    "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory` and `read_file` tools to understand the repository structure and exact file contents. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
                     "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` (strongly preferred, as a unified diff will be generated locally to show the user) or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
                     "3. **Patch Reliability:** `apply_patch` should ideally be the final action in your response. If a patch fails due to a formatting or context mismatch, do not blindly retry the exact same patch. Re-read the file to obtain up-to-date content and send the entire file contents using `file_path` and `file_content`.\n"
                     f"{build_test_guideline}\n"

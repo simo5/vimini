@@ -130,6 +130,8 @@ def test_chat_system_instruction_test_restraint():
             in system_instruction.lower()
         )
         assert "select only the specific test" in system_instruction.lower()
+        assert "agents.md" in system_instruction.lower()
+        assert "contributing.md" in system_instruction.lower()
 
 
 def test_waiting_message_format():
