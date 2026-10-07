@@ -287,12 +287,19 @@ class ReviewSession(CommSession):
                             ],
                             capture_output=True,
                             text=True,
+                            encoding="utf-8",
+                            errors="replace",
                             check=False,
                         )
 
                     cmd_show = ["git", "-C", repo_path, "show", commit_sha]
                     result_show = subprocess.run(
-                        cmd_show, capture_output=True, text=True, check=False
+                        cmd_show,
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=False,
                     )
                     if result_show.returncode != 0:
                         err = (result_show.stderr or "git show failed.").strip()
@@ -382,7 +389,12 @@ class ReviewSession(CommSession):
                             commit_sha,
                         ]
                         subject_result = subprocess.run(
-                            subject_cmd, capture_output=True, text=True, check=False
+                            subject_cmd,
+                            capture_output=True,
+                            text=True,
+                            encoding="utf-8",
+                            errors="replace",
+                            check=False,
                         )
                         subject = (
                             subject_result.stdout.strip()

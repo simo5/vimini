@@ -31,6 +31,8 @@ def _run_format_command(repo_path):
             cwd=repo_path,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if res.returncode != 0:
@@ -56,7 +58,12 @@ def _stage_changes(repo_path, message="Staging changes..."):
 
     status_cmd = ["git", "-C", repo_path, "status", "-z", "--porcelain"]
     status_result = subprocess.run(
-        status_cmd, capture_output=True, text=True, check=False
+        status_cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
     )
 
     files_to_add = []
@@ -98,7 +105,12 @@ def _stage_changes(repo_path, message="Staging changes..."):
     if files_to_add:
         add_cmd = ["git", "-C", repo_path, "add", "--"] + files_to_add
         add_result = subprocess.run(
-            add_cmd, capture_output=True, text=True, check=False
+            add_cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
 
         if add_result.returncode != 0:
@@ -217,7 +229,12 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
             # Amend the code first
             amend_code_cmd = ["git", "-C", repo_path, "commit", "--amend", "--no-edit"]
             amend_code_result = subprocess.run(
-                amend_code_cmd, capture_output=True, text=True, check=False
+                amend_code_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
             )
 
             if amend_code_result.returncode != 0:
@@ -234,7 +251,12 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
             util.display_message("Getting diff from HEAD...")
             diff_cmd = ["git", "-C", repo_path, "show", "--format="]
             diff_result = subprocess.run(
-                diff_cmd, capture_output=True, text=True, check=False
+                diff_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
             )
 
             if diff_result.returncode != 0:
@@ -245,7 +267,12 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
 
             stat_cmd = ["git", "-C", repo_path, "show", "--format=", "--stat"]
             stat_result = subprocess.run(
-                stat_cmd, capture_output=True, text=True, check=False
+                stat_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
             )
             if stat_result.returncode == 0:
                 diff_stat_output = stat_result.stdout.strip()
@@ -257,7 +284,12 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
 
             staged_diff_cmd = ["git", "-C", repo_path, "diff", "--staged"]
             staged_diff_result = subprocess.run(
-                staged_diff_cmd, capture_output=True, text=True, check=False
+                staged_diff_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
             )
 
             if staged_diff_result.returncode != 0:
@@ -271,7 +303,12 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
 
             staged_stat_cmd = ["git", "-C", repo_path, "diff", "--staged", "--stat"]
             staged_stat_result = subprocess.run(
-                staged_stat_cmd, capture_output=True, text=True, check=False
+                staged_stat_cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
             )
             if staged_stat_result.returncode == 0:
                 diff_stat_output = staged_stat_result.stdout.strip()
@@ -397,7 +434,13 @@ def finalize_commit():
 
     try:
         commit_result = subprocess.run(
-            commit_cmd, input=content, capture_output=True, text=True, check=False
+            commit_cmd,
+            input=content,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
         )
 
         if commit_result.returncode == 0:

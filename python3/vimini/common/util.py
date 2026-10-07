@@ -75,6 +75,8 @@ def get_git_repo_root(start_dir=None):
             ["git", "-C", start_dir, "rev-parse", "--show-toplevel"],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=False,
         )
         if res.returncode == 0 and res.stdout.strip():
@@ -908,7 +910,14 @@ def temporary_git_worktree(repo_path, ref):
             worktree_path,
             ref,
         ]
-        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
         if res.returncode == 0:
             created = True
             yield worktree_path
@@ -933,12 +942,16 @@ def temporary_git_worktree(repo_path, ref):
                 ],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
             subprocess.run(
                 ["git", "-C", repo_path, "worktree", "prune"],
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 check=False,
             )
         shutil.rmtree(temp_dir, ignore_errors=True)
