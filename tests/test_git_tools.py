@@ -7,7 +7,7 @@ sys.path.insert(
     0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "python3"))
 )
 
-from vimini.common.util import list_git_commits, get_git_commit
+from vimini.common.util import list_git_commits, get_git_commit, git_grep
 from vimini.agent.review import review_tools, _execute_review_stream
 from vimini.agent.chat import get_agent_tools, ChatSession
 
@@ -192,10 +192,135 @@ def test_get_git_commit_truncation():
         assert "line 100" not in res.split("\n\n[Output truncated")[0]
 
 
+def test_git_grep_not_in_git_repo():
+    with patch("vimini.common.util.get_git_repo_root", return_value=None):
+        res = git_grep("pattern", "/nonexistent")
+        assert "Error: Not inside a git repository." in res
+
+
+def test_git_grep_security_rejections():
+    with patch("vimini.common.util.get_git_repo_root", return_value="/repo"):
+        # Missing pattern
+        res = git_grep("", "/repo")
+        assert "Error: pattern parameter is required." in res
+
+        # Rejects revision starting with -
+        res = git_grep("func", "/repo", revision="-p")
+        assert "Security error" in res
+
+        # Rejects revision with invalid characters
+        res = git_grep("func", "/repo", revision="HEAD; cat /etc/passwd")
+        assert "Security error" in res
+
+        # Rejects path starting with -
+        res = git_grep("func", "/repo", path="--help")
+        assert "Security error" in res
+
+        # Rejects path with directory traversal
+        res = git_grep("func", "/repo", path="../outside")
+        assert "Security error" in res
+
+        # Rejects absolute path
+        res = git_grep("func", "/repo", path="/etc/passwd")
+        assert "Security error" in res
+
+
+def test_git_grep_success():
+    mock_output = "app.py:10:def login():\napp.py:11:    pass"
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    mock_run.stdout = mock_output
+
+    with (
+        patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
+        patch("subprocess.run", return_value=mock_run) as run_spy,
+    ):
+        res = git_grep("def login", "/repo")
+        assert res == mock_output
+        run_spy.assert_called_once()
+        cmd_called = run_spy.call_args[0][0]
+        assert cmd_called == [
+            "git",
+            "-C",
+            "/repo",
+            "grep",
+            "-n",
+            "-C2",
+            "-e",
+            "def login",
+        ]
+
+
+def test_git_grep_with_options():
+    mock_output = "HEAD:python3/app.py:5:def parse():\nHEAD:python3/app.py:6:    return True"
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    mock_run.stdout = mock_output
+
+    with (
+        patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
+        patch("subprocess.run", return_value=mock_run) as run_spy,
+    ):
+        res = git_grep(
+            pattern="def parse",
+            project_root="/repo",
+            path="python3/",
+            revision="HEAD",
+            context_lines=5,
+            ignore_case=True,
+        )
+        assert res == mock_output
+        cmd_called = run_spy.call_args[0][0]
+        assert cmd_called == [
+            "git",
+            "-C",
+            "/repo",
+            "grep",
+            "-n",
+            "-C5",
+            "-i",
+            "-e",
+            "def parse",
+            "HEAD",
+            "--",
+            "python3/",
+        ]
+
+
+def test_git_grep_no_matches():
+    mock_run = MagicMock()
+    mock_run.returncode = 1
+    mock_run.stdout = ""
+
+    with (
+        patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
+        patch("subprocess.run", return_value=mock_run),
+    ):
+        res = git_grep("nonexistent_pattern", "/repo")
+        assert res == "No matches found."
+
+
+def test_git_grep_truncation():
+    lines = [f"file.py:{i}:code line {i}" for i in range(600)]
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    mock_run.stdout = "\n".join(lines)
+
+    with (
+        patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
+        patch("subprocess.run", return_value=mock_run),
+    ):
+        res = git_grep("code", "/repo", max_lines=50)
+        assert "Output truncated at 50 lines (total 600 lines)" in res
+        assert "file.py:49:code line 49" in res
+        assert "file.py:50:code line 50" not in res.split("\n\n[Output truncated")[0]
+
+
 def test_review_tools_contain_git_tools():
     tool_names = [f.name for f in review_tools[0].function_declarations]
     assert "list_git_commits" in tool_names
     assert "get_git_commit" in tool_names
+    assert "git_grep" in tool_names
 
 
 def test_chat_tools_contain_git_tools():
@@ -203,6 +328,7 @@ def test_chat_tools_contain_git_tools():
     tool_names = [f.name for f in agent_tools[0].function_declarations]
     assert "list_git_commits" in tool_names
     assert "get_git_commit" in tool_names
+    assert "git_grep" in tool_names
 
 
 def test_execute_review_stream_git_tools():
@@ -267,6 +393,10 @@ def test_chat_channel_handler_auto_approves_git_tools():
 
         mock_approval.reset_mock()
         handler.handle_response({"status": "tool_use_requested", "tool": "get_git_commit", "args": {"commit_id": "a1b2"}})
+        mock_approval.assert_called_with(True, "chat_123")
+
+        mock_approval.reset_mock()
+        handler.handle_response({"status": "tool_use_requested", "tool": "git_grep", "args": {"pattern": "foo"}})
         mock_approval.assert_called_with(True, "chat_123")
 
 
@@ -342,3 +472,96 @@ def test_chat_session_executes_git_tools():
     ]
     assert "chunk" in statuses
     assert "done" in statuses
+
+
+def test_chat_session_executes_git_grep():
+    mock_queue = MagicMock()
+    session = ChatSession("chat_grep", mock_queue, agent_config={"model": "gemini-test"})
+    session.send_response = MagicMock()
+    session.project_root = "/repo"
+
+    mock_client = MagicMock()
+    mock_chat = MagicMock()
+    mock_client.chats.create.return_value = mock_chat
+    session.client = mock_client
+    session.session = mock_chat
+
+    # Turn 1: model requests git_grep
+    call1 = MagicMock()
+    call1.name = "git_grep"
+    call1.args = {"pattern": "def hello", "context_lines": 3, "ignore_case": True, "path": "src/"}
+    chunk1 = make_mock_chunk(function_call=call1)
+
+    # Turn 2: model completes
+    chunk2 = make_mock_chunk(text="Found hello function.")
+
+    mock_chat.send_message_stream.side_effect = [
+        [chunk1],
+        [chunk2],
+    ]
+
+    session.cmd_queue.put(("chat_grep", {"approved": True}, "conn"))
+
+    with (
+        patch("vimini.agent.chat.get_client", return_value=mock_client),
+        patch("vimini.agent.chat.git_grep", return_value="src/hello.py:1:def hello():") as mock_grep,
+    ):
+        session._process_command("chat_grep", {"prompt": "Find hello"}, "conn")
+
+    mock_grep.assert_called_once_with(
+        pattern="def hello",
+        project_root="/repo",
+        path="src/",
+        revision=None,
+        context_lines=3,
+        ignore_case=True,
+    )
+
+    sent_tools = [
+        call_args[1]["result"].get("tool")
+        for call_args in session.send_response.call_args_list
+        if call_args[1].get("result", {}).get("status") == "tool_use_requested"
+    ]
+    assert sent_tools == ["git_grep"]
+
+
+def test_execute_review_stream_git_grep():
+    mock_session = MagicMock()
+    mock_session._check_running.return_value = True
+
+    # Turn 1: model calls git_grep
+    call1 = MagicMock()
+    call1.name = "git_grep"
+    call1.args = {"pattern": "SECRET_KEY", "path": "config/"}
+    chunk1 = make_mock_chunk(function_call=call1)
+
+    # Turn 2: model finishes review
+    chunk2 = make_mock_chunk(text="Review finished after checking SECRET_KEY.")
+
+    mock_chat = MagicMock()
+    mock_chat.send_message_stream.side_effect = [
+        [chunk1],
+        [chunk2],
+    ]
+
+    with patch("vimini.agent.review.git_grep", return_value="config/settings.py:5:SECRET_KEY = 123") as mock_grep:
+        res = _execute_review_stream(
+            session=mock_session,
+            req_id="rev_grep",
+            conn="conn1",
+            chat_session=mock_chat,
+            initial_prompt="Review config",
+            project_root="/repo",
+            verbose=False,
+            save=False,
+        )
+
+    assert res == ""
+    mock_grep.assert_called_once_with(
+        pattern="SECRET_KEY",
+        project_root="/repo",
+        path="config/",
+        revision=None,
+        context_lines=2,
+        ignore_case=False,
+    )

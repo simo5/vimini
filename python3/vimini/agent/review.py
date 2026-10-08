@@ -11,6 +11,7 @@ from vimini.common.util import (
     read_file,
     list_git_commits,
     get_git_commit,
+    git_grep,
     get_project_root,
     temporary_git_worktree,
 )
@@ -90,6 +91,36 @@ review_tools = [
                     required=["commit_id"],
                 ),
             ),
+            types.FunctionDeclaration(
+                name="git_grep",
+                description="Searches repository code for a keyword or pattern using git grep and returns matching lines with surrounding context lines. Use this to quickly locate code definitions, usages, or snippets without reading whole files.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "pattern": types.Schema(
+                            type=types.Type.STRING,
+                            description="The keyword or search pattern to find.",
+                        ),
+                        "path": types.Schema(
+                            type=types.Type.STRING,
+                            description="Optional relative file or directory pathspec to limit search (e.g. 'src/' or '*.py').",
+                        ),
+                        "revision": types.Schema(
+                            type=types.Type.STRING,
+                            description="Optional git revision or commit ref to search (e.g. 'HEAD', 'main'). Defaults to working tree.",
+                        ),
+                        "context_lines": types.Schema(
+                            type=types.Type.INTEGER,
+                            description="Number of context lines before and after match (default 2, max 10).",
+                        ),
+                        "ignore_case": types.Schema(
+                            type=types.Type.BOOLEAN,
+                            description="If true, perform case-insensitive search (default false).",
+                        ),
+                    },
+                    required=["pattern"],
+                ),
+            ),
         ]
     )
 ]
@@ -116,9 +147,9 @@ def _construct_review_prompt(
         )
 
     tools_guideline = (
-        "You have access to `read_file`, `list_directory`, `list_git_commits`, and `get_git_commit` tools to inspect project files, "
-        "directory structure, and git commit history if you need additional context to perform an accurate review. "
-        "Directory listing, file reading, and commit inspections should be used sparingly and only as needed. "
+        "You have access to `read_file`, `list_directory`, `git_grep`, `list_git_commits`, and `get_git_commit` tools to inspect project files, "
+        "directory structure, search code snippets, and inspect git commit history if you need additional context to perform an accurate review. "
+        "Directory listing, file reading, code searching, and commit inspections should be used sparingly and only as needed. "
         "There is a maximum limit of 15 tool iterations, so inspect only essential files and conclude your review promptly."
     )
 
@@ -278,6 +309,20 @@ def _execute_review_stream(
                         project_root=project_root,
                         file_path=file_path,
                         stat_only=stat_only,
+                    )
+                elif tool_call.name == "git_grep":
+                    pattern = args_dict.get("pattern", "")
+                    path_arg = args_dict.get("path")
+                    revision = args_dict.get("revision")
+                    context_lines = args_dict.get("context_lines", 2)
+                    ignore_case = bool(args_dict.get("ignore_case", False))
+                    raw_result = git_grep(
+                        pattern=pattern,
+                        project_root=project_root,
+                        path=path_arg,
+                        revision=revision,
+                        context_lines=context_lines,
+                        ignore_case=ignore_case,
                     )
                 else:
                     raw_result = f"Unknown tool: {tool_call.name}"

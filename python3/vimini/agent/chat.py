@@ -19,6 +19,7 @@ from vimini.common.util import (
     read_file,
     list_git_commits,
     get_git_commit,
+    git_grep,
     generate_diff_for_file,
 )
 from vimini.agent.comms import CommSession
@@ -268,6 +269,36 @@ def get_agent_tools(project_root=None):
                             ),
                         },
                         required=["commit_id"],
+                    ),
+                ),
+                types.FunctionDeclaration(
+                    name="git_grep",
+                    description="Searches repository code for a keyword or pattern using git grep and returns matching lines with surrounding context lines. Use this to quickly locate code definitions, usages, or snippets without reading whole files.",
+                    parameters=types.Schema(
+                        type=types.Type.OBJECT,
+                        properties={
+                            "pattern": types.Schema(
+                                type=types.Type.STRING,
+                                description="The keyword or search pattern to find.",
+                            ),
+                            "path": types.Schema(
+                                type=types.Type.STRING,
+                                description="Optional relative file or directory pathspec to limit search (e.g. 'src/' or '*.py').",
+                            ),
+                            "revision": types.Schema(
+                                type=types.Type.STRING,
+                                description="Optional git revision or commit ref to search (e.g. 'HEAD', 'main'). Defaults to working tree.",
+                            ),
+                            "context_lines": types.Schema(
+                                type=types.Type.INTEGER,
+                                description="Number of context lines before and after match (default 2, max 10).",
+                            ),
+                            "ignore_case": types.Schema(
+                                type=types.Type.BOOLEAN,
+                                description="If true, perform case-insensitive search (default false).",
+                            ),
+                        },
+                        required=["pattern"],
                     ),
                 ),
                 types.FunctionDeclaration(
@@ -577,7 +608,7 @@ class ChatSession(CommSession):
                     "Your identity is Vimini, and you are integrated into the vimini project. "
                     "Follow these guidelines for optimal performance ONLY when "
                     "acting as a coding agent:\n"
-                    "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory`, `read_file`, `list_git_commits`, and `get_git_commit` tools to understand the repository structure, code contents, and previous git commit history. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
+                    "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory`, `read_file`, `git_grep`, `list_git_commits`, and `get_git_commit` tools to understand the repository structure, code contents, and previous git commit history. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
                     "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` (strongly preferred, as a unified diff will be generated locally to show the user) or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
                     "3. **Patch Reliability:** `apply_patch` should ideally be the final action in your response. If a patch fails due to a formatting or context mismatch, do not blindly retry the exact same patch. Re-read the file to obtain up-to-date content and send the entire file contents using `file_path` and `file_content`.\n"
                     f"{build_test_guideline}\n"
@@ -982,6 +1013,30 @@ class ChatSession(CommSession):
                                 project_root=self.project_root,
                                 file_path=file_path,
                                 stat_only=stat_only,
+                            )
+                        else:
+                            result_text = (
+                                "Tool execution cancelled or rejected by user."
+                            )
+                        responses.append(
+                            types.Part.from_function_response(
+                                name=tool_call.name, response={"result": result_text}
+                            )
+                        )
+                    elif tool_call.name == "git_grep":
+                        if is_approved:
+                            pattern = args_dict.get("pattern", "")
+                            path_arg = args_dict.get("path")
+                            revision = args_dict.get("revision")
+                            context_lines = args_dict.get("context_lines", 2)
+                            ignore_case = bool(args_dict.get("ignore_case", False))
+                            result_text = git_grep(
+                                pattern=pattern,
+                                project_root=self.project_root,
+                                path=path_arg,
+                                revision=revision,
+                                context_lines=context_lines,
+                                ignore_case=ignore_case,
                             )
                         else:
                             result_text = (

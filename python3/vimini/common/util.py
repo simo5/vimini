@@ -940,6 +940,95 @@ def get_git_commit(commit_id, project_root=None, file_path=None, stat_only=False
         return f"Error executing git show: {e}"
 
 
+def git_grep(
+    pattern,
+    project_root=None,
+    path=None,
+    revision=None,
+    context_lines=2,
+    ignore_case=False,
+    max_lines=500,
+):
+    """
+    Searches repository code for pattern using git grep.
+    Returns matching lines with surrounding context lines and line numbers.
+    """
+    repo_path = get_git_repo_root(project_root)
+    if not repo_path:
+        return "Error: Not inside a git repository."
+
+    if not pattern or not str(pattern).strip():
+        return "Error: pattern parameter is required."
+    pattern_str = str(pattern).strip()
+
+    try:
+        context_lines = int(context_lines)
+        if context_lines < 0:
+            context_lines = 0
+        elif context_lines > 10:
+            context_lines = 10
+    except (ValueError, TypeError):
+        context_lines = 2
+
+    try:
+        max_lines = int(max_lines)
+        if max_lines < 1:
+            max_lines = 500
+    except (ValueError, TypeError):
+        max_lines = 500
+
+    cmd = ["git", "-C", repo_path, "grep", "-n", f"-C{context_lines}"]
+    if ignore_case:
+        cmd.append("-i")
+    cmd.extend(["-e", pattern_str])
+
+    if revision is not None and str(revision).strip():
+        revision_str = str(revision).strip()
+        if revision_str.startswith("-"):
+            return "Security error: Git options starting with '-' are not allowed."
+        if not re.match(r"^[a-zA-Z0-9_\-\./\^~@{}]+$", revision_str):
+            return f"Security error: Invalid revision '{revision_str}'."
+        cmd.append(revision_str)
+
+    if path is not None and str(path).strip():
+        path_str = str(path).strip()
+        if path_str.startswith("-"):
+            return "Security error: Path starting with '-' is not allowed."
+        if path_str.startswith("/") or ".." in path_str.split(os.sep) or ".." in path_str.split("/"):
+            return "Security error: Path cannot be absolute or traverse outside repository."
+        cmd.extend(["--", path_str])
+
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if res.returncode == 1:
+            return "No matches found."
+        if res.returncode != 0:
+            err = (res.stderr or "git grep failed.").strip()
+            return f"Error executing git grep: {err}"
+
+        output = res.stdout.rstrip()
+        if not output:
+            return "No matches found."
+
+        lines = output.splitlines()
+        if max_lines and len(lines) > max_lines:
+            truncated = "\n".join(lines[:max_lines])
+            return (
+                f"{truncated}\n\n[Output truncated at {max_lines} lines (total {len(lines)} lines). "
+                f"Specify path or a more specific pattern to narrow results.]"
+            )
+        return output
+    except Exception as e:
+        return f"Error executing git grep: {e}"
+
+
 def generate_diff_for_file(file_path, file_content, project_root=None):
     """
     Generates a unified diff comparing the existing file on disk with file_content.
