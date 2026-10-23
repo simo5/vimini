@@ -73,7 +73,9 @@ def test_list_git_commits_success():
         patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
         patch("subprocess.run", return_value=mock_run) as run_spy,
     ):
-        res = list_git_commits("/repo", max_count=5, revision="main", file_path="src/app.py")
+        res = list_git_commits(
+            "/repo", max_count=5, revision="main", file_path="src/app.py"
+        )
         assert res == mock_output
         run_spy.assert_called_once()
         cmd_called = run_spy.call_args[0][0]
@@ -252,7 +254,9 @@ def test_git_grep_success():
 
 
 def test_git_grep_with_options():
-    mock_output = "HEAD:python3/app.py:5:def parse():\nHEAD:python3/app.py:6:    return True"
+    mock_output = (
+        "HEAD:python3/app.py:5:def parse():\nHEAD:python3/app.py:6:    return True"
+    )
     mock_run = MagicMock()
     mock_run.returncode = 0
     mock_run.stdout = mock_output
@@ -358,8 +362,14 @@ def test_execute_review_stream_git_tools():
     ]
 
     with (
-        patch("vimini.agent.review.list_git_commits", return_value="abc1234 | Alice | 2025-05-10 | Init") as mock_list,
-        patch("vimini.agent.review.get_git_commit", return_value="commit abc1234\nAuthor: Alice\n") as mock_get,
+        patch(
+            "vimini.agent.review.list_git_commits",
+            return_value="abc1234 | Alice | 2025-05-10 | Init",
+        ) as mock_list,
+        patch(
+            "vimini.agent.review.get_git_commit",
+            return_value="commit abc1234\nAuthor: Alice\n",
+        ) as mock_get,
     ):
         res = _execute_review_stream(
             session=mock_session,
@@ -388,15 +398,29 @@ def test_chat_channel_handler_auto_approves_git_tools():
     handler.get_buffer = MagicMock(return_value=MagicMock())
 
     with patch("vimini.chat.send_agent_approval") as mock_approval:
-        handler.handle_response({"status": "tool_use_requested", "tool": "list_git_commits", "args": {}})
+        handler.handle_response(
+            {"status": "tool_use_requested", "tool": "list_git_commits", "args": {}}
+        )
         mock_approval.assert_called_with(True, "chat_123")
 
         mock_approval.reset_mock()
-        handler.handle_response({"status": "tool_use_requested", "tool": "get_git_commit", "args": {"commit_id": "a1b2"}})
+        handler.handle_response(
+            {
+                "status": "tool_use_requested",
+                "tool": "get_git_commit",
+                "args": {"commit_id": "a1b2"},
+            }
+        )
         mock_approval.assert_called_with(True, "chat_123")
 
         mock_approval.reset_mock()
-        handler.handle_response({"status": "tool_use_requested", "tool": "git_grep", "args": {"pattern": "foo"}})
+        handler.handle_response(
+            {
+                "status": "tool_use_requested",
+                "tool": "git_grep",
+                "args": {"pattern": "foo"},
+            }
+        )
         mock_approval.assert_called_with(True, "chat_123")
 
 
@@ -439,8 +463,14 @@ def test_chat_session_executes_git_tools():
 
     with (
         patch("vimini.agent.chat.get_client", return_value=mock_client),
-        patch("vimini.agent.chat.list_git_commits", return_value="def5678 | Bob | 2025-05-10 | Fix") as mock_list,
-        patch("vimini.agent.chat.get_git_commit", return_value="commit def5678\nAuthor: Bob\n") as mock_get,
+        patch(
+            "vimini.agent.chat.list_git_commits",
+            return_value="def5678 | Bob | 2025-05-10 | Fix",
+        ) as mock_list,
+        patch(
+            "vimini.agent.chat.get_git_commit",
+            return_value="commit def5678\nAuthor: Bob\n",
+        ) as mock_get,
     ):
         session._process_command("chat_git", {"prompt": "Show last commit"}, "conn")
 
@@ -476,7 +506,9 @@ def test_chat_session_executes_git_tools():
 
 def test_chat_session_executes_git_grep():
     mock_queue = MagicMock()
-    session = ChatSession("chat_grep", mock_queue, agent_config={"model": "gemini-test"})
+    session = ChatSession(
+        "chat_grep", mock_queue, agent_config={"model": "gemini-test"}
+    )
     session.send_response = MagicMock()
     session.project_root = "/repo"
 
@@ -489,7 +521,12 @@ def test_chat_session_executes_git_grep():
     # Turn 1: model requests git_grep
     call1 = MagicMock()
     call1.name = "git_grep"
-    call1.args = {"pattern": "def hello", "context_lines": 3, "ignore_case": True, "path": "src/"}
+    call1.args = {
+        "pattern": "def hello",
+        "context_lines": 3,
+        "ignore_case": True,
+        "path": "src/",
+    }
     chunk1 = make_mock_chunk(function_call=call1)
 
     # Turn 2: model completes
@@ -504,7 +541,9 @@ def test_chat_session_executes_git_grep():
 
     with (
         patch("vimini.agent.chat.get_client", return_value=mock_client),
-        patch("vimini.agent.chat.git_grep", return_value="src/hello.py:1:def hello():") as mock_grep,
+        patch(
+            "vimini.agent.chat.git_grep", return_value="src/hello.py:1:def hello():"
+        ) as mock_grep,
     ):
         session._process_command("chat_grep", {"prompt": "Find hello"}, "conn")
 
@@ -544,7 +583,10 @@ def test_execute_review_stream_git_grep():
         [chunk2],
     ]
 
-    with patch("vimini.agent.review.git_grep", return_value="config/settings.py:5:SECRET_KEY = 123") as mock_grep:
+    with patch(
+        "vimini.agent.review.git_grep",
+        return_value="config/settings.py:5:SECRET_KEY = 123",
+    ) as mock_grep:
         res = _execute_review_stream(
             session=mock_session,
             req_id="rev_grep",

@@ -23,7 +23,12 @@ from vimini.context import (
     restore_context_files,
 )
 from vimini.config import config_command
-from vimini.handler import BaseChannelHandler, register_handler, unregister_handler, get_handler
+from vimini.handler import (
+    BaseChannelHandler,
+    register_handler,
+    unregister_handler,
+    get_handler,
+)
 
 
 def initialize(api_key_file, model, logfile=None):

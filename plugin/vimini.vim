@@ -23,6 +23,9 @@ let g:vimini_logging = get(g:, 'vimini_logging', 'off')
 " Configuration: Default path for saved reviews
 let g:vimini_review_path = get(g:, 'vimini_review_path', '')
 
+" Configuration: Maximum review tool iterations
+let g:vimini_review_max_turns = get(g:, 'vimini_review_max_turns', 30)
+
 " Configuration: Agent Channel
 let g:vimini_channel = get(g:, 'vimini_channel', v:null)
 

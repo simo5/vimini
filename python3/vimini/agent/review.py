@@ -18,6 +18,8 @@ from vimini.common.util import (
 
 logger = logging.getLogger("vimini_agent")
 
+DEFAULT_MAX_TURNS = 30
+
 review_tools = [
     types.Tool(
         function_declarations=[
@@ -127,7 +129,11 @@ review_tools = [
 
 
 def _construct_review_prompt(
-    prompt, review_content, content_source_description, security_focus
+    prompt,
+    review_content,
+    content_source_description,
+    security_focus,
+    max_turns=DEFAULT_MAX_TURNS,
 ):
     """
     Constructs the prompt for the review.
@@ -150,7 +156,7 @@ def _construct_review_prompt(
         "You have access to `read_file`, `list_directory`, `git_grep`, `list_git_commits`, and `get_git_commit` tools to inspect project files, "
         "directory structure, search code snippets, and inspect git commit history if you need additional context to perform an accurate review. "
         "Directory listing, file reading, code searching, and commit inspections should be used sparingly and only as needed. "
-        "There is a maximum limit of 15 tool iterations, so inspect only essential files and conclude your review promptly."
+        f"There is a maximum limit of {max_turns} tool iterations, so inspect only essential files and conclude your review promptly."
     )
 
     prompt_text = (
@@ -174,7 +180,7 @@ def _execute_review_stream(
     verbose=False,
     save=False,
     commit_sha=None,
-    max_turns=15,
+    max_turns=DEFAULT_MAX_TURNS,
 ):
     """
     Executes a review stream loop, handling tool calls (read_file, list_directory)
@@ -425,6 +431,19 @@ class ReviewSession(CommSession):
         prompt = params.get("prompt", "")
         security_focus = params.get("security_focus", False)
         verbose = params.get("verbose", False)
+        max_turns = params.get("max_turns")
+        if max_turns is None:
+            max_turns = agent_config.get(
+                "max_turns", agent_config.get("max_review_turns")
+            )
+        if max_turns is None:
+            max_turns = DEFAULT_MAX_TURNS
+        try:
+            max_turns = int(max_turns)
+            if max_turns <= 0:
+                max_turns = DEFAULT_MAX_TURNS
+        except (ValueError, TypeError):
+            max_turns = DEFAULT_MAX_TURNS
 
         repo_path = params.get("project_root")
         if not repo_path:
@@ -494,6 +513,7 @@ class ReviewSession(CommSession):
                         review_content_single,
                         f"the output of `git show {commit_sha[:7]}`",
                         security_focus,
+                        max_turns=max_turns,
                     )
 
                     generation_config = create_generation_config(
@@ -517,6 +537,7 @@ class ReviewSession(CommSession):
                             verbose=verbose,
                             save=True,
                             commit_sha=commit_sha,
+                            max_turns=max_turns,
                         )
 
                         if not self.running:
@@ -610,6 +631,19 @@ class ReviewSession(CommSession):
         content_source_description = params.get("content_source_description", "")
         security_focus = params.get("security_focus", False)
         verbose = params.get("verbose", False)
+        max_turns = params.get("max_turns")
+        if max_turns is None:
+            max_turns = agent_config.get(
+                "max_turns", agent_config.get("max_review_turns")
+            )
+        if max_turns is None:
+            max_turns = DEFAULT_MAX_TURNS
+        try:
+            max_turns = int(max_turns)
+            if max_turns <= 0:
+                max_turns = DEFAULT_MAX_TURNS
+        except (ValueError, TypeError):
+            max_turns = DEFAULT_MAX_TURNS
 
         project_root = params.get("project_root")
         if not project_root:
@@ -620,7 +654,11 @@ class ReviewSession(CommSession):
             client = get_client(config=agent_config)
 
             prompt_text = _construct_review_prompt(
-                prompt, review_content, content_source_description, security_focus
+                prompt,
+                review_content,
+                content_source_description,
+                security_focus,
+                max_turns=max_turns,
             )
 
             generation_config = create_generation_config(
@@ -641,6 +679,7 @@ class ReviewSession(CommSession):
                     active_root,
                     verbose=verbose,
                     save=False,
+                    max_turns=max_turns,
                 )
 
             if not self.running:

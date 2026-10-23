@@ -364,7 +364,10 @@ def test_format_command_tree_not_truncated():
     assert any("├──" in l or "└──" in l for l in lines)
 
     # Verify full descriptions are preserved and not truncated
-    assert "Run the entire project test suite with all coverage and security reporting enabled" in lines[1]
+    assert (
+        "Run the entire project test suite with all coverage and security reporting enabled"
+        in lines[1]
+    )
     assert any("descriptions are not truncated" in line for line in lines)
 
 
@@ -382,7 +385,9 @@ def test_draw_config_listing_descriptions_not_truncated():
     lines = _draw_config_listing("test_proj", "/test/path", config_data, metadata)
     full_text = "\n".join(lines)
     # Ensure worktree description is present and not truncated
-    assert "Directory for temporary worktrees (e.g. ~/.var/vimini/worktree)" in full_text
+    assert (
+        "Directory for temporary worktrees (e.g. ~/.var/vimini/worktree)" in full_text
+    )
     # Ensure build-command description is present and not truncated
     assert "Command to compile or build the project" in full_text
     # Ensure compilation-needed description is present and not truncated

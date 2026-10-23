@@ -120,14 +120,20 @@ customizations.
     let g:vimini_commit_author = 'Co-authored-by: My AI Assistant <ai@example.com>'
     ```
 
-7.  **Context Files (`g:context_files`)**:
+7.  **Review Max Turns (`g:vimini_review_max_turns`)**:
+    Set the maximum number of tool iterations for review agents. The default is `30`.
+    ```vim
+    let g:vimini_review_max_turns = 30
+    ```
+
+8.  **Context Files (`g:context_files`)**:
     In addition to all files currently open in Vim buffers, you can specify a list of files to always include as context for AI commands like `:ViminiCode`. This is useful for providing the AI with important project files (like configurations, core utilities, or type definitions) without needing to have them open. Note: The total size of all uploaded context files combined is strictly limited to 1MB; if this limit is exceeded, the largest files will automatically be excluded.
     ```vim
     " Always include these files as context for code generation tasks
     let g:context_files = ['package.json', 'src/main.js', 'src/utils/api.js']
     ```
 
-8.  **Project Configuration (`ViminiConfig`)**:
+9.  **Project Configuration (`ViminiConfig`)**:
     Configure per-project settings such as whether compilation is needed, shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`), and the directory path where temporary git worktrees can be created. Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
     ```json
     {
