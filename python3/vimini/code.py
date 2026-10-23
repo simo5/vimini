@@ -406,7 +406,14 @@ def apply_patch(diff_content, project_root=None, silent=False):
     except FileNotFoundError:
         # Fall back to git apply if patch command is not in PATH
         try:
-            git_cmd = ["git", "-C", project_root, "apply", "--whitespace=nowarn", "-"]
+            git_cmd = [
+                "git",
+                "-C",
+                project_root,
+                "apply",
+                "--whitespace=nowarn",
+                "-",
+            ]
             result = subprocess.run(
                 git_cmd,
                 input=diff_content,

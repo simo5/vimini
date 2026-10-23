@@ -1,5 +1,6 @@
 import vim
 import os
+import re
 import json
 import subprocess
 import textwrap
@@ -10,6 +11,7 @@ from vimini.handler import BaseChannelHandler, register_handler, unregister_hand
 
 # In-memory store for commit files keyed by temporary commit filename
 _commit_files_by_file = {}
+_commit_meta_by_file = {}
 
 
 def _run_format_command(repo_path):
@@ -139,7 +141,60 @@ def _revert_staged(repo_path):
         reset_cmd = ["git", "-C", repo_path, "reset", "HEAD", "--"]
     else:
         reset_cmd = ["git", "-C", repo_path, "rm", "--cached", "-r", "--", "."]
-    subprocess.run(reset_cmd, check=False)
+    subprocess.run(reset_cmd, capture_output=True, check=False)
+
+
+def _revert_amend(repo_path, orig_head):
+    """Reverts an amended commit back to the original HEAD commit, restoring working tree changes."""
+    if not repo_path or not orig_head:
+        return
+    reset_cmd = ["git", "-C", repo_path, "reset", orig_head]
+    subprocess.run(reset_cmd, capture_output=True, check=False)
+
+
+def _clean_rename_path(p):
+    p = p.strip().strip('"').strip("'")
+    cleaned = os.path.normpath(p).replace("\\", "/").lstrip("/")
+    return cleaned if cleaned != "." else ""
+
+
+def _extract_rename_paths(file_part):
+    """Extracts (source, target) file paths from a diff stat rename spec."""
+    if "=>" not in file_part:
+        return None, None
+    # Strip trailing similarity percentage e.g. " (100%)"
+    file_part = re.sub(r"\s*\(\d+%\)$", "", file_part.strip())
+    if "{" in file_part and "}" in file_part:
+        prefix, rest = file_part.split("{", 1)
+        rename_spec, suffix = rest.split("}", 1)
+        if "=>" in rename_spec:
+            old_part, new_part = rename_spec.split("=>", 1)
+            source = _clean_rename_path(f"{prefix}{old_part.strip()}{suffix}")
+            target = _clean_rename_path(f"{prefix}{new_part.strip()}{suffix}")
+            return (source or None, target or None)
+    parts = file_part.split("=>", 1)
+    source = _clean_rename_path(parts[0].strip())
+    target = _clean_rename_path(parts[1].strip())
+    return (source or None, target or None)
+
+
+def _match_body(body, commit_files):
+    """Checks if body or diff-stat file_part in body matches commit_files. Returns matched filename or None."""
+    if not body:
+        return None
+    if body in commit_files:
+        return body
+    if "|" in body:
+        file_part = body.rsplit("|", 1)[0].strip()
+        if file_part in commit_files:
+            return file_part
+        if "=>" in file_part:
+            source, target = _extract_rename_paths(file_part)
+            if target and target in commit_files:
+                return target
+            if source and source in commit_files:
+                return source
+    return None
 
 
 def parse_file_line(line, commit_files):
@@ -147,30 +202,31 @@ def parse_file_line(line, commit_files):
     Parses a line to check if it represents a file from commit_files.
     Returns (filename, is_deselected) if it matches a file in commit_files,
     or (None, None) if it does not.
+    The only valid deselection form is exactly '#- '.
     """
     if not line or not line.startswith("#"):
         return None, None
 
-    # Exact matches with standard prefix formatting
-    if line.startswith("# - "):
-        candidate = line[4:].strip()
-        if candidate in commit_files:
-            return candidate, True
-    if line.startswith("#   "):
-        candidate = line[4:].strip()
-        if candidate in commit_files:
-            return candidate, False
+    if not isinstance(commit_files, (set, frozenset)):
+        commit_files = set(commit_files)
 
-    # Flexible parsing for manual edits / variations
-    rest = line.lstrip("#").strip()
-    if rest.startswith("-"):
-        candidate = rest[1:].strip()
-        if candidate in commit_files:
-            return candidate, True
-    else:
-        candidate = rest
-        if candidate in commit_files:
-            return candidate, False
+    # Exactly '#- ' indicates a deselected file
+    if line.startswith("#- "):
+        body = line[3:].lstrip()
+        matched = _match_body(body, commit_files)
+        if matched:
+            return matched, True
+        return None, None
+
+    rest = line[1:]
+    stripped_rest = rest.lstrip()
+    if not stripped_rest:
+        return None, None
+
+    # Check if line matches directly (included file)
+    matched = _match_body(stripped_rest, commit_files)
+    if matched:
+        return matched, False
 
     return None, None
 
@@ -191,9 +247,46 @@ def _get_commit_files_for_buffer():
     return []
 
 
+def _get_amend_files_for_buffer():
+    """Retrieves the list of files to amend for the current buffer, if defined."""
+    try:
+        raw = vim.eval("get(b:, 'vimini_commit_amend_files', '')")
+        if raw:
+            return set(json.loads(raw))
+    except Exception:
+        pass
+    try:
+        tmp_filename = vim.eval("get(b:, 'vimini_commit_tmp_file', '')")
+        meta = _commit_meta_by_file.get(tmp_filename, {})
+        if "amend_files" in meta:
+            return set(meta["amend_files"])
+    except Exception:
+        pass
+    return None
+
+
+def _is_pure_regenerate_buffer():
+    """Checks if the current commit buffer is in pure regenerate mode (regenerate and not amend)."""
+    try:
+        raw_regen = vim.eval("get(b:, 'vimini_commit_regenerate', 0)")
+        raw_amend = vim.eval("get(b:, 'vimini_commit_amend', 0)")
+        regen = int(raw_regen) if raw_regen else 0
+        amend = int(raw_amend) if raw_amend else 0
+        if regen and not amend:
+            return True
+        if regen == 0 and amend == 0:
+            tmp_filename = vim.eval("get(b:, 'vimini_commit_tmp_file', '')")
+            meta = _commit_meta_by_file.get(tmp_filename, {})
+            if meta.get("regenerate") and not meta.get("amend"):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def toggle_file():
     """
-    Toggles file inclusion (marked with - or readded) for the file under the cursor in the commit buffer.
+    Toggles file inclusion (marked with #- or readded) for the file under the cursor in the commit buffer.
     """
     try:
         commit_files = _get_commit_files_for_buffer()
@@ -207,16 +300,37 @@ def toggle_file():
             return
 
         line = vim.current.buffer[row - 1]
-        fn, is_deselected = parse_file_line(line, commit_files)
+        commit_files_set = set(commit_files)
+        fn, is_deselected = parse_file_line(line, commit_files_set)
         if fn is None:
             return
 
+        new_line = None
         if is_deselected:
-            # Re-add file
-            new_line = f"#   {fn}"
+            # Re-add file (turn into included)
+            if line.startswith("#-  "):
+                new_line = "#   " + line[4:]
+            else:
+                new_line = "#  " + line[3:]
         else:
-            # Deselect file (mark with -)
-            new_line = f"# - {fn}"
+            if _is_pure_regenerate_buffer():
+                util.display_message(
+                    "Files cannot be deselected in regenerate mode", error=True
+                )
+                return
+
+            files_to_amend = _get_amend_files_for_buffer()
+            if files_to_amend is not None and fn not in files_to_amend:
+                util.display_message(
+                    "This file is not being changed by the amendment", error=True
+                )
+                return
+
+            # Deselect file (mark with exactly #- )
+            if line.startswith("#  "):
+                new_line = "#- " + line[3:]
+            else:
+                new_line = "#- " + line[2:]
 
         vim.current.buffer[row - 1] = new_line
         new_col = min(col, len(new_line) - 1 if new_line else 0)
@@ -231,15 +345,42 @@ class CommitChannelHandler(BaseChannelHandler):
     Handles channel responses for commit message generation requests.
     """
 
-    def __init__(self, req_id, files_to_commit=None):
+    def __init__(
+        self,
+        req_id,
+        files_to_commit=None,
+        orig_head=None,
+        amend=False,
+        regenerate=False,
+        repo_path=None,
+    ):
         super().__init__(req_id)
         self.files_to_commit = files_to_commit or []
+        self.orig_head = orig_head
+        self.amend = amend
+        self.regenerate = regenerate
+        self.repo_path = repo_path
 
     def handle_response(self, result):
         self.finished = True
         if not result.get("commit_files") and self.files_to_commit:
             result["commit_files"] = self.files_to_commit
-        handle_commit_response(self.req_id, result)
+        if not result.get("orig_head") and self.orig_head:
+            result["orig_head"] = self.orig_head
+        if "amend" not in result and self.amend:
+            result["amend"] = self.amend
+        if "regenerate" not in result and self.regenerate:
+            result["regenerate"] = self.regenerate
+        if not result.get("repo_path") and self.repo_path:
+            result["repo_path"] = self.repo_path
+        try:
+            handle_commit_response(self.req_id, result)
+        except Exception as e:
+            if self.amend and self.orig_head and self.repo_path:
+                _revert_amend(self.repo_path, self.orig_head)
+            elif not result.get("regenerate") and self.repo_path:
+                _revert_staged(self.repo_path)
+            util.display_message(f"Error: {e}", error=True)
 
     def handle_error(self, error):
         self.finished = True
@@ -248,6 +389,10 @@ class CommitChannelHandler(BaseChannelHandler):
             if isinstance(error, dict)
             else str(error)
         )
+        if self.amend and self.orig_head and self.repo_path:
+            _revert_amend(self.repo_path, self.orig_head)
+        elif not self.amend and not self.regenerate and self.repo_path:
+            _revert_staged(self.repo_path)
         util.display_message(f"Error: {err_msg}", error=True)
 
 
@@ -257,6 +402,8 @@ def handle_commit_response(req_id, result):
     diff_stat_output = result.get("diff_stat_output", "")
     commit_files = result.get("commit_files") or []
     regenerate = bool(result.get("regenerate", False))
+    amend = bool(result.get("amend", False))
+    orig_head = result.get("orig_head") or ""
     assistant = bool(result.get("assistant", True))
 
     response_text = text.strip()
@@ -281,7 +428,10 @@ def handle_commit_response(req_id, result):
 
     if not subject:
         msg = "Failed to generate a commit message."
-        if not regenerate and repo_path:
+        if amend and orig_head and repo_path:
+            msg += " Reverting amend."
+            _revert_amend(repo_path, orig_head)
+        elif not regenerate and repo_path:
             msg += " Reverting `git add`."
             _revert_staged(repo_path)
         util.display_message(msg, error=True)
@@ -301,41 +451,121 @@ def handle_commit_response(req_id, result):
     if body:
         buffer_content.extend(body.split("\n"))
 
-    if diff_stat_output:
+    rename_pairs = []
+    if diff_stat_output or commit_files:
         stat_header = "# --- Diff stat ---"
         buffer_content.extend(["", stat_header])
-        for line in diff_stat_output.split("\n"):
-            buffer_content.append(f"# {line}")
+        if not (regenerate and not amend):
+            buffer_content.append("# (Press <Space> to toggle file inclusion)")
+        if diff_stat_output:
+            files_to_amend = []
+            commit_files_set = set(commit_files)
+            seen_files = set()
+            for line in diff_stat_output.split("\n"):
+                if not line.strip():
+                    continue
+                fn, _ = parse_file_line(f"#   {line.strip()}", commit_files_set)
+                if fn:
+                    seen_files.add(fn)
+                    if "|" in line:
+                        file_part = line.rsplit("|", 1)[0].strip()
+                        if "=>" in file_part:
+                            source, target = _extract_rename_paths(file_part)
+                            if source:
+                                seen_files.add(source)
+                            if target:
+                                seen_files.add(target)
+                            if source and target:
+                                rename_pairs.append((source, target))
+                    buffer_content.append(f"#   {line.strip()}")
+                else:
+                    buffer_content.append(f"#  {line.strip()}")
+            for fn in commit_files:
+                if fn not in seen_files:
+                    buffer_content.append(f"#   {fn}")
+        else:
+            for fn in commit_files:
+                buffer_content.append(f"#   {fn}")
 
-    if commit_files:
-        files_header = (
-            "# --- Files in commit ---" if regenerate else "# --- Files to commit ---"
-        )
-        buffer_content.extend(["", files_header])
-        buffer_content.append("# (Press <Space> to toggle file inclusion)")
-        for fn in commit_files:
-            buffer_content.append(f"#   {fn}")
+        if regenerate and not amend:
+            files_to_amend = []
+        elif amend:
+            files_to_amend = []
+            if orig_head and repo_path:
+                try:
+                    res = subprocess.run(
+                        [
+                            "git",
+                            "-C",
+                            repo_path,
+                            "diff-tree",
+                            "--no-commit-id",
+                            "--name-only",
+                            "-r",
+                            "-z",
+                            orig_head,
+                            "HEAD",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=False,
+                    )
+                    if res.returncode == 0 and res.stdout:
+                        files_to_amend = [f for f in res.stdout.split("\0") if f]
+                except Exception:
+                    files_to_amend = []
+            for s, t in rename_pairs:
+                if s in files_to_amend or t in files_to_amend:
+                    if s not in files_to_amend:
+                        files_to_amend.append(s)
+                    if t not in files_to_amend:
+                        files_to_amend.append(t)
+        else:
+            files_to_amend = list(commit_files)
 
     vim.current.buffer[:] = buffer_content
 
     safe_tmp = tmp_filename.replace("'", "''")
     safe_repo = repo_path.replace("'", "''")
+    safe_orig_head = orig_head.replace("'", "''")
     safe_files = json.dumps(commit_files).replace("'", "''")
+    safe_renames = json.dumps(rename_pairs).replace("'", "''")
+    safe_amend_files = json.dumps(files_to_amend).replace("'", "''")
     vim.command(f"let b:vimini_commit_tmp_file = '{safe_tmp}'")
     vim.command(f"let b:vimini_commit_repo_path = '{safe_repo}'")
     vim.command(f"let b:vimini_commit_regenerate = {1 if regenerate else 0}")
+    vim.command(f"let b:vimini_commit_amend = {1 if amend else 0}")
+    vim.command(f"let b:vimini_commit_orig_head = '{safe_orig_head}'")
     vim.command(f"let b:vimini_commit_assistant = {1 if assistant else 0}")
     vim.command(f"let b:vimini_commit_files = '{safe_files}'")
+    vim.command(f"let b:vimini_commit_renames = '{safe_renames}'")
+    vim.command(f"let b:vimini_commit_amend_files = '{safe_amend_files}'")
 
     _commit_files_by_file[tmp_filename] = list(commit_files)
+    _commit_meta_by_file[tmp_filename] = {
+        "files": list(commit_files),
+        "orig_head": orig_head,
+        "amend": amend,
+        "regenerate": regenerate,
+        "repo_path": repo_path,
+        "renames": rename_pairs,
+        "amend_files": list(files_to_amend),
+    }
 
     vim.command("nnoremap <buffer> <silent> <Space> :call ViminiCommitToggleFile()<CR>")
     vim.command(
         "autocmd BufWipeout <buffer> py3 from vimini.commit import finalize_commit; finalize_commit()"
     )
 
+    if regenerate and not amend:
+        review_msg = "Review the commit message. Save and close the buffer to commit, or close without saving to abort."
+    else:
+        review_msg = "Review the commit message. Toggle files with <Space>. Save and close the buffer to commit, or close without saving to abort."
+
     util.display_message(
-        "Review the commit message. Toggle files with <Space>. Save and close the buffer to commit, or close without saving to abort.",
+        review_msg,
         history=True,
     )
     vim.command("redraw!")
@@ -360,12 +590,26 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
         diff_to_process = ""
         diff_stat_output = ""
         files_to_commit = []
+        orig_head = ""
 
         if not regenerate:
             if not _run_format_command(repo_path):
                 return
 
         if amend:
+            head_res = subprocess.run(
+                ["git", "-C", repo_path, "rev-parse", "HEAD"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            if head_res.returncode != 0:
+                util.display_message("Git error: failed to resolve HEAD.", error=True)
+                return
+            orig_head = head_res.stdout.strip()
+
             if not _stage_changes(repo_path, "Staging changes for amend..."):
                 return
 
@@ -384,6 +628,7 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
                 error_message = (
                     amend_code_result.stderr or amend_code_result.stdout
                 ).strip()
+                _revert_staged(repo_path)
                 util.display_message(f"Git amend failed: {error_message}", error=True)
                 return
 
@@ -404,11 +649,25 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
 
             if diff_result.returncode != 0:
                 error_message = (diff_result.stderr or "git show HEAD failed.").strip()
+                if amend and orig_head:
+                    _revert_amend(repo_path, orig_head)
                 util.display_message(f"Git error: {error_message}", error=True)
                 return
             diff_to_process = diff_result.stdout.strip()
 
-            stat_cmd = ["git", "-C", repo_path, "show", "--format=", "--stat"]
+            stat_cmd = [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                repo_path,
+                "show",
+                "--format=",
+                "--stat",
+                "--stat-width=1000",
+                "--stat-name-width=1000",
+                "--stat-graph-width=10",
+            ]
             stat_result = subprocess.run(
                 stat_cmd,
                 capture_output=True,
@@ -467,7 +726,19 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
 
             diff_to_process = staged_diff_result.stdout.strip()
 
-            staged_stat_cmd = ["git", "-C", repo_path, "diff", "--staged", "--stat"]
+            staged_stat_cmd = [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "-C",
+                repo_path,
+                "diff",
+                "--staged",
+                "--stat",
+                "--stat-width=1000",
+                "--stat-name-width=1000",
+                "--stat-graph-width=10",
+            ]
             staged_stat_result = subprocess.run(
                 staged_stat_cmd,
                 capture_output=True,
@@ -502,6 +773,8 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
                 ]
 
         if not diff_to_process:
+            if amend and orig_head:
+                _revert_amend(repo_path, orig_head)
             message = (
                 "HEAD commit is empty. Nothing to regenerate."
                 if regenerate
@@ -531,7 +804,14 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
 
         job_id = str(util.reserve_next_job_id("Commit"))
 
-        handler = CommitChannelHandler(job_id, files_to_commit=files_to_commit)
+        handler = CommitChannelHandler(
+            job_id,
+            files_to_commit=files_to_commit,
+            orig_head=orig_head,
+            amend=amend,
+            regenerate=regenerate,
+            repo_path=repo_path,
+        )
         register_handler(job_id, handler)
 
         req = {
@@ -544,23 +824,37 @@ def commit(assistant=True, regenerate=False, amend=False, refinement=None):
                 "diff_stat_output": diff_stat_output,
                 "commit_files": files_to_commit,
                 "regenerate": regenerate,
+                "amend": amend,
+                "orig_head": orig_head,
                 "assistant": assistant,
             },
         }
 
         if not util.send_channel_request(req):
             unregister_handler(job_id)
-            msg = "Commit cancelled (sending request to agent server failed)."
-            if not regenerate:
-                msg += " Reverting `git add`."
+            if amend and orig_head:
+                _revert_amend(repo_path, orig_head)
+                msg = "Amend cancelled (sending request to agent server failed). Reverting amend."
+            elif not regenerate:
                 _revert_staged(repo_path)
+                msg = "Commit cancelled (sending request to agent server failed). Reverting `git add`."
+            else:
+                msg = "Commit cancelled (sending request to agent server failed)."
             util.display_message(msg, error=True)
 
     except FileNotFoundError:
+        if amend and orig_head:
+            _revert_amend(repo_path, orig_head)
+        elif repo_path and not regenerate:
+            _revert_staged(repo_path)
         util.display_message(
             "Error: `git` command not found. Is it in your PATH?", error=True
         )
     except Exception as e:
+        if amend and orig_head:
+            _revert_amend(repo_path, orig_head)
+        elif repo_path and not regenerate:
+            _revert_staged(repo_path)
         util.display_message(f"Error: {e}", error=True)
 
 
@@ -570,21 +864,42 @@ def finalize_commit():
     try:
         tmp_filename = vim.eval("get(b:, 'vimini_commit_tmp_file', '')")
         repo_path = vim.eval("get(b:, 'vimini_commit_repo_path', '')")
-        regenerate = int(vim.eval("get(b:, 'vimini_commit_regenerate', 0)"))
-        assistant = int(vim.eval("get(b:, 'vimini_commit_assistant', 0)"))
+        raw_regen = vim.eval("get(b:, 'vimini_commit_regenerate', 0)")
+        regenerate = int(raw_regen) if raw_regen else 0
+        raw_amend = vim.eval("get(b:, 'vimini_commit_amend', 0)")
+        amend = int(raw_amend) if raw_amend else 0
+        raw_orig_head = vim.eval("get(b:, 'vimini_commit_orig_head', '')")
+        orig_head = str(raw_orig_head) if raw_orig_head else ""
+        raw_assistant = vim.eval("get(b:, 'vimini_commit_assistant', 0)")
+        assistant = int(raw_assistant) if raw_assistant else 0
         raw_files = vim.eval("get(b:, 'vimini_commit_files', '')")
         commit_files = json.loads(raw_files) if raw_files else []
+        raw_renames = vim.eval("get(b:, 'vimini_commit_renames', '')")
+        rename_pairs = json.loads(raw_renames) if raw_renames else []
     except Exception as e:
         util.log_info(f"Failed to read commit variables: {e}")
         return
 
-    if not commit_files and tmp_filename in _commit_files_by_file:
-        commit_files = _commit_files_by_file.pop(tmp_filename, [])
+    meta = _commit_meta_by_file.pop(tmp_filename, {})
+    if not commit_files:
+        commit_files = meta.get("files", _commit_files_by_file.pop(tmp_filename, []))
     else:
         _commit_files_by_file.pop(tmp_filename, None)
+    if not orig_head:
+        orig_head = meta.get("orig_head", "")
+    if not amend:
+        amend = meta.get("amend", 0)
+    if not repo_path:
+        repo_path = meta.get("repo_path", "")
+    if not regenerate:
+        regenerate = meta.get("regenerate", 0)
+    if not rename_pairs:
+        rename_pairs = meta.get("renames", [])
 
     if not tmp_filename or not os.path.exists(tmp_filename):
         util.log_info("Failed to find commit log file")
+        if amend and orig_head and repo_path:
+            _revert_amend(repo_path, orig_head)
         return
 
     try:
@@ -592,6 +907,8 @@ def finalize_commit():
             content = f.read()
         os.remove(tmp_filename)
     except Exception as e:
+        if amend and orig_head and repo_path:
+            _revert_amend(repo_path, orig_head)
         util.display_message(f"Error reading commit message: {e}", error=True)
         return
 
@@ -603,7 +920,13 @@ def finalize_commit():
             break
 
     if not has_non_comment:
-        if regenerate:
+        if amend and orig_head:
+            util.display_message(
+                "Amend cancelled (no commit message saved). Reverting amend.",
+                error=True,
+            )
+            _revert_amend(repo_path, orig_head)
+        elif regenerate:
             util.display_message(
                 "Amend cancelled (no commit message saved).", error=True
             )
@@ -615,17 +938,87 @@ def finalize_commit():
             _revert_staged(repo_path)
         return
 
-    # Parse file lines to find deselected files (marked with -)
+    # Parse file lines to find deselected files (marked with exactly #- )
     deselected_files = []
     if commit_files:
-        for line in content.split("\n"):
-            fn, is_deselected = parse_file_line(line, commit_files)
-            if fn and is_deselected and fn not in deselected_files:
-                deselected_files.append(fn)
+        stat_header = "# --- Diff stat ---"
+        if stat_header not in content:
+            if amend and orig_head:
+                util.display_message(
+                    "Amend cancelled (commit was malformed: missing diff stat header). Reverting amend.",
+                    error=True,
+                )
+                _revert_amend(repo_path, orig_head)
+            elif regenerate:
+                util.display_message(
+                    "Amend cancelled (commit was malformed: missing diff stat header).",
+                    error=True,
+                )
+            else:
+                util.display_message(
+                    "Commit cancelled (commit was malformed: missing diff stat header). Reverting `git add`.",
+                    error=True,
+                )
+                _revert_staged(repo_path)
+            return
+
+        commit_files_set = set(commit_files)
+        seen_included = set()
+        stat_content = content.split(stat_header, 1)[1]
+        for line in stat_content.split("\n"):
+            fn, is_deselected = parse_file_line(line, commit_files_set)
+            if fn:
+                rename_source, rename_target = None, None
+                if is_deselected:
+                    body = line[3:].lstrip()
+                else:
+                    body = line[1:].lstrip()
+                if "|" in body:
+                    file_part = body.rsplit("|", 1)[0].strip()
+                    if "=>" in file_part:
+                        rename_source, rename_target = _extract_rename_paths(file_part)
+
+                if is_deselected:
+                    if fn not in deselected_files:
+                        deselected_files.append(fn)
+                    if rename_source and rename_source not in deselected_files:
+                        deselected_files.append(rename_source)
+                    if rename_target and rename_target not in deselected_files:
+                        deselected_files.append(rename_target)
+                else:
+                    seen_included.add(fn)
+                    if rename_source:
+                        seen_included.add(rename_source)
+                    if rename_target:
+                        seen_included.add(rename_target)
+
+        if regenerate and not amend:
+            if deselected_files or any(fn not in seen_included for fn in commit_files):
+                util.display_message(
+                    "Files cannot be deselected in regenerate mode", error=True
+                )
+                return
+        else:
+            for fn in commit_files:
+                if fn not in seen_included and fn not in deselected_files:
+                    deselected_files.append(fn)
+
+            for s, t in rename_pairs:
+                if s in deselected_files or t in deselected_files:
+                    if s not in deselected_files:
+                        deselected_files.append(s)
+                    if t not in deselected_files:
+                        deselected_files.append(t)
 
         remaining_files = [f for f in commit_files if f not in deselected_files]
         if not remaining_files:
-            if regenerate:
+            if amend and orig_head:
+                util.display_message(
+                    "Amend cancelled (no files selected to commit). Reverting amend.",
+                    error=True,
+                )
+                _revert_amend(repo_path, orig_head)
+            elif regenerate:
                 util.display_message(
                     "Amend cancelled (no files selected to commit).",
                     error=True,
@@ -639,69 +1032,106 @@ def finalize_commit():
             return
 
         if deselected_files:
-            util.log_info(f"Removing deselected files from commit: {deselected_files}")
-            if regenerate:
-                head_parent_check = subprocess.run(
-                    ["git", "-C", repo_path, "rev-parse", "--verify", "HEAD~1"],
-                    capture_output=True,
-                    check=False,
+            try:
+                util.log_info(
+                    f"Removing deselected files from commit: {deselected_files}"
                 )
-                if head_parent_check.returncode == 0:
+                if amend and orig_head:
                     unstage_cmd = [
                         "git",
                         "-C",
                         repo_path,
                         "reset",
-                        "HEAD~1",
+                        orig_head,
                         "--",
                     ] + deselected_files
+                elif regenerate:
+                    head_parent_check = subprocess.run(
+                        ["git", "-C", repo_path, "rev-parse", "--verify", "HEAD~1"],
+                        capture_output=True,
+                        check=False,
+                    )
+                    if head_parent_check.returncode == 0:
+                        unstage_cmd = [
+                            "git",
+                            "-C",
+                            repo_path,
+                            "reset",
+                            "HEAD~1",
+                            "--",
+                        ] + deselected_files
+                    else:
+                        unstage_cmd = [
+                            "git",
+                            "-C",
+                            repo_path,
+                            "rm",
+                            "--cached",
+                            "--",
+                        ] + deselected_files
                 else:
-                    unstage_cmd = [
-                        "git",
-                        "-C",
-                        repo_path,
-                        "rm",
-                        "--cached",
-                        "--",
-                    ] + deselected_files
-            else:
-                head_check = subprocess.run(
-                    ["git", "-C", repo_path, "rev-parse", "--verify", "HEAD"],
-                    capture_output=True,
-                    check=False,
-                )
-                if head_check.returncode == 0:
-                    unstage_cmd = [
-                        "git",
-                        "-C",
-                        repo_path,
-                        "reset",
-                        "HEAD",
-                        "--",
-                    ] + deselected_files
-                else:
-                    unstage_cmd = [
-                        "git",
-                        "-C",
-                        repo_path,
-                        "rm",
-                        "--cached",
-                        "--",
-                    ] + deselected_files
+                    head_check = subprocess.run(
+                        ["git", "-C", repo_path, "rev-parse", "--verify", "HEAD"],
+                        capture_output=True,
+                        check=False,
+                    )
+                    if head_check.returncode == 0:
+                        unstage_cmd = [
+                            "git",
+                            "-C",
+                            repo_path,
+                            "reset",
+                            "HEAD",
+                            "--",
+                        ] + deselected_files
+                    else:
+                        unstage_cmd = [
+                            "git",
+                            "-C",
+                            repo_path,
+                            "rm",
+                            "--cached",
+                            "--",
+                        ] + deselected_files
 
-            unstage_res = subprocess.run(
-                unstage_cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-            if unstage_res.returncode != 0:
-                err = (unstage_res.stderr or unstage_res.stdout).strip()
-                util.display_message(
-                    f"Failed to unstage deselected files: {err}", error=True
+                unstage_res = subprocess.run(
+                    unstage_cmd,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
                 )
+                if unstage_res.returncode != 0:
+                    err = (unstage_res.stderr or unstage_res.stdout).strip()
+                    util.display_message(
+                        f"Failed to unstage deselected files: {err}", error=True
+                    )
+                    if amend and orig_head:
+                        _revert_amend(repo_path, orig_head)
+                    elif not regenerate and repo_path:
+                        _revert_staged(repo_path)
+                    elif regenerate and repo_path:
+                        subprocess.run(
+                            ["git", "-C", repo_path, "reset", "HEAD", "--"],
+                            capture_output=True,
+                            check=False,
+                        )
+                    return
+            except Exception as e:
+                util.display_message(
+                    f"Error unstaging deselected files: {e}", error=True
+                )
+                if amend and orig_head:
+                    _revert_amend(repo_path, orig_head)
+                elif not regenerate and repo_path:
+                    _revert_staged(repo_path)
+                elif regenerate and repo_path:
+                    subprocess.run(
+                        ["git", "-C", repo_path, "reset", "HEAD", "--"],
+                        capture_output=True,
+                        check=False,
+                    )
                 return
 
     util.log_info("Commit Message accepted")
@@ -741,10 +1171,28 @@ def finalize_commit():
         else:
             error_message = (commit_result.stderr or commit_result.stdout).strip()
             action_past = "amend" if regenerate else "commit"
+            if amend and orig_head:
+                _revert_amend(repo_path, orig_head)
+            elif regenerate and repo_path:
+                subprocess.run(
+                    ["git", "-C", repo_path, "reset", "HEAD", "--"],
+                    capture_output=True,
+                    check=False,
+                )
             util.display_message(
                 f"Git {action_past} failed: {error_message}", error=True
             )
     except Exception as e:
+        if amend and orig_head:
+            _revert_amend(repo_path, orig_head)
+        elif regenerate and repo_path:
+            subprocess.run(
+                ["git", "-C", repo_path, "reset", "HEAD", "--"],
+                capture_output=True,
+                check=False,
+            )
+        elif repo_path:
+            _revert_staged(repo_path)
         util.display_message(f"Error: {e}", error=True)
 
 
