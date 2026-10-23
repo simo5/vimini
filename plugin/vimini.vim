@@ -26,6 +26,9 @@ let g:vimini_review_path = get(g:, 'vimini_review_path', '')
 " Configuration: Maximum review tool iterations
 let g:vimini_review_max_turns = get(g:, 'vimini_review_max_turns', 30)
 
+" Configuration: Default git remote for PR/MR reviews
+let g:vimini_default_remote = get(g:, 'vimini_default_remote', '')
+
 " Configuration: Agent Channel
 let g:vimini_channel = get(g:, 'vimini_channel', v:null)
 
@@ -234,7 +237,7 @@ function! ViminiReview(args)
   let l:save_path = ''
   let l:pr_arg = v:null
   let l:mr_arg = v:null
-  let l:remote_arg = 'origin'
+  let l:remote_arg = v:null
   let l:args = a:args
 
   " Handle key=value options like --save=path, --pr=123, --mr=123, --remote=origin

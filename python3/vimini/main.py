@@ -299,7 +299,7 @@ def help(command_name=None):
         "    -c <ref>: Review changes in git ref (can be a range for batch review).",
         "    --pr <number>: Fetch and review GitHub Pull Request.",
         "    --mr <number>: Fetch and review GitLab Merge Request.",
-        "    --remote <remote>: Remote repository to fetch from (defaults to origin).",
+        "    --remote <remote>: Remote repository to fetch from (defaults to g:vimini_default_remote, upstream, branch remote, or origin).",
         "    --security: Focus on security vulnerabilities.",
         "    --save: Save reviews to text files (useful with batch review).",
         "    --save=path: Save reviews to a specific directory (defaults to g:vimini_review_path).",

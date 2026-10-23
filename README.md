@@ -126,14 +126,22 @@ customizations.
     let g:vimini_review_max_turns = 30
     ```
 
-8.  **Context Files (`g:context_files`)**:
+8.  **Default Git Remote (`g:vimini_default_remote`)**:
+    Set a default git remote to fetch GitHub PRs or GitLab MRs from when using `:ViminiReview` without the `--remote` flag.
+    If not configured, Vimini will check available remotes and use `upstream` (preferred for fork workflows), or the
+    canonical remote for the current branch, falling back to default branches (`main`/`master`) or `origin`.
+    ```vim
+    let g:vimini_default_remote = 'gh'
+    ```
+
+9.  **Context Files (`g:context_files`)**:
     In addition to all files currently open in Vim buffers, you can specify a list of files to always include as context for AI commands like `:ViminiCode`. This is useful for providing the AI with important project files (like configurations, core utilities, or type definitions) without needing to have them open. Note: The total size of all uploaded context files combined is strictly limited to 1MB; if this limit is exceeded, the largest files will automatically be excluded.
     ```vim
     " Always include these files as context for code generation tasks
     let g:context_files = ['package.json', 'src/main.js', 'src/utils/api.js']
     ```
 
-9.  **Project Configuration (`ViminiConfig`)**:
+10.  **Project Configuration (`ViminiConfig`)**:
     Configure per-project settings such as whether compilation is needed, shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`), and the directory path where temporary git worktrees can be created. Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
     ```json
     {
@@ -264,7 +272,7 @@ Sends content to the Gemini model for a code review. This command has three main
 
 1.  **Current Buffer Review**: If no `-c`, `--pr`, or `--mr` option is provided, it sends the content of the current buffer for review.
 2.  **Git Object Review**: If the `-c <git_objects>` option is provided, it reviews the changes specified by the git objects. It sends the `git show` output (the diff) to the AI, and critically, it also uploads the full content of all changed files to provide complete context for the review. `<git_objects>` can be any valid git object reference, like a commit hash, branch name, or a range like `HEAD~3..HEAD`.
-3.  **GitHub PR / GitLab MR Review**: Use `--pr <number>` (or `--github <number>`) or `--mr <number>` (or `--gitlab <number>`) to automatically fetch the branch from the remote repository and run the review on its commits. You can optionally specify `--remote <remote>` (default: `origin`).
+3.  **GitHub PR / GitLab MR Review**: Use `--pr <number>` (or `--github <number>`) or `--mr <number>` (or `--gitlab <number>`) to automatically fetch the branch from the remote repository and run the review on its commits. You can optionally specify `--remote <remote>` (defaults to `g:vimini_default_remote`, `upstream`, the canonical remote for the current branch, or `origin`).
 
 You can add an optional `{prompt}` to guide the AI's review. The review will be displayed in a new vertical split buffer. If `g:vimini_thinking` is `on`, an additional buffer showing the AI's thought process will also be opened.
 
@@ -272,7 +280,7 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 
 *   `--pr <number>` / `--github <number>`: Fetches and reviews the specified GitHub Pull Request number.
 *   `--mr <number>` / `--gitlab <number>`: Fetches and reviews the specified GitLab Merge Request number.
-*   `--remote <remote>`: Remote git repository to fetch PR/MR from (defaults to `origin`).
+*   `--remote <remote>`: Remote git repository to fetch PR/MR from (defaults to `g:vimini_default_remote`, `upstream`, the canonical remote for the current branch, or `origin`).
 *   `--security`: Narrows the scope of the review to focus exclusively on security vulnerabilities, insecure coding practices, and potential attack vectors.
 *   `--save[=<path>]`: Used with `-c`, `--pr`, or `--mr`. This option reviews each commit in the given range individually and saves each review to a separate file. If a path is provided (e.g., `--save=./reviews`), files are saved there. Otherwise, they are saved in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
 

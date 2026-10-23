@@ -90,6 +90,158 @@ def send_review_termination(req_id):
     util.send_channel_request(req, True)
 
 
+def resolve_remote(repo_path, remote=None):
+    """
+    Determines the git remote to use.
+    If 'remote' is explicitly specified and non-empty, returns it.
+    If 'g:vimini_default_remote' is configured and non-empty, returns it (or warns if invalid).
+    Otherwise, inspects available remotes in repo_path:
+    - If 'upstream' is present in remotes, returns 'upstream' (preferred for fork workflows).
+    - Finds the canonical remote for the current branch:
+      1. branch.<current_branch>.remote
+      2. Upstream tracking branch remote (@{upstream})
+    - Falls back to default branch configurations:
+      3. Default branch remote (branch.main.remote, branch.master.remote)
+    - If no configured remote is found, falls back to available remotes:
+      4. 'origin' (if present in remotes)
+      5. First available remote in remotes
+      6. Fallback to 'origin' if no remotes available.
+    """
+    if remote is not None and str(remote).strip() != "":
+        return str(remote).strip()
+
+    try:
+        cfg_remote = vim.eval("get(g:, 'vimini_default_remote', '')")
+        if isinstance(cfg_remote, str) and cfg_remote.strip():
+            candidate = cfg_remote.strip()
+            if not candidate.startswith("-") and re.match(
+                r"^[a-zA-Z0-9_\-\./]+$", candidate
+            ):
+                return candidate
+            util.display_message(
+                f"Warning: Invalid 'g:vimini_default_remote' setting '{candidate}'.",
+                error=True,
+            )
+    except Exception:
+        pass
+
+    if not repo_path:
+        return "origin"
+
+    # Find available remotes
+    remotes = []
+    try:
+        res = subprocess.run(
+            ["git", "-C", repo_path, "remote"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if res.returncode == 0:
+            remotes = [line.strip() for line in res.stdout.splitlines() if line.strip()]
+    except Exception:
+        pass
+
+    # In fork setups, PRs/MRs reside on upstream; prefer it early to avoid overhead
+    if "upstream" in remotes:
+        return "upstream"
+
+    # Find canonical remote for current branch
+    try:
+        branch_res = subprocess.run(
+            ["git", "-C", repo_path, "symbolic-ref", "--short", "-q", "HEAD"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        current_branch = branch_res.stdout.strip() if branch_res.returncode == 0 else ""
+        if current_branch:
+            # 1. branch.<name>.remote
+            cfg_res = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    repo_path,
+                    "config",
+                    f"branch.{current_branch}.remote",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            branch_remote = cfg_res.stdout.strip() if cfg_res.returncode == 0 else ""
+            if (
+                branch_remote
+                and branch_remote != "."
+                and (not remotes or branch_remote in remotes)
+            ):
+                return branch_remote
+
+            # 2. @{upstream} tracking remote
+            u_res = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    repo_path,
+                    "rev-parse",
+                    "--abbrev-ref",
+                    "--symbolic-full-name",
+                    "@{upstream}",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            if u_res.returncode == 0 and u_res.stdout.strip():
+                u_remote = u_res.stdout.strip().split("/")[0]
+                if u_remote and u_remote in remotes:
+                    return u_remote
+    except Exception:
+        pass
+
+    # 3. Fallback to main/master branch remote config
+    try:
+        for def_branch in ["main", "master"]:
+            def_res = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    repo_path,
+                    "config",
+                    f"branch.{def_branch}.remote",
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+            def_remote = def_res.stdout.strip() if def_res.returncode == 0 else ""
+            if (
+                def_remote
+                and def_remote != "."
+                and (not remotes or def_remote in remotes)
+            ):
+                return def_remote
+    except Exception:
+        pass
+
+    if "origin" in remotes:
+        return "origin"
+    if remotes:
+        return remotes[0]
+
+    return "origin"
+
+
 def review(
     prompt,
     git_objects=None,
@@ -99,7 +251,7 @@ def review(
     save_path=None,
     pr=None,
     mr=None,
-    remote="origin",
+    remote=None,
 ):
     """
     Sends content to the Gemini API for a code review via the background agent.
@@ -110,18 +262,6 @@ def review(
         f"review({prompt}, git_objects='{git_objects}', security_focus={security_focus}, verbose={verbose}, save={save}, save_path='{save_path}', pr={pr}, mr={mr}, remote='{remote}')"
     )
     try:
-        # Validate remote
-        if remote is None or str(remote).strip() == "":
-            remote = "origin"
-        else:
-            remote = str(remote).strip()
-
-        if remote.startswith("-") or not re.match(r"^[a-zA-Z0-9_\-\./]+$", remote):
-            util.display_message(
-                f"Security error: Invalid remote name '{remote}'.", error=True
-            )
-            return
-
         # Handle GitHub PR or GitLab MR fetching
         pr_id = str(pr).strip() if pr is not None else None
         mr_id = str(mr).strip() if mr is not None else None
@@ -144,6 +284,17 @@ def review(
             if not repo_path:
                 return
 
+            remote = resolve_remote(repo_path, remote)
+            if (
+                not remote
+                or remote.startswith("-")
+                or not re.match(r"^[a-zA-Z0-9_\-\./]+$", remote)
+            ):
+                util.display_message(
+                    f"Security error: Invalid remote name '{remote}'.", error=True
+                )
+                return
+
             if pr_id:
                 refspec = f"+refs/pull/{pr_id}/head:refs/vimini/pr/{pr_id}"
                 local_ref = f"refs/vimini/pr/{pr_id}"
@@ -161,7 +312,7 @@ def review(
                 worktree_ref = local_ref
 
             util.display_message(f"Fetching {service_desc} from {remote}...")
-            fetch_cmd = ["git", "-C", repo_path, "fetch", remote, refspec]
+            fetch_cmd = ["git", "-C", repo_path, "fetch", "--", remote, refspec]
             res = subprocess.run(
                 fetch_cmd,
                 capture_output=True,
