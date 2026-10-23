@@ -888,7 +888,9 @@ def list_git_commits(project_root=None, max_count=10, revision="HEAD", file_path
         return f"Error executing git log: {e}"
 
 
-def get_git_commit(commit_id, project_root=None, file_path=None, stat_only=False, max_lines=1000):
+def get_git_commit(
+    commit_id, project_root=None, file_path=None, stat_only=False, max_lines=1000
+):
     """
     Retrieves commit information and patch/diff for a specific commit ID.
     """
@@ -994,7 +996,11 @@ def git_grep(
         path_str = str(path).strip()
         if path_str.startswith("-"):
             return "Security error: Path starting with '-' is not allowed."
-        if path_str.startswith("/") or ".." in path_str.split(os.sep) or ".." in path_str.split("/"):
+        if (
+            path_str.startswith("/")
+            or ".." in path_str.split(os.sep)
+            or ".." in path_str.split("/")
+        ):
             return "Security error: Path cannot be absolute or traverse outside repository."
         cmd.extend(["--", path_str])
 

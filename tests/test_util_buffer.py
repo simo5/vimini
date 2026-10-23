@@ -14,6 +14,7 @@ from vimini import main
 
 class MockVimDictionary:
     """Simulates vim.Dictionary which does not inherit from dict."""
+
     def __init__(self, initial=None):
         self._store = dict(initial or {})
 
@@ -100,38 +101,50 @@ def test_review_channel_handler_thought_and_chunk():
         patch.object(vim, "eval", return_value="on"),
     ):
         # Test thought response via main.handle_channel_message dispatch
-        main.handle_channel_message({
-            "id": "10",
-            "result": {"status": "thought", "thought": "Thinking about security...", "verbose": True},
-        })
+        main.handle_channel_message(
+            {
+                "id": "10",
+                "result": {
+                    "status": "thought",
+                    "thought": "Thinking about security...",
+                    "verbose": True,
+                },
+            }
+        )
         assert any("Thinking about security..." in line for line in buf)
         assert "[<-G]" in buf.name
 
         # Test tool_use_requested response
-        main.handle_channel_message({
-            "id": "10",
-            "result": {
-                "status": "tool_use_requested",
-                "tool": "read_file",
-                "args": {"filepath": "foo.py"},
-            },
-        })
+        main.handle_channel_message(
+            {
+                "id": "10",
+                "result": {
+                    "status": "tool_use_requested",
+                    "tool": "read_file",
+                    "args": {"filepath": "foo.py"},
+                },
+            }
+        )
         assert any("read_file" in line for line in buf)
 
         # Test chunk response
-        main.handle_channel_message({
-            "id": "10",
-            "result": {"status": "chunk", "text": "This is the review feedback."},
-        })
+        main.handle_channel_message(
+            {
+                "id": "10",
+                "result": {"status": "chunk", "text": "This is the review feedback."},
+            }
+        )
         assert any("========== REVIEW START ==========" in line for line in buf)
         assert any("This is the review feedback." in line for line in buf)
 
         # Test completed response
         with patch("vimini.util.display_message") as mock_display:
-            main.handle_channel_message({
-                "id": "10",
-                "result": {"status": "completed"},
-            })
+            main.handle_channel_message(
+                {
+                    "id": "10",
+                    "result": {"status": "completed"},
+                }
+            )
             mock_display.assert_called_once_with("Review completed.")
             assert buf.name == "[10] Vimini Review"
             # Finished handler should be unregistered
@@ -146,10 +159,12 @@ def test_review_channel_handler_error():
     handler.register_handler("11", h)
 
     with patch("vimini.util.display_message") as mock_display:
-        main.handle_channel_message({
-            "id": "11",
-            "error": {"message": "Model timeout"},
-        })
+        main.handle_channel_message(
+            {
+                "id": "11",
+                "error": {"message": "Model timeout"},
+            }
+        )
         assert any("Error: Model timeout" in line for line in buf)
         mock_display.assert_called_once_with("Error: Model timeout", error=True)
         assert handler.get_handler("11") is None

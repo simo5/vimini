@@ -236,6 +236,36 @@ def test_review_subprocess_non_utf8_handling(tmp_path):
         assert req_params["review_content"] == "diff with binary byte: \ufffd\n"
 
 
+def test_review_max_turns_from_vim_variable(tmp_path):
+    repo_path = str(tmp_path)
+    with (
+        patch("vimini.util.get_git_repo_root", return_value=repo_path),
+        patch("subprocess.run") as mock_run,
+        patch("vimini.util.send_channel_request") as mock_send,
+        patch("vimini.util.new_split"),
+        patch("vim.command"),
+        patch(
+            "vim.eval",
+            side_effect=lambda expr: (
+                "40" if expr == "get(g:, 'vimini_review_max_turns', '')" else "python"
+            ),
+        ),
+    ):
+        mock_fetch = MagicMock(returncode=0, stdout="", stderr="")
+        mock_sym = MagicMock(returncode=0, stdout="origin/main\n", stderr="")
+        mock_mb = MagicMock(returncode=0, stdout="sha_base\n", stderr="")
+        mock_rev = MagicMock(returncode=0, stdout="sha_pr\n", stderr="")
+        mock_show = MagicMock(returncode=0, stdout="diff_content\n", stderr="")
+
+        mock_run.side_effect = [mock_fetch, mock_sym, mock_mb, mock_rev, mock_show]
+
+        review_module.review("Review with custom turns", pr="123", remote="origin")
+
+        mock_send.assert_called_once()
+        req_params = mock_send.call_args[0][0]["params"]
+        assert req_params["max_turns"] == 40
+
+
 def test_temporary_git_worktree_none_or_empty_ref():
     with temporary_git_worktree("/some/path", None) as path:
         assert path == "/some/path"
@@ -255,9 +285,9 @@ def test_resolve_worktree_dir():
     assert resolve_worktree_dir("my_worktree", repo_path="/repo") == os.path.realpath(
         "/repo/my_worktree"
     )
-    assert resolve_worktree_dir(".var/vimini/worktree", repo_path="/repo") == os.path.realpath(
-        "/repo/.var/vimini/worktree"
-    )
+    assert resolve_worktree_dir(
+        ".var/vimini/worktree", repo_path="/repo"
+    ) == os.path.realpath("/repo/.var/vimini/worktree")
     expected_worktree = os.path.realpath(os.path.expanduser("~/.var/vimini/worktree"))
     assert resolve_worktree_dir("~/.var/vimini/worktree") == expected_worktree
     assert resolve_worktree_dir("/abs/path") == os.path.realpath("/abs/path")

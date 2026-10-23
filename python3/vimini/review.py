@@ -351,6 +351,15 @@ def review(
                     "worktree_ref": worktree_ref,
                 },
             }
+            try:
+                max_turns_val = vim.eval("get(g:, 'vimini_review_max_turns', '')")
+                if (
+                    isinstance(max_turns_val, (int, str))
+                    and str(max_turns_val).isdigit()
+                ):
+                    req["params"]["max_turns"] = int(max_turns_val)
+            except Exception:
+                pass
 
             util.send_channel_request(req)
             return
@@ -463,6 +472,12 @@ def review(
                 "worktree_ref": worktree_ref,
             },
         }
+        try:
+            max_turns_val = vim.eval("get(g:, 'vimini_review_max_turns', '')")
+            if isinstance(max_turns_val, (int, str)) and str(max_turns_val).isdigit():
+                req["params"]["max_turns"] = int(max_turns_val)
+        except Exception:
+            pass
 
         util.send_channel_request(req)
 

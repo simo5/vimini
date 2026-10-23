@@ -8,7 +8,12 @@ sys.path.insert(
     0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "python3"))
 )
 
-from vimini.agent.review import _execute_review_stream, ReviewSession
+from vimini.agent.review import (
+    DEFAULT_MAX_TURNS,
+    _construct_review_prompt,
+    _execute_review_stream,
+    ReviewSession,
+)
 
 
 def make_mock_chunk(text=None, thought=None, function_call=None):
@@ -214,7 +219,9 @@ def test_review_session_interactive_dispatches_properly():
         patch("vimini.agent.review.temporary_git_worktree") as mock_wt,
     ):
         mock_wt.return_value.__enter__.return_value = "/repo"
-        session._process_command("req_int", {"batch": False, "save": False, "prompt": "Hi"}, "c1")
+        session._process_command(
+            "req_int", {"batch": False, "save": False, "prompt": "Hi"}, "c1"
+        )
 
     # Verify chunk was streamed and completed sent
     assert session.send_response.call_count == 2
@@ -229,10 +236,100 @@ def test_review_session_batch_dispatches_when_save_or_batch_flag():
     session._handle_interactive_review = MagicMock()
 
     session._process_command("req_batch", {"batch": True}, "c1")
-    session._handle_batch_review.assert_called_once_with("req_batch", {"batch": True}, "c1")
+    session._handle_batch_review.assert_called_once_with(
+        "req_batch", {"batch": True}, "c1"
+    )
     session._handle_interactive_review.assert_not_called()
 
     session._handle_batch_review.reset_mock()
     session._process_command("req_batch", {"save": True}, "c1")
-    session._handle_batch_review.assert_called_once_with("req_batch", {"save": True}, "c1")
+    session._handle_batch_review.assert_called_once_with(
+        "req_batch", {"save": True}, "c1"
+    )
     session._handle_interactive_review.assert_not_called()
+
+
+def test_construct_review_prompt_max_turns():
+    assert DEFAULT_MAX_TURNS == 30
+
+    prompt_default = _construct_review_prompt(
+        "Prompt", "diff", "buffer", security_focus=False
+    )
+    assert "maximum limit of 30 tool iterations" in prompt_default
+
+    prompt_custom = _construct_review_prompt(
+        "Prompt", "diff", "buffer", security_focus=False, max_turns=50
+    )
+    assert "maximum limit of 50 tool iterations" in prompt_custom
+
+
+def test_execute_review_stream_reaches_max_turns():
+    mock_session = MagicMock()
+    mock_session._check_running.return_value = True
+
+    tool_call = MagicMock()
+    tool_call.name = "read_file"
+    tool_call.args = {"filepath": "foo.py"}
+    chunk = make_mock_chunk(function_call=tool_call)
+
+    mock_chat = MagicMock()
+    mock_chat.send_message_stream.return_value = [chunk]
+
+    with patch("vimini.agent.review.read_file", return_value="file contents"):
+        res = _execute_review_stream(
+            session=mock_session,
+            req_id="limit_test",
+            conn="conn_limit",
+            chat_session=mock_chat,
+            initial_prompt="Review file",
+            project_root="/repo",
+            max_turns=2,
+        )
+
+    assert res == ""
+    # Initial call (turn 0 -> turn 1), tool executed.
+    # Second call (turn 1 -> turn 2 = max_turns), tool executed with limit note appended.
+    # Third call (turn 2 -> turn 3 > max_turns), loop breaks before tool execution.
+    assert mock_chat.send_message_stream.call_count == 3
+
+
+def test_review_session_max_turns_from_params_and_config():
+    session = ReviewSession(
+        "req_mt",
+        MagicMock(),
+        agent_config={"max_turns": 45},
+    )
+    session.send_response = MagicMock()
+    session._check_running = MagicMock(return_value=True)
+
+    mock_client = MagicMock()
+    mock_chat = MagicMock()
+    mock_client.chats.create.return_value = mock_chat
+    mock_chat.send_message_stream.return_value = [make_mock_chunk(text="Done")]
+
+    with (
+        patch("vimini.agent.review.get_client", return_value=mock_client),
+        patch("vimini.agent.review._execute_review_stream") as mock_exec,
+        patch("vimini.agent.review.temporary_git_worktree") as mock_wt,
+    ):
+        mock_wt.return_value.__enter__.return_value = "/repo"
+        # Test reading from agent_config (45)
+        session._handle_interactive_review("req_mt", {"prompt": "p"}, "c1")
+        assert mock_exec.call_args[1]["max_turns"] == 45
+
+        # Test override via params (60)
+        session._handle_interactive_review(
+            "req_mt", {"prompt": "p", "max_turns": 60}, "c1"
+        )
+        assert mock_exec.call_args[1]["max_turns"] == 60
+
+        # Test fallback to DEFAULT_MAX_TURNS if invalid
+        session._handle_interactive_review(
+            "req_mt", {"prompt": "p", "max_turns": "invalid"}, "c1"
+        )
+        assert mock_exec.call_args[1]["max_turns"] == DEFAULT_MAX_TURNS
+
+        session._handle_interactive_review(
+            "req_mt", {"prompt": "p", "max_turns": -5}, "c1"
+        )
+        assert mock_exec.call_args[1]["max_turns"] == DEFAULT_MAX_TURNS

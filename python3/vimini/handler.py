@@ -71,7 +71,9 @@ class StreamBufferHandler(BaseChannelHandler):
 
     def get_buffer(self):
         if self.buffer is None:
-            self.buffer = util.find_buffer_by_job_id(self.req_id, name_hint=self.name_hint)
+            self.buffer = util.find_buffer_by_job_id(
+                self.req_id, name_hint=self.name_hint
+            )
         return self.buffer
 
     def update_spinner(self, target_state=None):
@@ -141,6 +143,8 @@ class StreamBufferHandler(BaseChannelHandler):
         )
         buf = self.get_buffer()
         if buf is not None:
-            util.write_to_buffer(buf, f"\nError: {err_msg}\n", append_to_last=True, redraw=True)
+            util.write_to_buffer(
+                buf, f"\nError: {err_msg}\n", append_to_last=True, redraw=True
+            )
         util.display_message(f"Error: {err_msg}", error=True)
         self.finished = True
