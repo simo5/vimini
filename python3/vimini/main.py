@@ -309,7 +309,7 @@ def help(command_name=None):
         "",
         ":ViminiCommit [-n] [-r] [-a] [instruction]",
         "    Generates a commit message and commits changes.",
-        "    Files to be committed are listed at the bottom of the buffer as comments.",
+        "    Files to be committed are listed in the diff stat comments.",
         "    Press <Space> in Normal mode to toggle files off (marked with -) or on.",
         "    -n: No co-author trailer.",
         "    -r: Regenerate/Amend HEAD.",

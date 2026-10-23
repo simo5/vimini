@@ -26,10 +26,11 @@ COMMANDS                                                    *vimini-commands*
 
 *:ViminiCommit* [-n] [-r] [-a] [instruction]
     Generates a commit message and commits changes using Gemini.
-    Files included in the commit are listed as comments at the bottom of the
-    buffer. In Normal mode, press <Space> on a file to toggle its inclusion
-    (deselected files are marked with -). When saved and closed, deselected
-    files are removed and only remaining files are committed.
+    Files included in the commit are shown in the diff stat comments at the
+    bottom of the buffer. In Normal mode, press <Space> on a file to toggle its
+    inclusion
+    (deselected files are marked with -), or delete the file's line. When
+    saved and closed, deselected files are removed and only remaining files are committed.
     -n: Omit co-author trailer.
     -r: Regenerate commit message for HEAD and amend.
     -a: Amend working tree changes into HEAD and regenerate commit message.
