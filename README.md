@@ -361,16 +361,16 @@ Automates the commit process using AI. This command has three main modes:
 When run without flags (or with `-n`), it automates the creation of a new commit:
 1.  Stages all current changes (`git add .`).
 2.  Generates a commit message based on the staged diff.
-3.  Opens a commit message buffer for editing. The buffer lists all files included in the commit as comments at the bottom.
-4.  In Normal mode, move the cursor over the file list and press `<Space>` to toggle file inclusion (deselected files are marked with a `-` sign, and pressing `<Space>` again re-adds them).
-5.  Save and close the buffer to commit. All files marked with `-` are removed from the commit, and only the remaining files are committed. Close without saving to abort.
+3.  Opens a commit message buffer for editing. The buffer displays the diff stat with all files included in the commit as comments at the bottom.
+4.  In Normal mode, move the cursor over the diff stat file line and press `<Space>` to toggle file inclusion (deselected files are marked with a `-` sign, and pressing `<Space>` again re-adds them), or delete the line to exclude the file.
+5.  Save and close the buffer to commit. All deselected files are removed from the commit, and only the remaining files are committed. Close without saving to abort.
 
 **Regenerate Mode (`-r`):**
 
 When run with the `-r` flag, it regenerates the commit message for the last commit (`HEAD`) and amends it:
 1.  It gets the diff from the `HEAD` commit.
 2.  It generates a new commit message based on that diff.
-3.  Opens the commit message buffer listing the files in `HEAD` (press `<Space>` in Normal mode to toggle/deselect files).
+3.  Opens the commit message buffer listing the diff stat for `HEAD` (press `<Space>` in Normal mode to toggle/deselect files).
 4.  If confirmed and saved, it amends the `HEAD` commit with the new message and deselected files removed.
 
 **Amend Code and Regenerate Mode (`-a`):**
@@ -379,7 +379,7 @@ When run with the `-a` flag, it amends the current working tree changes into the
 1.  Stages current changes.
 2.  Amends the code into `HEAD` (`git commit --amend --no-edit`).
 3.  Generates a new commit message based on the new combined diff from `HEAD`.
-4.  Opens the commit message buffer listing files (press `<Space>` in Normal mode to toggle/deselect files).
+4.  Opens the commit message buffer listing the combined diff stat (press `<Space>` in Normal mode to toggle/deselect files).
 5.  If confirmed and saved, it amends the `HEAD` commit with the new message and deselected files removed.
 
 You can also provide optional `[instructions]` at the end of the command to guide the AI's message generation (e.g., "Mention issue #123" or "Keep it very brief").
