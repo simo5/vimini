@@ -77,10 +77,10 @@ def test_toggle_file():
     ]
 
     with (
+        patch.object(vim.current, "buffer", mock_buffer),
         patch.object(vim, "eval") as mock_eval,
         patch.object(vim, "command") as mock_cmd,
     ):
-        vim.current.buffer = mock_buffer
         vim.current.window.cursor = (4, 4)  # Row 4 is "#   src/app.py"
 
         mock_eval.side_effect = lambda expr: (
@@ -119,9 +119,8 @@ def test_handle_commit_response_adds_files_and_mapping(tmp_path):
     }
 
     mock_buffer = []
-    vim.current.buffer = mock_buffer
-
     with (
+        patch.object(vim.current, "buffer", mock_buffer),
         patch("vimini.util.new_split") as mock_split,
         patch.object(vim, "command") as mock_cmd,
         patch("vimini.util.display_message") as mock_display,
