@@ -113,7 +113,9 @@ def test_main_handle_channel_message_dispatches_to_registered_handler():
 
     main.handle_channel_message(msg)
 
-    mock_handler.handle_response.assert_called_once_with({"status": "chunk", "text": "Hello world"})
+    mock_handler.handle_response.assert_called_once_with(
+        {"status": "chunk", "text": "Hello world"}
+    )
     # Handler was not finished, so remains registered
     assert handler.get_handler("test_req") is mock_handler
 
@@ -162,33 +164,41 @@ def test_chat_channel_handler_turn_persists():
 
     with patch.object(vim, "buffers", [buf]):
         # Send first turn chunk
-        main.handle_channel_message({
-            "id": "60",
-            "result": {"status": "chunk", "text": "Turn 1 answer"},
-        })
+        main.handle_channel_message(
+            {
+                "id": "60",
+                "result": {"status": "chunk", "text": "Turn 1 answer"},
+            }
+        )
         assert any("Turn 1 answer" in line for line in buf)
 
         # Send done: chat handler must NOT be finished (multi-turn conversation)
-        main.handle_channel_message({
-            "id": "60",
-            "result": {"status": "done"},
-        })
+        main.handle_channel_message(
+            {
+                "id": "60",
+                "result": {"status": "done"},
+            }
+        )
         assert not h.is_finished()
         assert handler.get_handler("60") is h
         assert any(chat.WAITING_MSG in line for line in buf)
 
         # Send second turn chunk
-        main.handle_channel_message({
-            "id": "60",
-            "result": {"status": "chunk", "text": "Turn 2 answer"},
-        })
+        main.handle_channel_message(
+            {
+                "id": "60",
+                "result": {"status": "chunk", "text": "Turn 2 answer"},
+            }
+        )
         assert any("Turn 2 answer" in line for line in buf)
 
         # Send terminated: handler is now finished
-        main.handle_channel_message({
-            "id": "60",
-            "result": {"status": "terminated"},
-        })
+        main.handle_channel_message(
+            {
+                "id": "60",
+                "result": {"status": "terminated"},
+            }
+        )
         assert h.is_finished()
         assert handler.get_handler("60") is None
 
@@ -209,29 +219,39 @@ def test_code_channel_handler_flow():
         patch("vim.eval", return_value="on"),
     ):
         # Send thought
-        main.handle_channel_message({
-            "id": "70",
-            "result": {"status": "thought", "thought": "Refactoring code...", "verbose": True},
-        })
+        main.handle_channel_message(
+            {
+                "id": "70",
+                "result": {
+                    "status": "thought",
+                    "thought": "Refactoring code...",
+                    "verbose": True,
+                },
+            }
+        )
         assert any("Refactoring code..." in line for line in buf)
         assert "[<-G]" in buf.name
 
         # Send chunk
-        main.handle_channel_message({
-            "id": "70",
-            "result": {"status": "chunk", "text": "{\"diff\": 1}"},
-        })
-        assert h.stream_json == "{\"diff\": 1}"
+        main.handle_channel_message(
+            {
+                "id": "70",
+                "result": {"status": "chunk", "text": '{"diff": 1}'},
+            }
+        )
+        assert h.stream_json == '{"diff": 1}'
 
         # Send completed
-        main.handle_channel_message({
-            "id": "70",
-            "result": {
-                "status": "completed",
-                "files": ["main.py"],
-                "diff_output": "--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-old\n+new",
-            },
-        })
+        main.handle_channel_message(
+            {
+                "id": "70",
+                "result": {
+                    "status": "completed",
+                    "files": ["main.py"],
+                    "diff_output": "--- a/main.py\n+++ b/main.py\n@@ -1 +1 @@\n-old\n+new",
+                },
+            }
+        )
         assert h.is_finished()
         assert handler.get_handler("70") is None
         assert buf.name == "[70] Vimini Code"
@@ -252,10 +272,12 @@ def test_autocomplete_channel_handler_flow():
     handler.register_handler("auto_1", h)
 
     with patch("vimini.autocomplete._show_autocomplete_popup") as mock_popup:
-        main.handle_channel_message({
-            "id": "auto_1",
-            "result": {"text": "return True\nmore"},
-        })
+        main.handle_channel_message(
+            {
+                "id": "auto_1",
+                "result": {"text": "return True\nmore"},
+            }
+        )
         mock_popup.assert_called_once_with("return True")
         assert h.is_finished()
         assert handler.get_handler("auto_1") is None
@@ -291,10 +313,12 @@ def test_list_models_channel_handler_flow():
     handler.register_handler("list_models", h)
 
     with patch("vimini.models.show_models_list") as mock_show:
-        main.handle_channel_message({
-            "id": "list_models",
-            "result": {"status": "ok", "models": [{"name": "gemini-flash"}]},
-        })
+        main.handle_channel_message(
+            {
+                "id": "list_models",
+                "result": {"status": "ok", "models": [{"name": "gemini-flash"}]},
+            }
+        )
         mock_show.assert_called_once_with([{"name": "gemini-flash"}])
         assert h.is_finished()
         assert handler.get_handler("list_models") is None
@@ -306,13 +330,15 @@ def test_commit_channel_handler_flow():
     handler.register_handler("commit_1", h)
 
     with patch("vimini.commit.handle_commit_response") as mock_commit_resp:
-        main.handle_channel_message({
-            "id": "commit_1",
-            "result": {
-                "status": "ok",
-                "text": "feat: new feature",
-            },
-        })
+        main.handle_channel_message(
+            {
+                "id": "commit_1",
+                "result": {
+                    "status": "ok",
+                    "text": "feat: new feature",
+                },
+            }
+        )
         mock_commit_resp.assert_called_once()
         assert h.is_finished()
         assert handler.get_handler("commit_1") is None

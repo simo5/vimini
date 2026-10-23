@@ -88,7 +88,11 @@ def write_to_buffer(
     if buf is None:
         return
 
-    was_modifiable = bool(buf.options.get("modifiable", True)) if hasattr(buf, "options") and hasattr(buf.options, "get") else True
+    was_modifiable = (
+        bool(buf.options.get("modifiable", True))
+        if hasattr(buf, "options") and hasattr(buf.options, "get")
+        else True
+    )
     try:
         buf.options["modifiable"] = 1
     except Exception:

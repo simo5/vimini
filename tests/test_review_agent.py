@@ -214,7 +214,9 @@ def test_review_session_interactive_dispatches_properly():
         patch("vimini.agent.review.temporary_git_worktree") as mock_wt,
     ):
         mock_wt.return_value.__enter__.return_value = "/repo"
-        session._process_command("req_int", {"batch": False, "save": False, "prompt": "Hi"}, "c1")
+        session._process_command(
+            "req_int", {"batch": False, "save": False, "prompt": "Hi"}, "c1"
+        )
 
     # Verify chunk was streamed and completed sent
     assert session.send_response.call_count == 2
@@ -229,10 +231,14 @@ def test_review_session_batch_dispatches_when_save_or_batch_flag():
     session._handle_interactive_review = MagicMock()
 
     session._process_command("req_batch", {"batch": True}, "c1")
-    session._handle_batch_review.assert_called_once_with("req_batch", {"batch": True}, "c1")
+    session._handle_batch_review.assert_called_once_with(
+        "req_batch", {"batch": True}, "c1"
+    )
     session._handle_interactive_review.assert_not_called()
 
     session._handle_batch_review.reset_mock()
     session._process_command("req_batch", {"save": True}, "c1")
-    session._handle_batch_review.assert_called_once_with("req_batch", {"save": True}, "c1")
+    session._handle_batch_review.assert_called_once_with(
+        "req_batch", {"save": True}, "c1"
+    )
     session._handle_interactive_review.assert_not_called()

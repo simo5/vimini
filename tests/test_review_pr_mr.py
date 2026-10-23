@@ -255,9 +255,9 @@ def test_resolve_worktree_dir():
     assert resolve_worktree_dir("my_worktree", repo_path="/repo") == os.path.realpath(
         "/repo/my_worktree"
     )
-    assert resolve_worktree_dir(".var/vimini/worktree", repo_path="/repo") == os.path.realpath(
-        "/repo/.var/vimini/worktree"
-    )
+    assert resolve_worktree_dir(
+        ".var/vimini/worktree", repo_path="/repo"
+    ) == os.path.realpath("/repo/.var/vimini/worktree")
     expected_worktree = os.path.realpath(os.path.expanduser("~/.var/vimini/worktree"))
     assert resolve_worktree_dir("~/.var/vimini/worktree") == expected_worktree
     assert resolve_worktree_dir("/abs/path") == os.path.realpath("/abs/path")
