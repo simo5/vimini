@@ -109,6 +109,10 @@ def execute_function(req_id, method, params, result_queue, conn):
                 "regenerate": params.get("regenerate")
                 if isinstance(params, dict)
                 else False,
+                "amend": params.get("amend") if isinstance(params, dict) else False,
+                "orig_head": params.get("orig_head")
+                if isinstance(params, dict)
+                else None,
                 "assistant": params.get("assistant")
                 if isinstance(params, dict)
                 else True,

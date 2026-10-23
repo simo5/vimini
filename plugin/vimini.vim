@@ -414,8 +414,8 @@ command! -nargs=* ViminiCommit call ViminiCommit(<q-args>)
 function! ViminiCommitToggleFile()
   py3 << EOF
 try:
-    from vimini.commit import toggle_file
-    toggle_file()
+    from vimini import main
+    main.toggle_file()
 except Exception as e:
     pass
 EOF
