@@ -9,6 +9,7 @@ from vimini.commit import (
     commit,
     finalize_commit,
     _finalize_commit,
+    toggle_file,
 )
 from vimini.review import review
 from vimini.ripgrep import command as ripgrep_command
@@ -308,6 +309,8 @@ def help(command_name=None):
         "",
         ":ViminiCommit [-n] [-r] [-a] [instruction]",
         "    Generates a commit message and commits changes.",
+        "    Files to be committed are listed at the bottom of the buffer as comments.",
+        "    Press <Space> in Normal mode to toggle files off (marked with -) or on.",
         "    -n: No co-author trailer.",
         "    -r: Regenerate/Amend HEAD.",
         "    -a: Amend changes into HEAD and regenerate commit message.",
