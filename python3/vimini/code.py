@@ -403,57 +403,75 @@ def apply_patch(diff_content, project_root=None, silent=False):
                 util.display_message(err_msg, error=True)
             return False, err_msg
 
-        # Success
-        util.display_message("Successfully applied modified diff.", history=True)
-
-        # Parse diff to identify modified files for reloading
-        modified_files = set()
-        for line in diff_content.split("\n"):
-            if line.startswith("--- a/"):
-                path = line[len("--- a/") :].strip()
-                if path != "/dev/null":
-                    modified_files.add(path)
-            elif line.startswith("+++ b/"):
-                path = line[len("+++ b/") :].strip()
-                if path != "/dev/null":
-                    modified_files.add(path)
-
-        for relative_path in modified_files:
-            absolute_path = os.path.join(project_root, relative_path)
-
-            # Clean up .orig files potentially created by patch
-            orig_path = absolute_path + ".orig"
-            if os.path.exists(orig_path):
-                try:
-                    os.remove(orig_path)
-                except Exception:
-                    pass
-
-            normalized_target_path = os.path.realpath(absolute_path)
-            for buf in vim.buffers:
-                if buf.name and os.path.realpath(buf.name) == normalized_target_path:
-                    # Reload buffer if visible
-                    win_nr = vim.eval(f"bufwinnr({buf.number})")
-                    if int(win_nr) > 0:
-                        vim.command(f"{win_nr}wincmd w")
-                        vim.command("e!")
-                        vim.command("wincmd p")
-                    else:
-                        # Mark buffer to be reloaded when entered
-                        vim.command(f"checktime {buf.number}")
-                    break
-        return True, None
-
     except FileNotFoundError:
-        err_msg = "Error: `patch` command not found. Is it in your PATH?"
-        if not silent:
-            util.display_message(err_msg, error=True)
-        return False, err_msg
+        # Fall back to git apply if patch command is not in PATH
+        try:
+            git_cmd = ["git", "-C", project_root, "apply", "--whitespace=nowarn", "-"]
+            result = subprocess.run(
+                git_cmd,
+                input=diff_content,
+                encoding="utf-8",
+                errors="replace",
+                text=True,
+                check=False,
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                err_msg = (result.stderr or result.stdout or "git apply failed").strip()
+                if not silent:
+                    util.display_message(f"Git apply failed: {err_msg}", error=True)
+                return False, err_msg
+        except Exception as ge:
+            err_msg = f"Error: `patch` and `git` commands not available: {ge}"
+            if not silent:
+                util.display_message(err_msg, error=True)
+            return False, err_msg
     except Exception as e:
         err_msg = f"Error applying diff: {e}"
         if not silent:
             util.display_message(err_msg, error=True)
         return False, err_msg
+
+    # Success
+    util.display_message("Successfully applied modified diff.", history=True)
+
+    # Parse diff to identify modified files for reloading
+    modified_files = set()
+    for line in diff_content.split("\n"):
+        if line.startswith("--- a/"):
+            path = line[len("--- a/") :].strip()
+            if path != "/dev/null":
+                modified_files.add(path)
+        elif line.startswith("+++ b/"):
+            path = line[len("+++ b/") :].strip()
+            if path != "/dev/null":
+                modified_files.add(path)
+
+    for relative_path in modified_files:
+        absolute_path = os.path.join(project_root, relative_path)
+
+        # Clean up .orig files potentially created by patch
+        orig_path = absolute_path + ".orig"
+        if os.path.exists(orig_path):
+            try:
+                os.remove(orig_path)
+            except Exception:
+                pass
+
+        normalized_target_path = os.path.realpath(absolute_path)
+        for buf in vim.buffers:
+            if buf.name and os.path.realpath(buf.name) == normalized_target_path:
+                # Reload buffer if visible
+                win_nr = vim.eval(f"bufwinnr({buf.number})")
+                if int(win_nr) > 0:
+                    vim.command(f"{win_nr}wincmd w")
+                    vim.command("e!")
+                    vim.command("wincmd p")
+                else:
+                    # Mark buffer to be reloaded when entered
+                    vim.command(f"checktime {buf.number}")
+                break
+    return True, None
 
 
 def apply_code(job_id=None):

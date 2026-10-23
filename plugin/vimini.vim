@@ -407,6 +407,17 @@ endfunction
 
 command! -nargs=* ViminiCommit call ViminiCommit(<q-args>)
 
+" Expose a function to toggle file selection in commit buffer
+function! ViminiCommitToggleFile()
+  py3 << EOF
+try:
+    from vimini.commit import toggle_file
+    toggle_file()
+except Exception as e:
+    pass
+EOF
+endfunction
+
 " Expose a function to manage uploaded files
 function! ViminiFiles()
   py3 << EOF

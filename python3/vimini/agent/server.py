@@ -103,6 +103,9 @@ def execute_function(req_id, method, params, result_queue, conn):
                 "diff_stat_output": params.get("diff_stat_output")
                 if isinstance(params, dict)
                 else None,
+                "commit_files": params.get("commit_files")
+                if isinstance(params, dict)
+                else None,
                 "regenerate": params.get("regenerate")
                 if isinstance(params, dict)
                 else False,
