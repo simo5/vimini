@@ -23,56 +23,13 @@ Implemented and Documented elsewhere
 
 ## 3. Backend Abstraction Layer
 
-A modular backend architecture isolates provider-specific communication behind a unified interface:
-
-```
-python3/vimini/common/
-├── backends/
-│   ├── __init__.py      # Backend registry and factory: get_backend(name, config)
-│   ├── base.py          # Abstract interfaces: BaseClient, BaseChatSession, StreamChunk
-│   ├── genai_backend.py # Google Gemini implementation (using google-genai)
-│   └── proxy_backend.py # OpenAI-compatible implementation (using standard library HTTP/SSE)
-```
-
-### 3.1 Core Abstraction (`base.py`)
-
-- **`BaseClient`**:
-  - `list_models() -> List[Dict]`: Returns standardized model records (`name`, `display_name`, `description`, `supported_actions`).
-  - `generate_content(prompt, model, system_instruction=None, config=None) -> str`: Non-streaming generation for commit messages, autocomplete, etc.
-  - `generate_content_stream(prompt, model, system_instruction=None, config=None) -> Iterator[StreamChunk]`: Streaming generation for code generation.
-  - `create_chat(model, system_instruction, tools, history=None) -> BaseChatSession`: Interactive multi-turn chat sessions.
-
-- **`BaseChatSession`**:
-  - `send_message_stream(prompt_or_tool_responses) -> Iterator[StreamChunk]`: Sends prompts or tool results and yields chunks.
-  - `has_history() -> bool`: Returns whether the backend supports history retrieval. For `proxy_backend` (`openai`), this returns `False`.
-  - `get_history() -> List[Dict]`: Retrieves serializable chat history if supported (`has_history() == True`). Callers will check `has_history()` before attempting history operations.
-
-- **`StreamChunk`**:
-  - `text`: Incremental generation text.
-  - `thought`: Incremental reasoning/thinking content (supporting DeepSeek-R1 `<think>` delimiters and OpenAI `reasoning_content` deltas).
-  - `tool_calls`: List of requested tool invocations (`name`, `args`, `call_id`).
+Implemented and Documented elsewhere
 
 ---
 
 ## 4. ProxyAPI Implementation Details
 
-### 4.1 Standard Library HTTP & SSE Client
-- Build an SSE (Server-Sent Events) parser over `urllib.request` / `http.client`.
-- Stream response deltas line by line (`data: { ... }`) to yield real-time text and thoughts to Vim.
-
-### 4.2 Tool & Function Calling Translation
-- **Definitions**: Translate Vimini tool declarations (`apply_patch`, `read_file`, `list_directory`, `list_git_commits`, `get_git_commit`, `git_grep`, `build_code`, `test_code`, `fix_format`) into OpenAI `tools` schema format:
-  ```json
-  {
-    "type": "function",
-    "function": {
-      "name": "read_file",
-      "description": "...",
-      "parameters": { ... }
-    }
-  }
-  ```
-- **Responses**: Reconstruct tool calls from streaming `tool_calls` chunks, prompt user in Vim, and return results to the model using `{ "role": "tool", "tool_call_id": id, "content": result }`.
+Implemented and Documented elsewhere
 
 ---
 
@@ -126,8 +83,8 @@ Only the selected backend name is sent; the agent server reads `~/.var/vimini/co
 ## 7. Implementation Roadmap
 
 1. **Phase 1: Config Management**: [COMPLETED] Implement configuration loader and automatic v1 default generator for `~/.var/vimini/config.json`.
-2. **Phase 2: Abstraction & GenAI Adapter**: Refactor Google GenAI code into `GenAIBackend` matching `BaseClient` / `BaseChatSession` and adding `has_history()`.
-3. **Phase 3: ProxyAPI Client**: Implement standard-library OpenAI client (`urllib.request`) supporting models listing, streaming completions, and tool calling.
+2. **Phase 2: Abstraction & GenAI Adapter**: [COMPLETED] Refactor Google GenAI code into `GenAIBackend` matching `BaseClient` / `BaseChatSession` and adding `has_history()`.
+3. **Phase 3: ProxyAPI Client**: [COMPLETED] Implement standard-library OpenAI client (`urllib.request`) supporting models listing, streaming completions, and tool calling.
 4. **Phase 4: Agent Server & Session Integration**: Update `server.py`, `chat.py`, `code.py`, and `review.py` to use backend factory and honor `has_history()`.
 5. **Phase 5: Vim Frontend & Commands**: Implement `:ViminiBackend` (with status echo and argument switching), single-group OpenAI model listing in `:ViminiListModels`, `:ViminiStatus`, and help documentation.
 6. **Phase 6: Testing & Validation**: Add unit tests for config generation/parsing, backend switching, ProxyAPI mock requests, and single-group model listing.
