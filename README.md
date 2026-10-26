@@ -156,6 +156,34 @@ customizations.
     }
     ```
 
+11. **Global & Backend Configuration (`~/.var/vimini/config.json`)**:
+    Vimini manages global settings and model provider backends in `~/.var/vimini/config.json`. If this file does not exist, Vimini automatically generates a default configuration on startup:
+    ```json
+    {
+      "active_backend": "Gemini",
+      "backends": {
+        "Gemini": {
+          "api": "genai",
+          "api_key_file": "~/.config/gemini.token",
+          "default_model": "gemini-3.8-flash"
+        }
+      }
+    }
+    ```
+    Configure per-project settings such as whether compilation is needed, shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`), and the directory path where temporary git worktrees can be created. Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
+    ```json
+    {
+      "version": "0.1",
+      "configuration": {
+        "build-command": "make -j$(nproc)",
+        "test-command": "pytest",
+        "compilation-needed": false,
+        "worktree": "~/.var/vimini/worktree"
+      },
+      "files": []
+    }
+    ```
+
 ## Usage
 
 Vimini exposes several commands for interacting with the Gemini API:
