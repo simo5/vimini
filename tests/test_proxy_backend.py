@@ -361,6 +361,169 @@ def test_proxy_chat_session_preserves_provider_tool_metadata():
     )
 
 
+def test_proxy_chat_session_preserves_metadata_for_sparse_tool_call_index():
+    backend = ProxyBackend()
+    session = backend.create_chat(
+        model="gemini-via-openai-proxy",
+        tools=[{"name": "git_grep", "parameters": {}}],
+    )
+
+    first_turn = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 2,
+                                "id": "call_sparse",
+                                "type": "function",
+                                "function": {
+                                    "name": "git_grep",
+                                    "arguments": '{"pattern":"sparse"}',
+                                    "thought_signature": "sparse-signature",
+                                },
+                                "provider_extra": "sparse-extra",
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    ]
+    first_resp = io.BytesIO(
+        b"".join(
+            [f"data: {json.dumps(chunk)}\n\n".encode("utf-8") for chunk in first_turn]
+            + [b"data: [DONE]\n\n"]
+        )
+    )
+
+    with patch.object(backend, "_make_request", return_value=first_resp):
+        chunks = list(session.send_message_stream("Find sparse metadata"))
+
+    assert chunks == [
+        StreamChunk(
+            tool_calls=[
+                ToolCall(
+                    name="git_grep",
+                    args={"pattern": "sparse"},
+                    call_id="call_sparse",
+                )
+            ]
+        )
+    ]
+
+    second_resp = io.BytesIO(
+        b'data: {"choices": [{"delta": {"content": "done"}}]}\n\ndata: [DONE]\n\n'
+    )
+    tool_response = ToolResponse(
+        name="git_grep",
+        response={"result": "matches"},
+        call_id="call_sparse",
+    )
+    with patch.object(backend, "_make_request", return_value=second_resp) as mock_req:
+        list(session.send_message_stream([tool_response]))
+
+    messages = mock_req.call_args[1]["data"]["messages"]
+    assistant_tool_call = messages[1]["tool_calls"][0]
+    assert assistant_tool_call["id"] == "call_sparse"
+    assert assistant_tool_call["provider_extra"] == "sparse-extra"
+    assert assistant_tool_call["function"]["thought_signature"] == "sparse-signature"
+
+
+def test_proxy_chat_session_deduplicates_repeated_tool_call_name():
+    backend = ProxyBackend()
+    session = backend.create_chat(
+        model="openai-compatible-model",
+        tools=[{"name": "read_file", "parameters": {}}],
+    )
+
+    first_turn = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_repeat",
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": '{"filepath":"a.py"}',
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "function": {"name": "read_file"},
+                            }
+                        ]
+                    }
+                }
+            ]
+        },
+    ]
+    first_resp = io.BytesIO(
+        b"".join(
+            [f"data: {json.dumps(chunk)}\n\n".encode("utf-8") for chunk in first_turn]
+            + [b"data: [DONE]\n\n"]
+        )
+    )
+
+    with patch.object(backend, "_make_request", return_value=first_resp):
+        chunks = list(session.send_message_stream("Read the file"))
+
+    assert chunks == [
+        StreamChunk(
+            tool_calls=[
+                ToolCall(
+                    name="read_file",
+                    args={"filepath": "a.py"},
+                    call_id="call_repeat",
+                )
+            ]
+        )
+    ]
+
+    second_resp = io.BytesIO(
+        b'data: {"choices": [{"delta": {"content": "done"}}]}\n\ndata: [DONE]\n\n'
+    )
+    tool_response = ToolResponse(
+        name="read_file",
+        response="contents",
+        call_id="call_repeat",
+    )
+    with patch.object(backend, "_make_request", return_value=second_resp) as mock_req:
+        list(session.send_message_stream([tool_response]))
+
+    messages = mock_req.call_args[1]["data"]["messages"]
+    assistant_tool_call = messages[1]["tool_calls"][0]
+    assert assistant_tool_call["function"]["name"] == "read_file"
+
+
+def test_merge_streamed_function_name_preserves_chunked_names():
+    merge = ProxyChatSession._merge_streamed_function_name
+
+    name = merge("", "read")
+    name = merge(name, "_file")
+    assert name == "read_file"
+
+    # Overlapping chunks should be merged rather than duplicated.
+    assert merge("read_f", "file") == "read_file"
+
+    # Repeated complete names should not be appended.
+    assert merge("read_file", "read_file") == "read_file"
+
+
 def test_get_backend_factory_resolves_proxy_backend():
     config = {
         "active_backend": "Custom 1",

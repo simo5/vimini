@@ -148,6 +148,34 @@ class ProxyChatSession(BaseChatSession):
         return []
 
     @staticmethod
+    def _merge_streamed_function_name(current: str, incoming: str) -> str:
+        """
+        Merge streamed function name deltas without duplicating repeated names.
+
+        Most providers stream function names as either one complete value or as
+        chunks. Some OpenAI-compatible providers repeat the complete function
+        name in subsequent deltas. Preserve chunked names while avoiding
+        corruption such as "read_fileread_file".
+        """
+        if not incoming:
+            return current or ""
+        if not current:
+            return incoming
+        if incoming == current:
+            return current
+        if incoming.startswith(current):
+            return incoming
+        if current.endswith(incoming):
+            return current
+
+        max_overlap = min(len(current), len(incoming))
+        for overlap in range(max_overlap, 0, -1):
+            if current.endswith(incoming[:overlap]):
+                return current + incoming[overlap:]
+
+        return current + incoming
+
+    @staticmethod
     def _merge_streamed_tool_call(
         target: Dict[str, Any], source: Dict[str, Any]
     ) -> None:
@@ -173,9 +201,9 @@ class ProxyChatSession(BaseChatSession):
         source_function = source.get("function") or {}
         target_function = target.setdefault("function", {})
         if source_function.get("name"):
-            target_function["name"] = target_function.get(
-                "name", ""
-            ) + source_function.get("name", "")
+            target_function["name"] = ProxyChatSession._merge_streamed_function_name(
+                target_function.get("name", ""), source_function.get("name", "")
+            )
         if source_function.get("arguments"):
             target_function["arguments"] = target_function.get(
                 "arguments", ""
@@ -297,13 +325,13 @@ class ProxyChatSession(BaseChatSession):
             asst_msg["content"] = accumulated_text
         if completed_tool_calls:
             asst_msg["tool_calls"] = []
-            for i, tc in enumerate(completed_tool_calls):
-                raw_tool_call = dict(tool_call_chunks.get(i, {}))
+            for idx, tc in zip(sorted(tool_call_chunks.keys()), completed_tool_calls):
+                raw_tool_call = dict(tool_call_chunks.get(idx, {}))
                 raw_function = dict(raw_tool_call.get("function", {}))
                 raw_function["name"] = tc.name
                 raw_function["arguments"] = json.dumps(tc.args)
 
-                raw_tool_call["id"] = tc.call_id or f"call_{i}"
+                raw_tool_call["id"] = tc.call_id or f"call_{idx}"
                 raw_tool_call["type"] = raw_tool_call.get("type") or "function"
                 raw_tool_call["function"] = raw_function
                 asst_msg["tool_calls"].append(raw_tool_call)
