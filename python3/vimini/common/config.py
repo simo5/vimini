@@ -12,6 +12,33 @@ DEFAULT_GEMINI_KEY_FILE = "~/.config/gemini.token"
 SUPPORTED_API_TYPES = {"genai", "openai"}
 
 
+def _to_bool(value, default=False):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on"):
+            return True
+        if normalized in ("0", "false", "no", "off"):
+            return False
+    return default
+
+
+def backend_requires_api_key(backend_config):
+    """
+    Returns whether a backend requires an API key.
+
+    Gemini always requires an API key. OpenAI-compatible endpoints default to not
+    requiring one so local/proxy endpoints can be used without spurious warnings;
+    remote providers can opt in with requires_api_key=true.
+    """
+    if not isinstance(backend_config, dict):
+        return True
+    api = str(backend_config.get("api", "genai")).strip()
+    default = api == "genai"
+    return _to_bool(backend_config.get("requires_api_key"), default=default)
+
+
 def get_global_config_path():
     """
     Returns the path to the global configuration file ~/.var/vimini/config.json.
@@ -74,12 +101,13 @@ def validate_global_config(config):
             raise ValueError(
                 f"Backend '{name}' api '{api}' is not supported. Supported APIs: {supported}"
             )
+        requires_key = backend_requires_api_key(backend_info)
         key_file = backend_info.get("api_key_file")
         if key_file is not None and not isinstance(key_file, str):
             raise ValueError(
                 f"Backend '{name}' 'api_key_file' must be a string path if specified"
             )
-        if not isinstance(key_file, str) or not key_file.strip():
+        if requires_key and (not isinstance(key_file, str) or not key_file.strip()):
             raise ValueError(
                 f"Backend '{name}' must specify a non-empty 'api_key_file'"
             )

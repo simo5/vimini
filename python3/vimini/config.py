@@ -394,11 +394,6 @@ def add_global_backend():
         )
         default_model = _to_str(vim.eval("input('Default model: ')")).strip()
         api_key_file = _to_str(vim.eval("input('API key file: ')")).strip()
-        if not api_key_file:
-            util.display_message(
-                "API key file is required for every backend.", error=True
-            )
-            return
         backend_cfg = {"api": api}
         if api_key_file:
             backend_cfg["api_key_file"] = api_key_file
@@ -486,11 +481,6 @@ def delete_or_clear_global_config_option():
             backend_name, field = target[1], target[2]
             if field == "api":
                 util.display_message("Backend api cannot be cleared.", error=True)
-                return
-            if field == "api_key_file":
-                util.display_message(
-                    "Backend api_key_file cannot be cleared.", error=True
-                )
                 return
             backends.setdefault(backend_name, {}).pop(field, None)
             _refresh_global_config_buffer(win, line_num, col)

@@ -392,23 +392,48 @@ class ProxyBackend(BaseClient):
 
     def _read_sse_stream(self, resp) -> Iterator[Dict[str, Any]]:
         buffer = ""
+        done_sentinel = object()
+
+        def parse_event(event_text: str):
+            data_lines = []
+            for raw_event_line in event_text.splitlines():
+                event_line = raw_event_line.rstrip("\r")
+                if not event_line or event_line.startswith(":"):
+                    continue
+                if event_line.startswith("data:"):
+                    data_lines.append(event_line[5:].lstrip())
+
+            if not data_lines:
+                return None
+
+            data_str = "\n".join(data_lines)
+            if data_str == "[DONE]":
+                return done_sentinel
+            try:
+                return json.loads(data_str)
+            except json.JSONDecodeError:
+                return None
+
         try:
             for raw_line in resp:
                 line = raw_line.decode("utf-8", errors="replace")
                 buffer += line
-                while "\n" in buffer:
-                    line_str, buffer = buffer.split("\n", 1)
-                    line_str = line_str.strip()
-                    if not line_str or line_str.startswith(":"):
-                        continue
-                    if line_str.startswith("data:"):
-                        data_str = line_str[5:].strip()
-                        if data_str == "[DONE]":
-                            return
-                        try:
-                            yield json.loads(data_str)
-                        except json.JSONDecodeError:
-                            continue
+                normalized = buffer.replace("\r\n", "\n").replace("\r", "\n")
+                while "\n\n" in normalized:
+                    event_text, normalized = normalized.split("\n\n", 1)
+                    event = parse_event(event_text)
+                    if event is done_sentinel:
+                        return
+                    if event is not None:
+                        yield event
+                buffer = normalized
+
+            if buffer.strip():
+                event = parse_event(buffer)
+                if event is done_sentinel:
+                    return
+                if event is not None:
+                    yield event
         finally:
             try:
                 resp.close()

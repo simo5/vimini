@@ -230,3 +230,55 @@ def test_initialize_reports_invalid_global_config():
         "Global configuration is invalid: Backend 'Gemini' must specify a non-empty 'api_key_file'",
         error=True,
     )
+
+
+def test_initialize_does_not_warn_for_keyless_openai_backend():
+    config = {
+        "active_backend": "Local",
+        "backends": {
+            "Local": {
+                "api": "openai",
+                "base_url": "http://localhost:11434/v1",
+                "default_model": "local-model",
+            }
+        },
+    }
+
+    with (
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.context.restore_context_files"),
+        patch("vimini.util.get_api_key", return_value=None),
+        patch("vimini.util.display_message") as mock_display,
+    ):
+        main.initialize(api_key_file="~/.config/gemini.token", logfile=None)
+
+    assert util._BACKEND == "Local"
+    assert util._MODEL == "local-model"
+    mock_display.assert_not_called()
+
+
+def test_initialize_warns_with_backend_specific_api_key_message():
+    config = {
+        "active_backend": "Remote",
+        "backends": {
+            "Remote": {
+                "api": "openai",
+                "requires_api_key": True,
+                "api_key_file": "~/.config/remote.token",
+                "default_model": "gpt-compatible",
+            }
+        },
+    }
+
+    with (
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.context.restore_context_files"),
+        patch("vimini.util.get_api_key", return_value=None),
+        patch("vimini.util.display_message") as mock_display,
+    ):
+        main.initialize(api_key_file="~/.config/gemini.token", logfile=None)
+
+    mock_display.assert_called_once_with(
+        "API key for backend 'Remote' not found in ~/.config/remote.token.",
+        error=True,
+    )

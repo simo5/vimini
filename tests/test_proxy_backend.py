@@ -197,6 +197,28 @@ def test_proxy_backend_generate_content_stream():
         assert chunks[2].text == " World"
 
 
+def test_proxy_backend_read_sse_stream_multiline_events_and_trailing_data():
+    backend = ProxyBackend()
+    stream = io.BytesIO(
+        b': comment ignored\ndata: {"first":\ndata: true}\n\ndata: {"second": true}'
+    )
+
+    events = list(backend._read_sse_stream(stream))
+
+    assert events == [{"first": True}, {"second": True}]
+
+
+def test_proxy_backend_read_sse_stream_stops_on_done_event():
+    backend = ProxyBackend()
+    stream = io.BytesIO(
+        b'data: {"first": true}\n\ndata: [DONE]\n\ndata: {"ignored": true}\n\n'
+    )
+
+    events = list(backend._read_sse_stream(stream))
+
+    assert events == [{"first": True}]
+
+
 def test_proxy_chat_session_streaming_and_tools():
     backend = ProxyBackend()
     session = backend.create_chat(
