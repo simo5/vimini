@@ -417,6 +417,60 @@ def add_global_backend():
         util.display_message(f"Error adding backend: {e}", error=True)
 
 
+def prompt_delete_backend_dialog(backend_name):
+    """
+    Asks the user via a dialog if they want to delete a backend configuration.
+    Returns True if user confirmed, False otherwise.
+    """
+    popup_content = [
+        f"Delete backend '{backend_name}'?",
+        "This configuration will be permanently removed.",
+        "",
+        "---",
+        "Confirm deletion? [y/n]",
+    ]
+    popup_options = {
+        "title": " Delete Backend ",
+        "line": 0,
+        "col": 0,
+        "minwidth": 40,
+        "maxwidth": 80,
+        "padding": [1, 2, 1, 2],
+        "border": [1, 1, 1, 1],
+        "borderchars": ["─", "│", "─", "│", "╭", "╮", "╯", "╰"],
+        "close": "none",
+        "zindex": 200,
+    }
+
+    confirmed = False
+    try:
+        popup_id = vim.eval(
+            f"popup_create({json.dumps(popup_content)}, {popup_options})"
+        )
+        vim.command("redraw!")
+        try:
+            answer_code = vim.eval("getchar()")
+            try:
+                answer_char = chr(int(answer_code))
+            except (ValueError, TypeError):
+                answer_char = str(answer_code) if answer_code else ""
+            if answer_char.lower() == "y":
+                confirmed = True
+        finally:
+            try:
+                p_id = int(popup_id)
+            except (ValueError, TypeError):
+                p_id = 1
+            if p_id > 0:
+                vim.eval(f"popup_close({p_id})")
+                vim.command("redraw!")
+    except Exception as e:
+        util.log_info(f"Popup creation failed: {e}")
+        confirmed = False
+
+    return confirmed
+
+
 def delete_or_clear_global_config_option():
     global _VIMINI_PENDING_GLOBAL_CONFIG
     try:
@@ -448,15 +502,7 @@ def delete_or_clear_global_config_option():
                     "Cannot delete the last configured backend.", error=True
                 )
                 return
-            confirmed = (
-                int(
-                    vim.eval(
-                        f"confirm({_vim_string(f'Delete backend {backend_name}?')}, '&Yes\\n&No', 2)"
-                    )
-                )
-                == 1
-            )
-            if confirmed:
+            if prompt_delete_backend_dialog(backend_name):
                 backends.pop(backend_name, None)
                 if _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend") == backend_name:
                     _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = next(
@@ -1314,14 +1360,50 @@ def confirm_global_config():
             util.display_message(f"Global configuration is invalid: {e}", error=True)
             return
 
-        confirmed = (
-            int(
-                vim.eval(
-                    "confirm('Save global configuration changes?', '&Yes\\n&No', 2)"
-                )
+        popup_content = [
+            "Save global configuration changes?",
+            "",
+            "---",
+            "Accept changes? [y/n]",
+        ]
+        popup_options = {
+            "title": " Confirm Configuration ",
+            "line": 0,
+            "col": 0,
+            "minwidth": 40,
+            "maxwidth": 80,
+            "padding": [1, 2, 1, 2],
+            "border": [1, 1, 1, 1],
+            "borderchars": ["─", "│", "─", "│", "╭", "╮", "╯", "╰"],
+            "close": "none",
+            "zindex": 200,
+        }
+        confirmed = False
+        try:
+            popup_id = vim.eval(
+                f"popup_create({json.dumps(popup_content)}, {popup_options})"
             )
-            == 1
-        )
+            vim.command("redraw!")
+            try:
+                answer_code = vim.eval("getchar()")
+                try:
+                    answer_char = chr(int(answer_code))
+                except (ValueError, TypeError):
+                    answer_char = str(answer_code) if answer_code else ""
+                if answer_char.lower() == "y":
+                    confirmed = True
+            finally:
+                try:
+                    p_id = int(popup_id)
+                except (ValueError, TypeError):
+                    p_id = 1
+                if p_id > 0:
+                    vim.eval(f"popup_close({p_id})")
+                    vim.command("redraw!")
+        except Exception as e:
+            util.log_info(f"Popup creation failed: {e}")
+            confirmed = False
+
         if confirmed:
             if save_global_config(
                 _VIMINI_PENDING_GLOBAL_CONFIG, config_path=_VIMINI_GLOBAL_CONFIG_PATH
