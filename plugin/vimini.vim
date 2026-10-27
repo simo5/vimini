@@ -124,7 +124,7 @@ function! ViminiBackendComplete(ArgLead, CmdLine, CursorPos)
   return py3eval("main.get_available_backends(vim.eval('a:ArgLead'))")
 endfunction
 
-command! -nargs=? -complete=customlist,ViminiBackendComplete ViminiBackend call ViminiBackend(<f-args>)
+command! -nargs=* -complete=customlist,ViminiBackendComplete ViminiBackend call ViminiBackend(<q-args>)
 
 " Expose a function to Chat with Gemini
 function! ViminiChat()

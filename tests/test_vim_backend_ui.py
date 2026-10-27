@@ -50,6 +50,24 @@ def test_backend_command_without_arguments_no_others():
         assert "Gemini (no other backends configured)" in msg
 
 
+def test_backend_command_without_arguments_whitespace():
+    config = {
+        "active_backend": "Gemini",
+        "backends": {
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
+        },
+    }
+
+    with (
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.util.display_message") as mock_display,
+    ):
+        main.backend_command("   ")
+        mock_display.assert_called_once()
+        msg = mock_display.call_args[0][0]
+        assert "Gemini (no other backends configured)" in msg
+
+
 def test_backend_command_switch_success():
     config = {
         "active_backend": "Gemini",

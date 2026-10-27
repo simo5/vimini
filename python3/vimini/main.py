@@ -208,7 +208,8 @@ def backend_command(backend_name=None):
     active = get_active_backend(cfg)
     backends = cfg.get("backends", {})
 
-    if not backend_name:
+    backend_name_str = str(backend_name).strip() if backend_name else ""
+    if not backend_name_str:
         others = [b for b in backends.keys() if b != active]
         if others:
             util.display_message(
@@ -220,7 +221,6 @@ def backend_command(backend_name=None):
             )
         return
 
-    backend_name_str = str(backend_name).strip()
     if backend_name_str not in backends:
         available = list(backends.keys())
         util.display_message(
