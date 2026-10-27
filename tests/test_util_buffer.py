@@ -190,3 +190,42 @@ def test_review_assigns_job_id_to_non_dict_vars():
 
         # Verify vimini_job_id was successfully assigned to vars
         assert review_buf.vars.get("vimini_job_id") == "99"
+
+
+def test_get_model_name_non_gemini_backend_does_not_call_get_client():
+    util._MODEL_NAME = None
+    util._BACKEND = "Local"
+    util._MODEL = "llama3"
+
+    with patch("vimini.util.get_client") as mock_get_client:
+        name = util.get_model_name()
+        assert name == "llama3"
+        assert not mock_get_client.called
+
+
+def test_get_model_name_cached():
+    util._MODEL_NAME = "Cached Display Name"
+    util._BACKEND = "Gemini"
+    util._MODEL = "gemini-3.8-flash"
+
+    with patch("vimini.util.get_client") as mock_get_client:
+        name = util.get_model_name()
+        assert name == "Cached Display Name"
+        assert not mock_get_client.called
+
+
+def test_get_model_name_gemini_calls_client():
+    util._MODEL_NAME = None
+    util._BACKEND = "Gemini"
+    util._MODEL = "gemini-3.8-flash"
+
+    mock_client = MagicMock()
+    mock_info = MagicMock()
+    mock_info.display_name = "Gemini 3.8 Flash"
+    mock_client.models.get.return_value = mock_info
+
+    with patch("vimini.util.get_client", return_value=mock_client):
+        name = util.get_model_name()
+        assert name == "Gemini 3.8 Flash"
+        assert util._MODEL_NAME == "Gemini 3.8 Flash"
+        mock_client.models.get.assert_called_once_with(model="gemini-3.8-flash")

@@ -223,6 +223,21 @@ def get_model_name():
     if _MODEL_NAME is not None:
         return _MODEL_NAME
 
+    backend = _BACKEND
+    api_type = None
+    try:
+        from vimini.common.config import load_global_config, get_active_backend
+
+        cfg = load_global_config()
+        backend = backend or get_active_backend(cfg)
+        b_cfg = cfg.get("backends", {}).get(backend, {})
+        api_type = b_cfg.get("api", "genai")
+    except Exception:
+        pass
+
+    if (backend and backend != "Gemini") or (api_type and api_type != "genai"):
+        return _MODEL
+
     client = get_client()
     if not client:
         return _MODEL

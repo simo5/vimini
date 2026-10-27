@@ -19,6 +19,7 @@ from vimini.commit import (
     _revert_amend,
     _commit_files_by_file,
     CommitChannelHandler,
+    util,
 )
 
 
@@ -1844,3 +1845,49 @@ def test_real_git_commits_workflow(tmp_path):
         check=True,
     ).stdout.strip()
     assert msg_after_6 == "Regenerated commit message"
+
+
+def test_finalize_commit_with_keyless_backend_no_api_key_error(tmp_path):
+    import vim
+
+    tmp_file = tmp_path / "commit_msg_keyless.txt"
+    repo_path = str(tmp_path)
+    content = (
+        "Commit with keyless model\n\n# --- Diff stat ---\n#   src/main.py | 1 +\n"
+    )
+    tmp_file.write_text(content, encoding="utf-8")
+
+    def mock_eval_fn(expr):
+        if "vimini_commit_tmp_file" in expr:
+            return str(tmp_file)
+        if "vimini_commit_repo_path" in expr:
+            return repo_path
+        if "vimini_commit_assistant" in expr:
+            return 1
+        if "vimini_commit_files" in expr:
+            return json.dumps(["src/main.py"])
+        return ""
+
+    util._MODEL_NAME = None
+    util._BACKEND = "Local"
+    util._MODEL = "llama3"
+    util._API_KEY_FILE = None
+
+    with (
+        patch.object(vim, "eval", side_effect=mock_eval_fn),
+        patch("subprocess.run") as mock_run,
+        patch("vimini.util.get_client") as mock_get_client,
+        patch("vimini.util.display_message") as mock_display,
+    ):
+        mock_proc_ok = MagicMock(returncode=0, stdout="[main 123] done", stderr="")
+        mock_run.return_value = mock_proc_ok
+
+        finalize_commit()
+
+        # get_client should never be called, avoiding spurious API key error
+        assert not mock_get_client.called
+        err_calls = [c for c in mock_display.call_args_list if c.kwargs.get("error")]
+        assert len(err_calls) == 0
+        # Verify trailer contains the keyless model name
+        commit_input = mock_run.call_args.kwargs.get("input", "")
+        assert "Assisted-by: llama3" in commit_input

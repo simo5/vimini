@@ -20,6 +20,7 @@ from vimini.common.config import (
     get_active_backend_config,
     set_active_backend,
     load_backend_api_key,
+    backend_requires_api_key,
 )
 
 
@@ -260,3 +261,53 @@ def test_load_backend_api_key_empty_or_missing(tmp_path):
     empty_file = tmp_path / "empty.token"
     empty_file.write_text("   \n", encoding="utf-8")
     assert load_backend_api_key({"api_key_file": str(empty_file)}) is None
+
+
+def test_backend_requires_api_key():
+    # Non-dict defaults to True
+    assert backend_requires_api_key(None) is True
+    assert backend_requires_api_key("string") is True
+
+    # GenAI backends require API key by default
+    assert backend_requires_api_key({"api": "genai"}) is True
+    assert (
+        backend_requires_api_key({"api": "genai", "api_key_file": "~/.token"}) is True
+    )
+    assert (
+        backend_requires_api_key({"api": "genai", "requires_api_key": False}) is False
+    )
+
+    # OpenAI without api_key_file defaults to False
+    assert backend_requires_api_key({"api": "openai"}) is False
+    assert (
+        backend_requires_api_key(
+            {"api": "openai", "base_url": "http://localhost:11434"}
+        )
+        is False
+    )
+
+    # OpenAI with api_key_file defaults to True
+    assert (
+        backend_requires_api_key(
+            {"api": "openai", "api_key_file": "~/.config/openai.token"}
+        )
+        is True
+    )
+    assert backend_requires_api_key({"api": "openai", "api_key_file": ""}) is False
+
+    # Explicit requires_api_key overrides default
+    assert (
+        backend_requires_api_key(
+            {
+                "api": "openai",
+                "api_key_file": "~/.config/openai.token",
+                "requires_api_key": False,
+            }
+        )
+        is False
+    )
+    assert backend_requires_api_key({"api": "openai", "requires_api_key": True}) is True
+    assert (
+        backend_requires_api_key({"api": "openai", "requires_api_key": "yes"}) is True
+    )
+    assert backend_requires_api_key({"api": "openai", "requires_api_key": "0"}) is False

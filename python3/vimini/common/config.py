@@ -28,14 +28,15 @@ def backend_requires_api_key(backend_config):
     """
     Returns whether a backend requires an API key.
 
-    Gemini always requires an API key. OpenAI-compatible endpoints default to not
-    requiring one so local/proxy endpoints can be used without spurious warnings;
-    remote providers can opt in with requires_api_key=true.
+    Gemini always requires an API key. OpenAI-compatible endpoints default to
+    requiring one if api_key_file is defined and non-empty, and not requiring one
+    if omitted (e.g. for local keyless endpoints). Explicit requires_api_key
+    takes precedence if specified.
     """
     if not isinstance(backend_config, dict):
         return True
     api = str(backend_config.get("api", "genai")).strip()
-    default = api == "genai"
+    default = api == "genai" or bool(backend_config.get("api_key_file"))
     return _to_bool(backend_config.get("requires_api_key"), default=default)
 
 
