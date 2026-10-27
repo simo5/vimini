@@ -22,6 +22,7 @@ from vimini.common.config import (
     load_global_config,
     get_active_backend,
     load_backend_api_key,
+    validate_global_config,
 )
 
 
@@ -37,6 +38,7 @@ def get_backend(
     Confines all backend selection logic within generic backend methods.
     """
     if isinstance(config, dict) and "backends" in config:
+        validate_global_config(config)
         global_cfg = config
         if backend_name is None:
             backend_name = (

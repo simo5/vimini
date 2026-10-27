@@ -9,6 +9,7 @@ DEFAULT_CONFIG_PATH = os.path.join(DEFAULT_CONFIG_DIR, "config.json")
 DEFAULT_BACKEND = "Gemini"
 DEFAULT_MODEL = "gemini-3.8-flash"
 DEFAULT_GEMINI_KEY_FILE = "~/.config/gemini.token"
+SUPPORTED_API_TYPES = {"genai", "openai"}
 
 
 def get_global_config_path():
@@ -67,6 +68,12 @@ def validate_global_config(config):
         api = backend_info.get("api")
         if not isinstance(api, str) or not api.strip():
             raise ValueError(f"Backend '{name}' must specify a non-empty 'api' type")
+        api = api.strip()
+        if api not in SUPPORTED_API_TYPES:
+            supported = ", ".join(sorted(SUPPORTED_API_TYPES))
+            raise ValueError(
+                f"Backend '{name}' api '{api}' is not supported. Supported APIs: {supported}"
+            )
         key_file = backend_info.get("api_key_file")
         if key_file is not None and not isinstance(key_file, str):
             raise ValueError(

@@ -98,10 +98,7 @@ def test_get_backend_unsupported_api():
             }
         },
     }
-    with (
-        patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"),
-        pytest.raises(ValueError, match="Unsupported API protocol 'unknown_api'"),
-    ):
+    with pytest.raises(ValueError, match="api 'unknown_api' is not supported"):
         get_backend("Custom", config=config)
 
 
@@ -130,6 +127,17 @@ def test_get_backend_reports_missing_api_key():
         pytest.raises(RuntimeError, match="API key for backend 'Custom 1'"),
     ):
         get_backend("Custom 1", config=config)
+
+
+def test_get_backend_surfaces_global_config_load_errors():
+    with (
+        patch(
+            "vimini.common.backends.load_global_config",
+            side_effect=ValueError("bad config"),
+        ),
+        pytest.raises(ValueError, match="bad config"),
+    ):
+        get_backend("Gemini")
 
 
 def test_genai_backend_list_models():
