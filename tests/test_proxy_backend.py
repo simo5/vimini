@@ -292,6 +292,75 @@ def test_proxy_chat_session_streaming_and_tools():
         assert messages[3]["content"] == "file content here"
 
 
+def test_proxy_chat_session_preserves_provider_tool_metadata():
+    backend = ProxyBackend()
+    session = backend.create_chat(
+        model="gemini-via-openai-proxy",
+        tools=[{"name": "git_grep", "parameters": {}}],
+    )
+
+    first_turn = [
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_sig",
+                                "type": "function",
+                                "function": {
+                                    "name": "git_grep",
+                                    "arguments": '{"pattern":"PROXY-API.md"}',
+                                    "thought_signature": "opaque-gemini-signature",
+                                },
+                                "provider_extra": "keep-me",
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+    ]
+    first_resp = io.BytesIO(
+        b"".join(
+            [f"data: {json.dumps(chunk)}\n\n".encode("utf-8") for chunk in first_turn]
+            + [b"data: [DONE]\n\n"]
+        )
+    )
+
+    with patch.object(backend, "_make_request", return_value=first_resp):
+        chunks = list(session.send_message_stream("Find the docs"))
+
+    assert len(chunks) == 1
+    assert chunks[0].tool_calls == [
+        ToolCall(
+            name="git_grep",
+            args={"pattern": "PROXY-API.md"},
+            call_id="call_sig",
+        )
+    ]
+
+    second_resp = io.BytesIO(
+        b'data: {"choices": [{"delta": {"content": "done"}}]}\n\ndata: [DONE]\n\n'
+    )
+    tool_response = ToolResponse(
+        name="git_grep",
+        response={"result": "matches"},
+        call_id="call_sig",
+    )
+    with patch.object(backend, "_make_request", return_value=second_resp) as mock_req:
+        list(session.send_message_stream([tool_response]))
+
+    messages = mock_req.call_args[1]["data"]["messages"]
+    assistant_tool_call = messages[1]["tool_calls"][0]
+    assert assistant_tool_call["provider_extra"] == "keep-me"
+    assert (
+        assistant_tool_call["function"]["thought_signature"]
+        == "opaque-gemini-signature"
+    )
+
+
 def test_get_backend_factory_resolves_proxy_backend():
     config = {
         "active_backend": "Custom 1",
