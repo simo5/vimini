@@ -12,6 +12,7 @@ from vimini.models import (
     categorize_model,
     build_models_buffer,
     select_model,
+    set_default_model,
     SUPPORTED_CATEGORY,
     _LINE_TO_MODEL,
 )
@@ -272,4 +273,50 @@ def test_select_unsupported_model_emits_error(genai_global_config):
         # Error should be displayed
         mock_display.assert_called_once_with(
             "Category 'Image Generation' is unsupported", error=True
+        )
+
+
+def test_set_default_model_persists_and_switches(genai_global_config):
+    models = [
+        {"name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash"},
+        {"name": "gemini-2.5-pro", "display_name": "Gemini 2.5 Pro"},
+    ]
+    config = {
+        "active_backend": "Gemini",
+        "backends": {
+            "Gemini": {"api": "genai", "default_model": "gemini-2.5-flash"},
+        },
+    }
+    util._BACKEND = "Gemini"
+    util._MODEL = "gemini-2.5-flash"
+    buffer_lines, line_map, _ = build_models_buffer(
+        models, current_model="gemini-2.5-flash"
+    )
+    models_module._VIMINI_MODELS = models
+    models_module._LINE_TO_MODEL = line_map
+
+    target_line = next(
+        ln for ln, item in line_map.items() if item and item["name"] == "gemini-2.5-pro"
+    )
+
+    import vim
+
+    vim.current.window.cursor = (target_line, 3)
+    mock_buffer = list(buffer_lines)
+
+    with (
+        patch.object(vim.current, "buffer", mock_buffer),
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config.save_global_config") as mock_save_config,
+        patch("vimini.main.send_setup") as mock_setup,
+        patch("vimini.util.display_message") as mock_display,
+    ):
+        set_default_model()
+
+        assert config["backends"]["Gemini"]["default_model"] == "gemini-2.5-pro"
+        assert util._MODEL == "gemini-2.5-pro"
+        mock_save_config.assert_called_once_with(config)
+        mock_setup.assert_called_once()
+        mock_display.assert_called_once_with(
+            "Set default model for Gemini to gemini-2.5-pro"
         )

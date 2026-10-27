@@ -160,3 +160,31 @@ def test_build_models_buffer_genai_categories():
     assert "Backend: Gemini" in header
     assert "[Multimodal & Text Generation]" in buffer_lines
     assert any("Only 'Multimodal & Text Generation'" in line for line in buffer_lines)
+
+
+def test_initialize_uses_global_config_model_not_vim_config():
+    config = {
+        "active_backend": "Gemini",
+        "backends": {
+            "Gemini": {
+                "api": "genai",
+                "api_key_file": "~/.config/gemini.token",
+                "default_model": "gemini-global-default",
+            }
+        },
+    }
+
+    with (
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.context.restore_context_files"),
+        patch("vimini.util.get_api_key", return_value="token"),
+    ):
+        main.initialize(
+            api_key_file="~/.config/gemini.token",
+            model="deprecated-vim-config-model",
+            logfile=None,
+        )
+
+    assert util._BACKEND == "Gemini"
+    assert util._MODEL == "gemini-global-default"
+    assert util._API_KEY_FILE == os.path.expanduser("~/.config/gemini.token")

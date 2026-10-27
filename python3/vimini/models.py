@@ -161,7 +161,7 @@ def build_models_buffer(models, current_model, backend_name=None, api_type=None)
     buffer_lines = [
         f"| Vimini Available Models (Backend: {backend_name})",
         "|----------------------------------------------------------------------",
-        "| <CR>: switch model | q: close",
+        "| <CR>: switch model | D: set default | q: close",
     ]
     if api_type == "genai":
         buffer_lines.append(
@@ -298,6 +298,9 @@ def show_models_list(models):
     vim.command(
         "nnoremap <buffer> <silent> <CR> :py3 from vimini.models import select_model; select_model()<CR>"
     )
+    vim.command(
+        "nnoremap <buffer> <silent> D :py3 from vimini.models import set_default_model; set_default_model()<CR>"
+    )
     vim.command("nnoremap <buffer> <silent> q :q<CR>")
 
     try:
@@ -315,6 +318,26 @@ def show_models_list(models):
         pass
 
 
+def _get_cursor_model_entry():
+    line_num, _ = vim.current.window.cursor
+    return _LINE_TO_MODEL.get(line_num)
+
+
+def _normalized_model_name(entry):
+    model_name = entry.get("name", "") if entry else ""
+    if model_name.startswith("models/"):
+        model_name = model_name[7:]
+    return model_name
+
+
+def _validate_selectable_entry(entry):
+    cat = entry.get("category") if entry else None
+    if cat != SUPPORTED_CATEGORY and cat != "Available Models":
+        util.display_message(f"Category '{cat}' is unsupported", error=True)
+        return False
+    return True
+
+
 def select_model():
     global _LINE_TO_MODEL
     try:
@@ -322,19 +345,14 @@ def select_model():
         win = vim.current.window
         line_num, col = win.cursor
 
-        entry = _LINE_TO_MODEL.get(line_num)
+        entry = _get_cursor_model_entry()
         if not entry:
             return
 
-        cat = entry.get("category")
-        if cat != SUPPORTED_CATEGORY and cat != "Available Models":
-            util.display_message(f"Category '{cat}' is unsupported", error=True)
+        if not _validate_selectable_entry(entry):
             return
 
-        model_name = entry.get("name", "")
-        if model_name.startswith("models/"):
-            model_name = model_name[7:]
-
+        model_name = _normalized_model_name(entry)
         util._MODEL = model_name
         util._MODEL_NAME = None
         vim.command(f"let g:vimini_model = '{model_name}'")
@@ -355,3 +373,51 @@ def select_model():
 
     except Exception as e:
         util.display_message(f"Error selecting model: {e}", error=True)
+
+
+def set_default_model():
+    global _LINE_TO_MODEL
+    try:
+        buf = vim.current.buffer
+        entry = _get_cursor_model_entry()
+        if not entry:
+            return
+
+        if not _validate_selectable_entry(entry):
+            return
+
+        model_name = _normalized_model_name(entry)
+
+        from vimini.common.config import load_global_config, save_global_config
+        from vimini.common.config import get_active_backend
+        from vimini import main
+
+        cfg = load_global_config()
+        backend_name = getattr(util, "_BACKEND", None) or get_active_backend(cfg)
+        backends = cfg.get("backends", {})
+        if backend_name not in backends:
+            util.display_message(
+                f"Backend '{backend_name}' not found in global config", error=True
+            )
+            return
+
+        backends[backend_name]["default_model"] = model_name
+        save_global_config(cfg)
+
+        util._MODEL = model_name
+        util._MODEL_NAME = None
+        vim.command(f"let g:vimini_model = '{model_name}'")
+        main.send_setup()
+
+        vim.command("setlocal modifiable")
+        buffer_lines, _LINE_TO_MODEL, _ = build_models_buffer(
+            _VIMINI_MODELS, util._MODEL
+        )
+        buf[:] = buffer_lines
+        vim.command("setlocal nomodifiable")
+        vim.command("redraw")
+
+        util.display_message(f"Set default model for {backend_name} to {model_name}")
+
+    except Exception as e:
+        util.display_message(f"Error setting default model: {e}", error=True)
