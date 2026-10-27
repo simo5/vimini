@@ -10,6 +10,7 @@ sys.path.insert(
 
 from vimini import main, util
 from vimini.models import build_models_buffer
+from vimini.common.config import DEFAULT_MODEL
 
 
 def test_backend_command_without_arguments():
@@ -103,6 +104,44 @@ def test_backend_command_switch_success():
             "Switched backend to Custom 1 (model: gpt-4o)"
             in mock_display.call_args[0][0]
         )
+
+
+def test_backend_command_switch_resets_key_and_model_when_missing():
+    config = {
+        "active_backend": "Gemini",
+        "backends": {
+            "Gemini": {
+                "api": "genai",
+                "api_key_file": "~/.config/gemini.token",
+                "default_model": "gemini-3.8-flash",
+            },
+            "Local": {
+                "api": "openai",
+                "base_url": "http://localhost:11434/v1",
+            },
+        },
+    }
+
+    util._BACKEND = "Gemini"
+    util._MODEL = "gemini-3.8-flash"
+    util._API_KEY_FILE = os.path.expanduser("~/.config/gemini.token")
+    util._MODEL_NAME = "Cached Model Name"
+
+    with (
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config.set_active_backend") as mock_set_active,
+        patch("vimini.main.send_setup") as mock_send_setup,
+        patch("vimini.util.display_message") as mock_display,
+    ):
+        main.backend_command("Local")
+
+        mock_set_active.assert_called_once_with("Local")
+        assert util._BACKEND == "Local"
+        assert util._MODEL == DEFAULT_MODEL
+        assert util._MODEL_NAME is None
+        assert util._API_KEY_FILE is None
+        mock_send_setup.assert_called_once()
+        mock_display.assert_called_once()
 
 
 def test_backend_command_switch_invalid():
@@ -282,6 +321,32 @@ def test_initialize_warns_with_backend_specific_api_key_message():
             "Remote": {
                 "api": "openai",
                 "requires_api_key": True,
+                "api_key_file": "~/.config/remote.token",
+                "default_model": "gpt-compatible",
+            }
+        },
+    }
+
+    with (
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.context.restore_context_files"),
+        patch("vimini.util.get_api_key", return_value=None),
+        patch("vimini.util.display_message") as mock_display,
+    ):
+        main.initialize(api_key_file="~/.config/gemini.token", logfile=None)
+
+    mock_display.assert_called_once_with(
+        "API key for backend 'Remote' not found in ~/.config/remote.token.",
+        error=True,
+    )
+
+
+def test_initialize_warns_when_api_key_file_specified_without_requires_api_key():
+    config = {
+        "active_backend": "Remote",
+        "backends": {
+            "Remote": {
+                "api": "openai",
                 "api_key_file": "~/.config/remote.token",
                 "default_model": "gpt-compatible",
             }

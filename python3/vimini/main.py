@@ -158,7 +158,7 @@ def apply_backend_config(cfg, backend_name, persist=True):
     Applies a backend from a loaded global config to the current Vim/runtime state.
     Optionally persists active_backend in the config file.
     """
-    from vimini.common.config import set_active_backend
+    from vimini.common.config import set_active_backend, DEFAULT_MODEL
 
     backends = cfg.get("backends", {}) if isinstance(cfg, dict) else {}
     if backend_name not in backends:
@@ -175,15 +175,18 @@ def apply_backend_config(cfg, backend_name, persist=True):
     except Exception:
         pass
 
-    if target_cfg.get("default_model"):
-        util._MODEL = target_cfg.get("default_model")
-        util._MODEL_NAME = None
-        try:
-            vim.command(f"let g:vimini_model = {json.dumps(util._MODEL)}")
-        except Exception:
-            pass
-    if target_cfg.get("api_key_file"):
-        util._API_KEY_FILE = os.path.expanduser(target_cfg.get("api_key_file"))
+    default_model = target_cfg.get("default_model") or DEFAULT_MODEL
+    util._MODEL = default_model
+    util._MODEL_NAME = None
+    try:
+        vim.command(f"let g:vimini_model = {json.dumps(util._MODEL)}")
+    except Exception:
+        pass
+    util._API_KEY_FILE = (
+        os.path.expanduser(target_cfg["api_key_file"])
+        if target_cfg.get("api_key_file")
+        else None
+    )
     send_setup()
 
 

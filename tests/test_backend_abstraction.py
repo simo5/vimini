@@ -133,6 +133,26 @@ def test_get_backend_reports_missing_api_key():
         get_backend("Custom 1", config=config)
 
 
+def test_get_backend_reports_missing_api_key_when_requires_api_key_omitted():
+    config = {
+        "active_backend": "Custom 1",
+        "backends": {
+            "Custom 1": {
+                "api": "openai",
+                "api_key_file": "~/.config/missing.token",
+            }
+        },
+    }
+
+    with (
+        patch("vimini.common.backends.load_backend_api_key", return_value=None),
+        pytest.raises(
+            RuntimeError, match="API key for backend 'Custom 1' could not be loaded"
+        ),
+    ):
+        get_backend("Custom 1", config=config)
+
+
 def test_get_backend_allows_openai_without_api_key_when_not_required():
     config = {
         "active_backend": "Local",
