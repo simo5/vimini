@@ -57,26 +57,7 @@ Implemented and Documented elsewhere
 
 ## 6. Agent Server & IPC Protocol Updates
 
-### 6.1 Setup Message Payload
-Update `send_setup()` in `main.py` to transmit the active backend name:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": "setup",
-  "method": "setup",
-  "params": {
-    "backend": "Custom 1"
-  }
-}
-```
-
-Only the selected backend name is sent; the agent server reads `~/.var/vimini/config.json` to load the corresponding backend configuration options.
-
-### 6.2 Agent Server Handlers
-- Update `execute_function` in `server.py` to route `list_models`, `commit`, and `autocomplete` through the active backend client.
-- Update `ChatSession` in `agent/chat.py`, `CodeSession` in `agent/code.py`, and `ReviewSession` in `agent/review.py` to obtain their client and session via `get_backend(agent_config)`.
-- Update chat session history callers to check `has_history()` and bypass history handling if false.
+Implemented and Documented elsewhere
 
 ---
 
@@ -85,7 +66,7 @@ Only the selected backend name is sent; the agent server reads `~/.var/vimini/co
 1. **Phase 1: Config Management**: [COMPLETED] Implement configuration loader and automatic v1 default generator for `~/.var/vimini/config.json`.
 2. **Phase 2: Abstraction & GenAI Adapter**: [COMPLETED] Refactor Google GenAI code into `GenAIBackend` matching `BaseClient` / `BaseChatSession` and adding `has_history()`.
 3. **Phase 3: ProxyAPI Client**: [COMPLETED] Implement standard-library OpenAI client (`urllib.request`) supporting models listing, streaming completions, and tool calling.
-4. **Phase 4: Agent Server & Session Integration**: Update `server.py`, `chat.py`, `code.py`, and `review.py` to use backend factory and honor `has_history()`.
+4. **Phase 4: Agent Server & Session Integration**: [COMPLETED] Update `server.py`, `chat.py`, `code.py`, and `review.py` to use backend factory and honor `has_history()`.
 5. **Phase 5: Vim Frontend & Commands**: Implement `:ViminiBackend` (with status echo and argument switching), single-group OpenAI model listing in `:ViminiListModels`, `:ViminiStatus`, and help documentation.
 6. **Phase 6: Testing & Validation**: Add unit tests for config generation/parsing, backend switching, ProxyAPI mock requests, and single-group model listing.
 

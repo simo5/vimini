@@ -377,6 +377,8 @@ class ProxyBackend(BaseClient):
         prompt: str,
         model: str,
         system_instruction: Optional[str] = None,
+        verbose: bool = False,
+        response_schema: Optional[Any] = None,
         config: Optional[Any] = None,
     ) -> str:
         messages: List[Dict[str, Any]] = []
@@ -401,6 +403,8 @@ class ProxyBackend(BaseClient):
         prompt: Any,
         model: str,
         system_instruction: Optional[str] = None,
+        verbose: bool = False,
+        response_schema: Optional[Any] = None,
         config: Optional[Any] = None,
     ) -> Iterator[StreamChunk]:
         messages: List[Dict[str, Any]] = []
@@ -415,6 +419,8 @@ class ProxyBackend(BaseClient):
             "messages": messages,
             "stream": True,
         }
+        if response_schema is not None:
+            payload["response_format"] = {"type": "json_object"}
         resp = self._make_request("/chat/completions", data=payload, stream=True)
         for event_data in self._read_sse_stream(resp):
             choices = event_data.get("choices", [])

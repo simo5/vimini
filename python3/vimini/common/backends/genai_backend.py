@@ -4,7 +4,10 @@ from google.genai import types
 from vimini.common.backends.base import (
     BaseChatSession,
     BaseClient,
+    FunctionDeclaration,
+    Schema,
     StreamChunk,
+    Tool,
     ToolCall,
     ToolResponse,
 )
@@ -15,6 +18,114 @@ from vimini.common.genai import (
 )
 
 logger = logging.getLogger("vimini_agent")
+
+
+def _to_genai_schema(schema: Any) -> Any:
+    if schema is None:
+        return types.Schema(type=types.Type.OBJECT)
+    if isinstance(schema, types.Schema):
+        return schema
+    if isinstance(schema, Schema):
+        type_str = str(schema.type).upper().split(".")[-1]
+        genai_type = getattr(types.Type, type_str, types.Type.OBJECT)
+        props = None
+        if schema.properties:
+            props = {k: _to_genai_schema(v) for k, v in schema.properties.items()}
+        items = None
+        if schema.items:
+            items = _to_genai_schema(schema.items)
+        return types.Schema(
+            type=genai_type,
+            description=schema.description,
+            properties=props,
+            required=schema.required,
+            enum=schema.enum,
+            items=items,
+        )
+    if isinstance(schema, dict):
+        type_val = schema.get("type", "object")
+        type_str = str(type_val).upper().split(".")[-1]
+        genai_type = getattr(types.Type, type_str, types.Type.OBJECT)
+        props = None
+        if "properties" in schema and isinstance(schema["properties"], dict):
+            props = {k: _to_genai_schema(v) for k, v in schema["properties"].items()}
+        items = None
+        if "items" in schema:
+            items = _to_genai_schema(schema["items"])
+        return types.Schema(
+            type=genai_type,
+            description=schema.get("description"),
+            properties=props,
+            required=schema.get("required"),
+            enum=schema.get("enum"),
+            items=items,
+        )
+    return types.Schema(type=types.Type.OBJECT)
+
+
+def _to_genai_tools(tools: Any) -> Optional[List[Any]]:
+    if not tools:
+        return None
+    genai_tools = []
+    tool_list = tools if isinstance(tools, (list, tuple)) else [tools]
+    for t in tool_list:
+        if isinstance(t, types.Tool):
+            genai_tools.append(t)
+        elif isinstance(t, Tool):
+            fds = []
+            for fd in t.function_declarations:
+                if isinstance(fd, types.FunctionDeclaration):
+                    fds.append(fd)
+                else:
+                    fds.append(
+                        types.FunctionDeclaration(
+                            name=fd.name,
+                            description=fd.description or "",
+                            parameters=_to_genai_schema(fd.parameters),
+                        )
+                    )
+            genai_tools.append(types.Tool(function_declarations=fds))
+        elif isinstance(t, FunctionDeclaration):
+            genai_tools.append(
+                types.Tool(
+                    function_declarations=[
+                        types.FunctionDeclaration(
+                            name=t.name,
+                            description=t.description or "",
+                            parameters=_to_genai_schema(t.parameters),
+                        )
+                    ]
+                )
+            )
+        elif isinstance(t, types.FunctionDeclaration):
+            genai_tools.append(types.Tool(function_declarations=[t]))
+        elif isinstance(t, dict):
+            if t.get("type") == "function" and "function" in t:
+                fn = t["function"]
+                genai_tools.append(
+                    types.Tool(
+                        function_declarations=[
+                            types.FunctionDeclaration(
+                                name=fn.get("name", ""),
+                                description=fn.get("description", ""),
+                                parameters=_to_genai_schema(fn.get("parameters")),
+                            )
+                        ]
+                    )
+                )
+            elif "name" in t:
+                genai_tools.append(
+                    types.Tool(
+                        function_declarations=[
+                            types.FunctionDeclaration(
+                                name=t["name"],
+                                description=t.get("description", ""),
+                                parameters=_to_genai_schema(t.get("parameters")),
+                            )
+                        ]
+                    )
+                )
+    return genai_tools if genai_tools else None
 
 
 class GenAIChatSession(BaseChatSession):
@@ -84,7 +195,13 @@ class GenAIChatSession(BaseChatSession):
                     if hasattr(part, "function_call") and part.function_call:
                         fc = part.function_call
                         args_dict = dict(fc.args) if getattr(fc, "args", None) else {}
-                        tool_calls.append(ToolCall(name=fc.name, args=args_dict))
+                        tool_calls.append(
+                            ToolCall(
+                                name=fc.name,
+                                args=args_dict,
+                                call_id=getattr(fc, "id", None),
+                            )
+                        )
                     elif getattr(part, "thought", False):
                         thought += getattr(part, "text", "") or ""
                     elif hasattr(part, "text") and part.text:
@@ -151,10 +268,25 @@ class GenAIBackend(BaseClient):
         prompt: Any,
         model: str,
         system_instruction: Optional[str] = None,
+        verbose: bool = False,
+        response_schema: Optional[Any] = None,
         config: Optional[Any] = None,
     ) -> Iterator[StreamChunk]:
         if config is None:
-            config = create_generation_config(system_instruction=system_instruction)
+            schema_arg = (
+                _to_genai_schema(response_schema)
+                if response_schema is not None
+                else None
+            )
+            config = create_generation_config(
+                verbose=verbose,
+                system_instruction=system_instruction,
+                response_mime_type="application/json"
+                if response_schema is not None
+                else None,
+                response_schema=schema_arg,
+                disable_function_calling=True,
+            )
         response_stream = self.client.models.generate_content_stream(
             model=model, contents=prompt, config=config
         )
@@ -186,12 +318,35 @@ class GenAIBackend(BaseClient):
         config: Optional[Any] = None,
     ) -> BaseChatSession:
         if config is None:
+            genai_tools = _to_genai_tools(tools)
             config = create_generation_config(
-                tools=tools,
+                tools=genai_tools,
                 verbose=verbose,
                 system_instruction=system_instruction,
-                disable_function_calling=tools is None,
+                disable_function_calling=genai_tools is None,
             )
         return GenAIChatSession(
             self.client, model=model, config=config, history=history
+        )
+
+    def upload_context_files(
+        self,
+        logger: Any,
+        file_paths_to_include: Optional[List[str]] = None,
+        project_root: Optional[str] = None,
+        buffers: Optional[List[Any]] = None,
+        display_cb: Optional[Any] = None,
+    ) -> List[Any]:
+        from vimini.common.context import upload_context_files
+
+        return (
+            upload_context_files(
+                logger,
+                self.client,
+                file_paths_to_include=file_paths_to_include,
+                project_root=project_root,
+                buffers=buffers,
+                display_cb=display_cb,
+            )
+            or []
         )

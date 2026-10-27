@@ -3,10 +3,13 @@ import json
 import logging
 import re
 import difflib
-from google.genai import types
 from vimini.agent.comms import CommSession
-from vimini.common.genai import get_client, create_generation_config
-from vimini.common.context import upload_context_files
+from vimini.common.backends import (
+    get_client,
+    Schema,
+    Type,
+    StreamChunk,
+)
 
 logger = logging.getLogger("vimini_agent")
 
@@ -123,38 +126,33 @@ class CodeSession(CommSession):
         try:
             client = get_client(config=agent_config)
 
-            file_object_schema = types.Schema(
-                type=types.Type.OBJECT,
+            file_object_schema = Schema(
+                type=Type.OBJECT,
                 properties={
-                    "file_path": types.Schema(
-                        type=types.Type.STRING,
+                    "file_path": Schema(
+                        type=Type.STRING,
                         description="The full path of the file relative to the project directory.",
                     ),
-                    "file_type": types.Schema(
-                        type=types.Type.STRING,
+                    "file_type": Schema(
+                        type=Type.STRING,
                         description="The content type. Use 'text/plain' for the full file content or 'text/x-diff' for a patch in the unified diff format.",
                     ),
-                    "file_content": types.Schema(
-                        type=types.Type.STRING,
+                    "file_content": Schema(
+                        type=Type.STRING,
                         description="The new, complete source code for the file, or a patch in the unified diff format, corresponding to the file_type.",
                     ),
                 },
                 required=["file_path", "file_type", "file_content"],
             )
-            multi_file_output_schema = types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "files": types.Schema(
-                        type=types.Type.ARRAY, items=file_object_schema
-                    )
-                },
+            multi_file_output_schema = Schema(
+                type=Type.OBJECT,
+                properties={"files": Schema(type=Type.ARRAY, items=file_object_schema)},
                 required=["files"],
             )
 
             uploaded_files = (
-                upload_context_files(
+                client.upload_context_files(
                     logger,
-                    client,
                     file_paths_to_include=file_paths_to_include,
                     project_root=project_root,
                     buffers=buffers,
@@ -162,7 +160,9 @@ class CodeSession(CommSession):
                 )
                 or []
             )
-            context_file_names = [f.display_name for f in uploaded_files]
+            context_file_names = [
+                f.display_name for f in uploaded_files if hasattr(f, "display_name")
+            ]
             processing_errors = []
 
             file_list_str = "\n".join(
@@ -195,21 +195,37 @@ class CodeSession(CommSession):
                 *uploaded_files,
             ]
 
-            generation_config = create_generation_config(
+            response_stream = client.generate_content_stream(
+                model=model,
+                prompt=full_prompt,
                 verbose=verbose,
-                response_mime_type="application/json",
                 response_schema=multi_file_output_schema,
-                disable_function_calling=True,
-            )
-
-            response_stream = client.models.generate_content_stream(
-                model=model, contents=full_prompt, config=generation_config
             )
 
             json_aggregator = ""
 
             for chunk in response_stream:
-                if hasattr(chunk, "candidates") and chunk.candidates:
+                if isinstance(chunk, StreamChunk):
+                    if chunk.thought:
+                        self.send_response(
+                            req_id,
+                            conn,
+                            result={
+                                "status": "thought",
+                                "thought": chunk.thought,
+                            },
+                        )
+                    if chunk.text:
+                        json_aggregator += chunk.text
+                        self.send_response(
+                            req_id,
+                            conn,
+                            result={
+                                "status": "chunk",
+                                "text": chunk.text,
+                            },
+                        )
+                elif hasattr(chunk, "candidates") and chunk.candidates:
                     candidate = chunk.candidates[0]
                     if candidate.content and candidate.content.parts:
                         for part in candidate.content.parts:

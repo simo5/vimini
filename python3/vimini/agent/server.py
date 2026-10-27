@@ -16,7 +16,7 @@ import select
 import logging
 import signal
 import atexit
-from vimini.common.genai import get_client, load_api_key, create_generation_config
+from vimini.common.backends import get_client
 
 MAX_RECEIVE_BUFFER_SIZE = 1024 * 1024
 AGENT_CONFIG = {}
@@ -65,38 +65,16 @@ def execute_function(req_id, method, params, result_queue, conn):
             result = {"status": "ok"}
         elif method == "list_models":
             client = get_client(config=AGENT_CONFIG)
-            models_iter = client.models.list()
-            models = []
-            for m in models_iter:
-                actions = (
-                    getattr(m, "supported_actions", None)
-                    or getattr(m, "supported_generation_methods", None)
-                    or []
-                )
-                if isinstance(actions, (list, tuple, set)):
-                    actions = list(actions)
-                else:
-                    actions = []
-                models.append(
-                    {
-                        "name": m.name,
-                        "display_name": getattr(m, "display_name", m.name),
-                        "description": getattr(m, "description", "") or "",
-                        "supported_actions": actions,
-                    }
-                )
+            models = client.list_models()
             result = {"status": "ok", "models": models}
         elif method == "commit":
             client = get_client(config=AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-            config = create_generation_config(disable_function_calling=True)
-            response = client.models.generate_content(
-                model=model, contents=prompt, config=config
-            )
+            text = client.generate_content(prompt=prompt, model=model)
             result = {
                 "status": "ok",
-                "text": response.text,
+                "text": text,
                 "repo_path": params.get("repo_path")
                 if isinstance(params, dict)
                 else None,
@@ -121,11 +99,8 @@ def execute_function(req_id, method, params, result_queue, conn):
             client = get_client(config=AGENT_CONFIG)
             model = AGENT_CONFIG.get("model")
             prompt = params.get("prompt", "") if isinstance(params, dict) else ""
-            config = create_generation_config(disable_function_calling=True)
-            response = client.models.generate_content(
-                model=model, contents=prompt, config=config
-            )
-            result = {"status": "ok", "text": response.text}
+            text = client.generate_content(prompt=prompt, model=model)
+            result = {"status": "ok", "text": text}
         else:
             result = {"status": "ok"}
         response = [

@@ -3,6 +3,57 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional
 
 
+class TypeEnum:
+    def __init__(self, name: str):
+        self.name = name
+
+    def __str__(self) -> str:
+        return self.name
+
+    def __repr__(self) -> str:
+        return f"Type.{self.name}"
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, str):
+            return self.name.lower() == other.lower()
+        if hasattr(other, "name"):
+            return self.name.lower() == str(other.name).lower()
+        return False
+
+    def __hash__(self) -> int:
+        return hash(self.name.lower())
+
+
+class Type:
+    OBJECT = TypeEnum("OBJECT")
+    STRING = TypeEnum("STRING")
+    INTEGER = TypeEnum("INTEGER")
+    BOOLEAN = TypeEnum("BOOLEAN")
+    ARRAY = TypeEnum("ARRAY")
+
+
+@dataclass
+class Schema:
+    type: str = Type.OBJECT
+    description: Optional[str] = None
+    properties: Optional[Dict[str, Any]] = None
+    required: Optional[List[str]] = None
+    enum: Optional[List[str]] = None
+    items: Optional[Any] = None
+
+
+@dataclass
+class FunctionDeclaration:
+    name: str
+    description: Optional[str] = None
+    parameters: Optional[Schema] = None
+
+
+@dataclass
+class Tool:
+    function_declarations: List[FunctionDeclaration] = field(default_factory=list)
+
+
 @dataclass
 class ToolCall:
     name: str
@@ -85,6 +136,8 @@ class BaseClient(ABC):
         prompt: Any,
         model: str,
         system_instruction: Optional[str] = None,
+        verbose: bool = False,
+        response_schema: Optional[Any] = None,
         config: Optional[Any] = None,
     ) -> Iterator[StreamChunk]:
         """
@@ -106,3 +159,16 @@ class BaseClient(ABC):
         Creates and returns a BaseChatSession for multi-turn chat.
         """
         pass
+
+    def upload_context_files(
+        self,
+        logger: Any,
+        file_paths_to_include: Optional[List[str]] = None,
+        project_root: Optional[str] = None,
+        buffers: Optional[List[Any]] = None,
+        display_cb: Optional[Any] = None,
+    ) -> List[Any]:
+        """
+        Uploads or processes context files if supported by backend.
+        """
+        return []
