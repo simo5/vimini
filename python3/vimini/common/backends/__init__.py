@@ -36,19 +36,26 @@ def get_backend(
     Factory function returning a BaseClient instance for the requested or active backend.
     Confines all backend selection logic within generic backend methods.
     """
-    global_cfg = load_global_config(config_path=config_path)
-    backends = global_cfg.get("backends", {})
+    if isinstance(config, dict) and "backends" in config:
+        backends = config.get("backends", {})
+        if backend_name is None:
+            backend_name = (
+                config.get("active_backend") or config.get("backend") or "Gemini"
+            )
+    else:
+        try:
+            global_cfg = load_global_config(config_path=config_path)
+        except Exception:
+            from vimini.common.config import create_default_global_config
 
-    if backend_name is None and isinstance(config, dict):
-        backend_name = config.get("backend")
-
-    if backend_name is None:
-        backend_name = get_active_backend(global_cfg)
+            global_cfg = create_default_global_config()
+        backends = global_cfg.get("backends", {})
+        if backend_name is None and isinstance(config, dict):
+            backend_name = config.get("backend")
+        if backend_name is None:
+            backend_name = get_active_backend(global_cfg)
 
     if backend_name not in backends:
-        # Check if config itself has backends dictionary
-        if isinstance(config, dict) and "backends" in config:
-            backends = config.get("backends", {})
         if backend_name not in backends:
             available = list(backends.keys())
             raise ValueError(

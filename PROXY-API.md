@@ -35,23 +35,7 @@ Implemented and Documented elsewhere
 
 ## 5. Runtime Backend Switching & Vim UI
 
-### 5.1 Vimscript Commands & Options (`plugin/vimini.vim`)
-- **Global Variable**: `g:vimini_backend` (the name of the active backend, e.g. `'Gemini'`, `'Custom 1'`).
-- **Command**: `:ViminiBackend [backend_name]`
-  - **Without arguments**: Echoes the active backend and lists other available backends in parentheses.
-    - Example: `Gemini (available: Custom 1, Custom 2)`
-  - **With argument**: Validates that the requested backend exists in `~/.var/vimini/config.json`. If valid:
-    - Sets active backend in runtime and config.
-    - Updates `g:vimini_backend`.
-    - Updates `g:vimini_model` to the new backend's `default_model`.
-    - Sends an updated `setup` message to the agent server.
-
-### 5.2 Model List & Status Integration
-- `:ViminiListModels`:
-  - For `genai` backends, models are categorized by supported actions (Multimodal, Embeddings, Image, etc.).
-  - For `openai` (ProxyAPI) backends, all models returned by `GET /v1/models` are listed under a single group: `[Available Models]`.
-  - Displays the active backend name in the buffer header.
-- `:ViminiStatus`: Displays active backend name, protocol type, endpoint URL, and current model.
+Implemented and Documented elsewhere
 
 ---
 
@@ -67,8 +51,8 @@ Implemented and Documented elsewhere
 2. **Phase 2: Abstraction & GenAI Adapter**: [COMPLETED] Refactor Google GenAI code into `GenAIBackend` matching `BaseClient` / `BaseChatSession` and adding `has_history()`.
 3. **Phase 3: ProxyAPI Client**: [COMPLETED] Implement standard-library OpenAI client (`urllib.request`) supporting models listing, streaming completions, and tool calling.
 4. **Phase 4: Agent Server & Session Integration**: [COMPLETED] Update `server.py`, `chat.py`, `code.py`, and `review.py` to use backend factory and honor `has_history()`.
-5. **Phase 5: Vim Frontend & Commands**: Implement `:ViminiBackend` (with status echo and argument switching), single-group OpenAI model listing in `:ViminiListModels`, `:ViminiStatus`, and help documentation.
-6. **Phase 6: Testing & Validation**: Add unit tests for config generation/parsing, backend switching, ProxyAPI mock requests, and single-group model listing.
+5. **Phase 5: Vim Frontend & Commands**: [COMPLETED] Implement `:ViminiBackend` (with status echo and argument switching), single-group OpenAI model listing in `:ViminiListModels`, `:ViminiStatus`, and help documentation.
+6. **Phase 6: Testing & Validation**: [COMPLETED] Add unit tests for config generation/parsing, backend switching, ProxyAPI mock requests, and single-group model listing.
 
 ## 8. Implementation strategy
 
