@@ -197,6 +197,41 @@ def test_proxy_backend_generate_content_stream():
         assert chunks[2].text == " World"
 
 
+def test_proxy_backend_generate_content_stream_list_prompt():
+    backend = ProxyBackend()
+    mock_resp = io.BytesIO(
+        b'data: {"choices": [{"delta": {"content": "ok"}}]}\n\ndata: [DONE]\n\n'
+    )
+
+    with patch.object(backend, "_make_request", return_value=mock_resp) as mock_req:
+        chunks = list(
+            backend.generate_content_stream(["part 1", "part 2", ""], model="gpt-4o")
+        )
+        assert len(chunks) == 1
+        assert chunks[0].text == "ok"
+        payload = mock_req.call_args[1]["data"]
+        messages = payload["messages"]
+        assert len(messages) == 1
+        assert messages[0]["content"] == "part 1\n\npart 2"
+
+
+def test_proxy_backend_generate_content_list_prompt():
+    backend = ProxyBackend()
+    mock_resp_data = {
+        "choices": [{"message": {"role": "assistant", "content": "result"}}]
+    }
+
+    with patch.object(
+        backend, "_make_request", return_value=mock_resp_data
+    ) as mock_req:
+        res = backend.generate_content(["line 1", "line 2"], model="gpt-4o")
+        assert res == "result"
+        payload = mock_req.call_args[1]["data"]
+        messages = payload["messages"]
+        assert len(messages) == 1
+        assert messages[0]["content"] == "line 1\n\nline 2"
+
+
 def test_proxy_backend_read_sse_stream_multiline_events_and_trailing_data():
     backend = ProxyBackend()
     stream = io.BytesIO(

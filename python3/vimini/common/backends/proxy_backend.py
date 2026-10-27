@@ -461,7 +461,7 @@ class ProxyBackend(BaseClient):
 
     def generate_content(
         self,
-        prompt: str,
+        prompt: Any,
         model: str,
         system_instruction: Optional[str] = None,
         verbose: bool = False,
@@ -469,9 +469,15 @@ class ProxyBackend(BaseClient):
         config: Optional[Any] = None,
     ) -> str:
         messages: List[Dict[str, Any]] = []
+        if isinstance(prompt, list):
+            prompt_str = "\n\n".join(str(p) for p in prompt if p)
+        elif isinstance(prompt, str):
+            prompt_str = prompt
+        else:
+            prompt_str = str(prompt)
         if system_instruction:
             messages.append({"role": "system", "content": system_instruction})
-        messages.append({"role": "user", "content": prompt})
+        messages.append({"role": "user", "content": prompt_str})
 
         payload = {
             "model": model,
@@ -498,7 +504,12 @@ class ProxyBackend(BaseClient):
         if system_instruction:
             messages.append({"role": "system", "content": system_instruction})
 
-        prompt_str = prompt if isinstance(prompt, str) else str(prompt)
+        if isinstance(prompt, list):
+            prompt_str = "\n\n".join(str(p) for p in prompt if p)
+        elif isinstance(prompt, str):
+            prompt_str = prompt
+        else:
+            prompt_str = str(prompt)
         messages.append({"role": "user", "content": prompt_str})
 
         payload = {
