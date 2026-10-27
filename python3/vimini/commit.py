@@ -1141,7 +1141,7 @@ def finalize_commit():
         commit_cmd.append("--amend")
 
     if assistant:
-        trailer = f"Assisted-by: Gemini:{get_model_name()}"
+        trailer = f"Assisted-by: {get_model_name()}"
         if trailer not in content:
             content += f"\n\n{trailer}\n"
 
