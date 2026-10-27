@@ -230,8 +230,9 @@ def get_model_name():
 
         cfg = load_global_config()
         backend = backend or get_active_backend(cfg)
-        b_cfg = cfg.get("backends", {}).get(backend, {})
-        api_type = b_cfg.get("api", "genai")
+        b_cfg = cfg.get("backends", {}).get(backend)
+        if isinstance(b_cfg, dict):
+            api_type = b_cfg.get("api", "genai")
     except Exception:
         pass
 

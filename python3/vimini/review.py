@@ -105,7 +105,7 @@ def resolve_remote(repo_path, remote=None):
     - If no configured remote is found, falls back to available remotes:
       4. 'origin' (if present in remotes)
       5. First available remote in remotes
-      6. Fallback to 'origin' if no remotes available.
+      6. Fallback to 'origin' if no remotes are available.
     """
     if remote is not None and str(remote).strip() != "":
         return str(remote).strip()
@@ -242,6 +242,223 @@ def resolve_remote(repo_path, remote=None):
     return "origin"
 
 
+# Maximum number of remote branches inspected when looking for a PR/MR base branch.
+MAX_BASE_CANDIDATES = 50
+
+
+def _git(repo_path, *args):
+    """Runs a git command in 'repo_path' and returns the CompletedProcess."""
+    return subprocess.run(
+        ["git", "-C", repo_path, *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
+def _short_ref(ref, remote):
+    """Strips the 'refs/remotes/<remote>/' or '<remote>/' prefix, if present, from 'ref'."""
+    for prefix in (f"refs/remotes/{remote}/", f"{remote}/"):
+        if ref.startswith(prefix):
+            return ref[len(prefix) :]
+    return ref
+
+
+def get_remote_default_branch(repo_path, remote):
+    """
+    Returns the remote-tracking ref of the default branch of 'remote' when it can
+    be determined locally, otherwise None.
+    """
+    sym_res = _git(repo_path, "symbolic-ref", f"refs/remotes/{remote}/HEAD")
+    if sym_res.returncode == 0 and sym_res.stdout.strip():
+        return sym_res.stdout.strip()
+    for name in ("main", "master"):
+        ref = f"refs/remotes/{remote}/{name}"
+        if _git(repo_path, "rev-parse", "--verify", "--quiet", ref).returncode == 0:
+            return ref
+    return None
+
+
+def list_remote_branches(repo_path, remote, limit=MAX_BASE_CANDIDATES):
+    """
+    Returns the remote-tracking branches of 'remote', most recently updated
+    first, capped at 'limit' entries. Symbolic refs pointing at the remote's
+    default branch (refs/remotes/<remote>/HEAD) are skipped.
+    """
+    prefix = f"refs/remotes/{remote}/"
+    res = _git(
+        repo_path,
+        "for-each-ref",
+        "--sort=-committerdate",
+        "--format=%(refname)",
+        prefix,
+    )
+    if res.returncode != 0:
+        return []
+
+    branches = []
+    for line in res.stdout.splitlines():
+        ref = line.strip()
+        if not ref.startswith(prefix) or ref == f"{prefix}HEAD":
+            continue
+        branches.append(ref)
+        if limit is not None and len(branches) >= limit:
+            break
+    return branches
+
+
+def resolve_pr_base(repo_path, remote, pr_ref, default_ref=None):
+    """
+    Determines which branch a PR/MR was opened against, without consulting the
+    forge API and without relying on the remote's HEAD symref alone.
+
+    Every remote-tracking branch of 'remote' is compared with the pulled head and
+    the branch sharing the most recent fork point with it -- that is, the one
+    leaving the fewest of the PR/MR's own commits on top -- becomes the base.
+    This identifies PRs/MRs that target a non-default branch, which inspecting
+    the remote's HEAD symref alone would get wrong. Branches that already contain
+    the pulled head are ignored because they cannot be its base, and the remote's
+    default branch wins ties so that the common case stays predictable.
+
+    The fork point of the winning branch is returned along with it, so callers
+    reuse that commit instead of recomputing it.
+
+    Returns a (base_ref, base_sha, commit_count) tuple, or (None, None, None) when
+    no branch can serve as a base.
+    """
+    branches = list_remote_branches(repo_path, remote)
+    if default_ref and default_ref not in branches:
+        branches.append(default_ref)
+    if not branches:
+        return None, None, None
+
+    best_key = None
+    best = None
+    for idx, ref in enumerate(branches):
+        mb_res = _git(repo_path, "merge-base", ref, pr_ref)
+        base_sha = mb_res.stdout.strip() if mb_res.returncode == 0 else ""
+        if not base_sha:
+            continue
+        count_res = _git(repo_path, "rev-list", "--count", f"{base_sha}..{pr_ref}")
+        if count_res.returncode != 0:
+            continue
+        out = count_res.stdout.strip()
+        if not out.isdigit():
+            continue
+        count = int(out)
+        if count <= 0:
+            # The branch already contains the PR head, so it is not its base.
+            continue
+        # Fewest PR/MR commits on top of the fork point first, then the default
+        # branch, then candidate list order (most recently updated first).
+        key = (count, 0 if ref == default_ref else 1, idx)
+        if best_key is None or key < best_key:
+            best_key = key
+            best = (ref, base_sha, count)
+
+    if best is None:
+        return None, None, None
+    return best
+
+
+def _build_pr_review_range(repo_path, remote, pr_ref, service_desc):
+    """
+    Returns the git revision range covering exactly the commits of a PR/MR.
+
+    The remote is refreshed first so that the base branch is current, then the
+    base branch is resolved locally by resolve_pr_base(). The remote's default
+    branch is used as a fallback for repositories where no branch can be ranked.
+    The resolved base and commit count are reported so that an unexpectedly large
+    review is immediately visible to the user.
+
+    Returns None when the PR/MR contributes no commits of its own, for example
+    when it is empty or has already been merged. Callers must treat that as
+    "nothing to review" and stop, instead of sending a commit that belongs to the
+    base branch to the model.
+    """
+    util.display_message(
+        f"Refreshing '{remote}' to determine the {service_desc} base branch..."
+    )
+    res = _git(repo_path, "fetch", "--no-tags", "--", remote)
+    if res.returncode != 0:
+        err = (res.stderr or "git fetch failed.").strip()
+        util.display_message(
+            f"Warning: could not refresh '{remote}': {err}. "
+            "The review range may include unrelated commits.",
+            error=True,
+        )
+
+    default_ref = get_remote_default_branch(repo_path, remote)
+    base_ref, base_sha, commit_count = resolve_pr_base(
+        repo_path, remote, pr_ref, default_ref=default_ref
+    )
+
+    if base_ref is None and default_ref is not None:
+        # No branch could be ranked (for example in a single-branch clone):
+        # fall back to the remote's default branch.
+        mb_res = _git(repo_path, "merge-base", default_ref, pr_ref)
+        if mb_res.returncode == 0 and mb_res.stdout.strip():
+            base_ref = default_ref
+            base_sha = mb_res.stdout.strip()
+
+    if base_ref is None:
+        for candidate in (f"{remote}/main", f"{remote}/master", "main", "master"):
+            exists = _git(repo_path, "rev-parse", "--verify", "--quiet", candidate)
+            if exists.returncode != 0:
+                continue
+            mb_res = _git(repo_path, "merge-base", candidate, pr_ref)
+            if mb_res.returncode == 0 and mb_res.stdout.strip():
+                base_ref = candidate
+                base_sha = mb_res.stdout.strip()
+                break
+
+    if base_ref is None or not base_sha:
+        util.display_message(
+            f"Warning: could not determine the base branch of {service_desc}; "
+            "reviewing only its tip commit.",
+            error=True,
+        )
+        return pr_ref
+
+    # An empty or already merged PR/MR has no commits of its own: the fork point
+    # coincides with the pulled head. Report it and return None so the caller
+    # stops, rather than reviewing a commit that belongs to the base branch.
+    rev_res = _git(repo_path, "rev-parse", pr_ref)
+    target_sha = rev_res.stdout.strip() if rev_res.returncode == 0 else ""
+    if target_sha and base_sha == target_sha:
+        util.display_message(
+            f"Nothing to review: {service_desc} has no commits on top of "
+            f"'{_short_ref(base_ref, remote)}'.",
+            history=True,
+        )
+        return None
+
+    if commit_count is None:
+        count_res = _git(repo_path, "rev-list", "--count", f"{base_sha}..{pr_ref}")
+        count_out = count_res.stdout.strip() if count_res.returncode == 0 else ""
+        commit_count = int(count_out) if count_out.isdigit() else None
+
+    if commit_count is not None and commit_count <= 0:
+        util.display_message(
+            f"Nothing to review: {service_desc} has no commits on top of "
+            f"'{_short_ref(base_ref, remote)}'.",
+            history=True,
+        )
+        return None
+
+    base_name = _short_ref(base_ref, remote)
+    if commit_count is None:
+        util.display_message(f"Reviewing {service_desc} (base: {base_name}).")
+    else:
+        util.display_message(
+            f"Reviewing {commit_count} commit(s) of {service_desc} (base: {base_name})."
+        )
+
+    return f"{base_sha}..{pr_ref}"
+
+
 def review(
     prompt,
     git_objects=None,
@@ -312,103 +529,21 @@ def review(
                 worktree_ref = local_ref
 
             util.display_message(f"Fetching {service_desc} from {remote}...")
-            fetch_cmd = ["git", "-C", repo_path, "fetch", "--", remote, refspec]
-            res = subprocess.run(
-                fetch_cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
+            res = _git(repo_path, "fetch", "--", remote, refspec)
             if res.returncode != 0:
                 err = (res.stderr or "git fetch failed.").strip()
                 util.display_message(f"Git fetch error: {err}", error=True)
                 return
 
             if not git_objects:
-                base_target = None
-                sym_cmd = [
-                    "git",
-                    "-C",
-                    repo_path,
-                    "symbolic-ref",
-                    "--short",
-                    f"refs/remotes/{remote}/HEAD",
-                ]
-                sym_res = subprocess.run(
-                    sym_cmd,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    check=False,
+                git_objects = _build_pr_review_range(
+                    repo_path, remote, local_ref, service_desc
                 )
-                if sym_res.returncode == 0 and sym_res.stdout.strip():
-                    base_target = sym_res.stdout.strip()
-                else:
-                    for candidate in [
-                        f"{remote}/main",
-                        f"{remote}/master",
-                        "main",
-                        "master",
-                    ]:
-                        check_cmd = [
-                            "git",
-                            "-C",
-                            repo_path,
-                            "rev-parse",
-                            "--verify",
-                            candidate,
-                        ]
-                        if (
-                            subprocess.run(
-                                check_cmd,
-                                capture_output=True,
-                                text=True,
-                                encoding="utf-8",
-                                errors="replace",
-                                check=False,
-                            ).returncode
-                            == 0
-                        ):
-                            base_target = candidate
-                            break
-
-                if not base_target:
-                    base_target = "HEAD"
-
-                mb_cmd = [
-                    "git",
-                    "-C",
-                    repo_path,
-                    "merge-base",
-                    base_target,
-                    local_ref,
-                ]
-                mb_res = subprocess.run(
-                    mb_cmd,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    check=False,
-                )
-                if mb_res.returncode == 0 and mb_res.stdout.strip():
-                    base_sha = mb_res.stdout.strip()
-                    rev_cmd = ["git", "-C", repo_path, "rev-parse", local_ref]
-                    rev_res = subprocess.run(
-                        rev_cmd, capture_output=True, text=True, check=False
-                    )
-                    target_sha = (
-                        rev_res.stdout.strip() if rev_res.returncode == 0 else ""
-                    )
-                    if base_sha != target_sha and target_sha:
-                        git_objects = f"{base_sha}..{local_ref}"
-                    else:
-                        git_objects = local_ref
-                else:
-                    git_objects = local_ref
+                if not git_objects:
+                    # Empty or already merged PR/MR: there is nothing of its own
+                    # to review, and falling through would review the base
+                    # branch tip instead.
+                    return
 
         # --- BATCH SAVE MODE ---
         if git_objects and save:
