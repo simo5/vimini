@@ -1,6 +1,5 @@
 import vim
 import os, subprocess, shlex, textwrap, json, tempfile, time
-from google.genai import types
 from vimini import util
 from vimini.util import process_queue, get_model_name
 from vimini.autocomplete import autocomplete, cancel_autocomplete
@@ -92,11 +91,26 @@ def send_setup():
     """
     handler = SetupChannelHandler("setup")
     register_handler("setup", handler)
+    backend_name = getattr(util, "_BACKEND", None)
+    if not backend_name:
+        try:
+            backend_name = vim.eval("get(g:, 'vimini_backend', '')")
+        except Exception:
+            backend_name = None
+    if not backend_name:
+        try:
+            from vimini.common.config import load_global_config, get_active_backend
+
+            cfg = load_global_config()
+            backend_name = get_active_backend(cfg)
+        except Exception:
+            backend_name = "Gemini"
     req = {
         "jsonrpc": "2.0",
         "id": "setup",
         "method": "setup",
         "params": {
+            "backend": backend_name,
             "api_key_file": util._API_KEY_FILE,
             "model": util._MODEL,
         },

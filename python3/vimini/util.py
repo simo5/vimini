@@ -2,8 +2,6 @@ import vim
 import os, subprocess, time, io, logging, inspect, json
 import threading
 import queue
-from google import genai
-from google.genai import types
 from vimini.common.genai import (
     get_client as create_genai_client,
     load_api_key,

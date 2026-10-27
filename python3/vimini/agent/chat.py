@@ -5,8 +5,6 @@ import subprocess
 import logging
 import tempfile
 import sys
-from google import genai
-from google.genai import types
 from vimini.common.util import (
     get_project_root,
     get_project_name,
@@ -23,9 +21,22 @@ from vimini.common.util import (
     generate_diff_for_file,
 )
 from vimini.agent.comms import CommSession
-from vimini.common.genai import get_client, load_api_key, create_generation_config
+from vimini.common.backends import (
+    get_client,
+    Tool,
+    FunctionDeclaration,
+    Schema,
+    Type,
+    ToolResponse,
+    StreamChunk,
+)
 
 logger = logging.getLogger("vimini_agent")
+
+
+def create_generation_config(**kwargs):
+    """Generic configuration dictionary helper for backwards compatibility."""
+    return kwargs
 
 
 def generate_tool_declaration_schema(tool_label, tool_config):
@@ -43,7 +54,7 @@ def generate_tool_declaration_schema(tool_label, tool_config):
     if not tool_config:
         return (
             f"{tool_action}. (No {tool_label} command is currently configured in project options).",
-            types.Schema(type=types.Type.OBJECT),
+            Schema(type=Type.OBJECT),
         )
 
     if tool_config["type"] == "simple":
@@ -53,7 +64,7 @@ def generate_tool_declaration_schema(tool_label, tool_config):
             f"Configured command: '{cmd}'.\n"
             f"This command accepts no options or arguments. Call this tool with an empty object {{}}."
         )
-        return (desc, types.Schema(type=types.Type.OBJECT, properties={}))
+        return (desc, Schema(type=Type.OBJECT, properties={}))
 
     if tool_config["type"] == "alternatives":
         alts = tool_config.get("alternatives", [])
@@ -70,11 +81,11 @@ def generate_tool_declaration_schema(tool_label, tool_config):
             f"These alternative commands are all-or-nothing and do not accept any additional flags or arguments.\n"
             f"Available commands:\n" + "\n".join(alt_lines)
         )
-        params = types.Schema(
-            type=types.Type.OBJECT,
+        params = Schema(
+            type=Type.OBJECT,
             properties={
-                "command": types.Schema(
-                    type=types.Type.STRING,
+                "command": Schema(
+                    type=Type.STRING,
                     enum=cmd_enum,
                     description="The exact alternative command to run. Must be one of the allowed choices.",
                 )
@@ -101,23 +112,21 @@ def generate_tool_declaration_schema(tool_label, tool_config):
                 has_value = opt["has_value"]
                 if not has_value:
                     full_desc = f"Boolean flag '{flag}' (no value). Set to true to include this flag. {opt_desc}".strip()
-                    properties[name] = types.Schema(
-                        type=types.Type.BOOLEAN, description=full_desc
-                    )
+                    properties[name] = Schema(type=Type.BOOLEAN, description=full_desc)
                     opt_lines.append(f"- {name} (flag '{flag}', boolean): {opt_desc}")
                 else:
                     if choices:
                         full_desc = f"Flag '{flag} <choice>'. Allowed values: {choices}. {opt_desc}".strip()
-                        properties[name] = types.Schema(
-                            type=types.Type.STRING, enum=choices, description=full_desc
+                        properties[name] = Schema(
+                            type=Type.STRING, enum=choices, description=full_desc
                         )
                         opt_lines.append(
                             f"- {name} (flag '{flag}', choices: {choices}): {opt_desc}"
                         )
                     else:
                         full_desc = f"Flag '{flag} <value>'. Free-form string argument. {opt_desc}".strip()
-                        properties[name] = types.Schema(
-                            type=types.Type.STRING, description=full_desc
+                        properties[name] = Schema(
+                            type=Type.STRING, description=full_desc
                         )
                         opt_lines.append(
                             f"- {name} (flag '{flag}', string value): {opt_desc}"
@@ -126,8 +135,8 @@ def generate_tool_declaration_schema(tool_label, tool_config):
                 # Argument
                 if choices:
                     full_desc = f"Positional argument (single string). Allowed values: {choices}. {opt_desc}".strip()
-                    properties[name] = types.Schema(
-                        type=types.Type.STRING, enum=choices, description=full_desc
+                    properties[name] = Schema(
+                        type=Type.STRING, enum=choices, description=full_desc
                     )
                     opt_lines.append(
                         f"- {name} (argument, choices: {choices}): {opt_desc}"
@@ -136,9 +145,7 @@ def generate_tool_declaration_schema(tool_label, tool_config):
                     full_desc = (
                         f"Positional argument (single string). {opt_desc}".strip()
                     )
-                    properties[name] = types.Schema(
-                        type=types.Type.STRING, description=full_desc
-                    )
+                    properties[name] = Schema(type=Type.STRING, description=full_desc)
                     opt_lines.append(f"- {name} (argument, string): {opt_desc}")
 
             if opt.get("required"):
@@ -152,14 +159,14 @@ def generate_tool_declaration_schema(tool_label, tool_config):
             f"Usage rules: You may pass any of the available options or arguments defined above within their valid schema. "
             f"Boolean flags should be true or false. Options with values and positional arguments must each be a single string argument."
         )
-        params = types.Schema(
-            type=types.Type.OBJECT,
+        params = Schema(
+            type=Type.OBJECT,
             properties=properties,
             required=required if required else None,
         )
         return desc, params
 
-    return (f"{tool_action}.", types.Schema(type=types.Type.OBJECT))
+    return (f"{tool_action}.", Schema(type=Type.OBJECT))
 
 
 def get_agent_tools(project_root=None):
@@ -174,140 +181,140 @@ def get_agent_tools(project_root=None):
     )
 
     return [
-        types.Tool(
+        Tool(
             function_declarations=[
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="apply_patch",
                     description="Applies file modifications or creates new files. "
                     "You can provide the entire file contents using file_path and file_content "
                     "(strongly preferred, as a clean unified diff is generated locally to show the user), "
                     "or provide a unified diff patch via diff_content. "
                     "Ensure file paths are relative to the project root directory.",
-                    parameters=types.Schema(
-                        type=types.Type.OBJECT,
+                    parameters=Schema(
+                        type=Type.OBJECT,
                         properties={
-                            "file_path": types.Schema(
-                                type=types.Type.STRING,
+                            "file_path": Schema(
+                                type=Type.STRING,
                                 description="The path to the file to modify or create, relative to the project root.",
                             ),
-                            "file_content": types.Schema(
-                                type=types.Type.STRING,
+                            "file_content": Schema(
+                                type=Type.STRING,
                                 description="The complete, entire content of the file. A unified diff will be generated locally against the existing file.",
                             ),
-                            "diff_content": types.Schema(
-                                type=types.Type.STRING,
+                            "diff_content": Schema(
+                                type=Type.STRING,
                                 description="The unified diff patch to apply (optional if file_path and file_content are provided).",
                             ),
                         },
                     ),
                 ),
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="read_file",
                     description="Reads the content of a file. Only files within the current working directory or its subdirectories can be read.",
-                    parameters=types.Schema(
-                        type=types.Type.OBJECT,
+                    parameters=Schema(
+                        type=Type.OBJECT,
                         properties={
-                            "filepath": types.Schema(
-                                type=types.Type.STRING,
+                            "filepath": Schema(
+                                type=Type.STRING,
                                 description="Path to the file to read.",
                             )
                         },
                         required=["filepath"],
                     ),
                 ),
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="list_directory",
                     description="Reads the list of files and directories in a given path. Cannot list above the current working directory.",
-                    parameters=types.Schema(
-                        type=types.Type.OBJECT,
+                    parameters=Schema(
+                        type=Type.OBJECT,
                         properties={
-                            "directory_path": types.Schema(
-                                type=types.Type.STRING,
+                            "directory_path": Schema(
+                                type=Type.STRING,
                                 description='The relative path to the directory to list. Defaults to "." for the current directory.',
                             )
                         },
                     ),
                 ),
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="list_git_commits",
                     description="Lists recent git commits in the repository. Use this to inspect history, identify commit IDs, or track changes to specific files.",
-                    parameters=types.Schema(
-                        type=types.Type.OBJECT,
+                    parameters=Schema(
+                        type=Type.OBJECT,
                         properties={
-                            "max_count": types.Schema(
-                                type=types.Type.INTEGER,
+                            "max_count": Schema(
+                                type=Type.INTEGER,
                                 description="Maximum number of commits to list (default 10, max 50).",
                             ),
-                            "revision": types.Schema(
-                                type=types.Type.STRING,
+                            "revision": Schema(
+                                type=Type.STRING,
                                 description="Git revision, branch, or range to list commits from (e.g. 'HEAD', 'main', 'HEAD~5..HEAD'). Defaults to 'HEAD'.",
                             ),
-                            "file_path": types.Schema(
-                                type=types.Type.STRING,
+                            "file_path": Schema(
+                                type=Type.STRING,
                                 description="Optional relative file or directory path to filter commits affecting that path.",
                             ),
                         },
                     ),
                 ),
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="get_git_commit",
                     description="Retrieves the commit message and diff/patch for a specific git commit ID. Use this to inspect what changed in a previous commit.",
-                    parameters=types.Schema(
-                        type=types.Type.OBJECT,
+                    parameters=Schema(
+                        type=Type.OBJECT,
                         properties={
-                            "commit_id": types.Schema(
-                                type=types.Type.STRING,
+                            "commit_id": Schema(
+                                type=Type.STRING,
                                 description="The commit hash, short hash, or ref to inspect (e.g., 'a1b2c3d', 'HEAD~1').",
                             ),
-                            "file_path": types.Schema(
-                                type=types.Type.STRING,
+                            "file_path": Schema(
+                                type=Type.STRING,
                                 description="Optional relative file path to view diff for that specific file only.",
                             ),
-                            "stat_only": types.Schema(
-                                type=types.Type.BOOLEAN,
+                            "stat_only": Schema(
+                                type=Type.BOOLEAN,
                                 description="If true, returns only the diffstat instead of the full patch diff. Useful for large commits.",
                             ),
                         },
                         required=["commit_id"],
                     ),
                 ),
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="git_grep",
                     description="Searches repository code for a keyword or pattern using git grep and returns matching lines with surrounding context lines. Use this to quickly locate code definitions, usages, or snippets without reading whole files.",
-                    parameters=types.Schema(
-                        type=types.Type.OBJECT,
+                    parameters=Schema(
+                        type=Type.OBJECT,
                         properties={
-                            "pattern": types.Schema(
-                                type=types.Type.STRING,
+                            "pattern": Schema(
+                                type=Type.STRING,
                                 description="The keyword or search pattern to find.",
                             ),
-                            "path": types.Schema(
-                                type=types.Type.STRING,
+                            "path": Schema(
+                                type=Type.STRING,
                                 description="Optional relative file or directory pathspec to limit search (e.g. 'src/' or '*.py').",
                             ),
-                            "revision": types.Schema(
-                                type=types.Type.STRING,
+                            "revision": Schema(
+                                type=Type.STRING,
                                 description="Optional git revision or commit ref to search (e.g. 'HEAD', 'main'). Defaults to working tree.",
                             ),
-                            "context_lines": types.Schema(
-                                type=types.Type.INTEGER,
+                            "context_lines": Schema(
+                                type=Type.INTEGER,
                                 description="Number of context lines before and after match (default 2, max 10).",
                             ),
-                            "ignore_case": types.Schema(
-                                type=types.Type.BOOLEAN,
+                            "ignore_case": Schema(
+                                type=Type.BOOLEAN,
                                 description="If true, perform case-insensitive search (default false).",
                             ),
                         },
                         required=["pattern"],
                     ),
                 ),
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="build_code", description=build_desc, parameters=build_schema
                 ),
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="test_code", description=test_desc, parameters=test_schema
                 ),
-                types.FunctionDeclaration(
+                FunctionDeclaration(
                     name="fix_format", description=format_desc, parameters=format_schema
                 ),
             ]
@@ -473,7 +480,6 @@ class ChatSession(CommSession):
             self.project_root = get_project_root()
 
         agent_config = self.agent_config or {}
-        api_key = load_api_key(agent_config)
         model = agent_config.get("model")
         verbose = False
         if isinstance(params, dict) and "verbose" in params:
@@ -595,34 +601,46 @@ class ChatSession(CommSession):
                     "Do not attempt to work around command execution control by trying to add command execution in tests that is not actually testing the code."
                 )
             current_tools = get_agent_tools(self.project_root)
-            agent_config_obj = create_generation_config(
+            system_instruction_text = (
+                "When explicitly requested to change code You act as an expert "
+                "autonomous coding agent and software engineer, and can access "
+                "tools and execute functions. "
+                "Normally although You are just an expert at returning general "
+                "information and avoid as much as possible using functions and "
+                "performing actions. "
+                "Your identity is Vimini, and you are integrated into the vimini project. "
+                "Follow these guidelines for optimal performance ONLY when "
+                "acting as a coding agent:\n"
+                "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory`, `read_file`, `git_grep`, `list_git_commits`, and `get_git_commit` tools to understand the repository structure, code contents, and previous git commit history. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
+                "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` (strongly preferred, as a unified diff will be generated locally to show the user) or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
+                "3. **Patch Reliability:** If an `apply_patch` action fails due to a formatting or context mismatch, do not blindly retry the exact same patch. Re-read the file to obtain up-to-date content and send the entire file contents using `file_path` and `file_content`.\n"
+                f"{build_test_guideline}\n"
+                "5. **Limit Retries:** Limit multiple calls to `apply_patch` for the same file in a single response, in case of repeat failures for the same file prompt the user for guidance. If an `apply_patch` command is refused, evaluate the reason provided by the user and consider prompting the user for more instructions if the next steps are unclear.\n"
+                "6. **Be Concise:** Provide brief, clear explanations. Avoid unnecessary conversational filler."
+                "7. If this is a model that doesn't provide reasoning steps, provide brief statements on what is being worked on from time to time."
+            )
+            create_generation_config(
                 tools=current_tools,
                 verbose=verbose,
-                system_instruction=(
-                    "When explicitly requested to change code You act as an expert "
-                    "autonomous coding agent and software engineer, and can access "
-                    "tools and execute functions. "
-                    "Normally although You are just an expert at returning general "
-                    "information and avoid as much as possible using functions and "
-                    "performing actions. "
-                    "Your identity is Vimini, and you are integrated into the vimini project. "
-                    "Follow these guidelines for optimal performance ONLY when "
-                    "acting as a coding agent:\n"
-                    "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory`, `read_file`, `git_grep`, `list_git_commits`, and `get_git_commit` tools to understand the repository structure, code contents, and previous git commit history. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
-                    "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` (strongly preferred, as a unified diff will be generated locally to show the user) or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
-                    "3. **Patch Reliability:** If an `apply_patch` action fails due to a formatting or context mismatch, do not blindly retry the exact same patch. Re-read the file to obtain up-to-date content and send the entire file contents using `file_path` and `file_content`.\n"
-                    f"{build_test_guideline}\n"
-                    "5. **Limit Retries:** Limit multiple calls to `apply_patch` for the same file in a single response, in case of repeat failures for the same file prompt the user for guidance. If an `apply_patch` command is refused, evaluate the reason provided by the user and consider prompting the user for more instructions if the next steps are unclear.\n"
-                    "6. **Be Concise:** Provide brief, clear explanations. Avoid unnecessary conversational filler."
-                    "7. If this is a model that doesn't provide reasoning steps, provide brief statements on what is being worked on from time to time."
-                ),
+                system_instruction=system_instruction_text,
                 disable_function_calling=False,
             )
 
-            kwargs = {"model": model, "config": agent_config_obj}
-            if self.chat_history is not None:
-                kwargs["history"] = self.chat_history
-            self.session = self.client.chats.create(**kwargs)
+            if hasattr(self.client, "create_chat"):
+                self.session = self.client.create_chat(
+                    model=model,
+                    system_instruction=system_instruction_text,
+                    tools=current_tools,
+                    history=self.chat_history
+                    if self.chat_history is not None
+                    else None,
+                    verbose=verbose,
+                )
+            elif hasattr(self.client, "chats"):
+                kwargs = {"model": model}
+                if self.chat_history is not None:
+                    kwargs["history"] = self.chat_history
+                self.session = self.client.chats.create(**kwargs)
 
         if not prompt:
             self.send_response(req_id, conn, result={"status": "ok", "text": ""})
@@ -633,10 +651,31 @@ class ChatSession(CommSession):
             try:
                 response_stream = self.session.send_message_stream(current_prompt)
                 for chunk in response_stream:
-                    if (
-                        chunk.candidates
-                        and chunk.candidates[0].content
-                        and chunk.candidates[0].content.parts
+                    if isinstance(chunk, StreamChunk):
+                        if chunk.thought:
+                            self.send_response(
+                                current_req_id,
+                                conn,
+                                result={
+                                    "status": "thought",
+                                    "thought": chunk.thought,
+                                    "verbose": verbose,
+                                },
+                            )
+                        if chunk.text:
+                            self.send_response(
+                                current_req_id,
+                                conn,
+                                result={"status": "chunk", "text": chunk.text},
+                            )
+                        if chunk.tool_calls:
+                            for tc in chunk.tool_calls:
+                                pending_tool_calls.append(tc)
+                    elif (
+                        getattr(chunk, "candidates", None)
+                        and chunk.candidates
+                        and getattr(chunk.candidates[0], "content", None)
+                        and getattr(chunk.candidates[0].content, "parts", None)
                     ):
                         modified_text = ""
                         for part in chunk.candidates[0].content.parts:
@@ -664,7 +703,7 @@ class ChatSession(CommSession):
                                 conn,
                                 result={"status": "chunk", "text": modified_text},
                             )
-                    elif chunk.text:
+                    elif getattr(chunk, "text", None):
                         self.send_response(
                             current_req_id,
                             conn,
@@ -679,10 +718,16 @@ class ChatSession(CommSession):
                     current_req_id, conn, result={"status": "error", "error": str(e)}
                 )
                 if self.session:
-                    try:
-                        self.chat_history = self.session.get_history()
-                    except Exception:
-                        pass
+                    if (
+                        hasattr(self.session, "has_history")
+                        and not self.session.has_history()
+                    ):
+                        self.chat_history = None
+                    elif hasattr(self.session, "get_history"):
+                        try:
+                            self.chat_history = self.session.get_history()
+                        except Exception:
+                            pass
                 self.session = None
                 return False
 
@@ -692,6 +737,7 @@ class ChatSession(CommSession):
                 for tool_call in pending_tool_calls:
                     args_dict = dict(tool_call.args) if tool_call.args else {}
                     temp_file_path = None
+                    call_id = getattr(tool_call, "call_id", None)
                     logger.info(f"Chat[{req_id}]: tool use requested: {tool_call.name}")
                     if tool_call.name == "apply_patch":
                         files_to_diff = []
@@ -752,23 +798,21 @@ class ChatSession(CommSession):
 
                             if diff_errors:
                                 responses.append(
-                                    types.Part.from_function_response(
+                                    ToolResponse(
                                         name=tool_call.name,
-                                        response={
-                                            "result": f"Patch generation failed:\n"
-                                            + "\n".join(diff_errors)
-                                        },
+                                        response=f"Patch generation failed:\n"
+                                        + "\n".join(diff_errors),
+                                        call_id=call_id,
                                     )
                                 )
                                 continue
 
                             if not diff_parts:
                                 responses.append(
-                                    types.Part.from_function_response(
+                                    ToolResponse(
                                         name=tool_call.name,
-                                        response={
-                                            "result": "The provided file content is identical to the existing file; no modifications were detected."
-                                        },
+                                        response="The provided file content is identical to the existing file; no modifications were detected.",
+                                        call_id=call_id,
                                     )
                                 )
                                 continue
@@ -777,11 +821,10 @@ class ChatSession(CommSession):
 
                         if not diff_content:
                             responses.append(
-                                types.Part.from_function_response(
+                                ToolResponse(
                                     name=tool_call.name,
-                                    response={
-                                        "result": "Patch failed: Neither valid 'file_content' (with 'file_path') nor 'diff_content' was provided."
-                                    },
+                                    response="Patch failed: Neither valid 'file_content' (with 'file_path') nor 'diff_content' was provided.",
+                                    call_id=call_id,
                                 )
                             )
                             continue
@@ -802,11 +845,10 @@ class ChatSession(CommSession):
                                 except Exception:
                                     pass
                             responses.append(
-                                types.Part.from_function_response(
+                                ToolResponse(
                                     name=tool_call.name,
-                                    response={
-                                        "result": f"Patch validation failed: {err_msg}"
-                                    },
+                                    response=f"Patch validation failed: {err_msg}",
+                                    call_id=call_id,
                                 )
                             )
                             continue
@@ -860,11 +902,10 @@ class ChatSession(CommSession):
                                 result={"status": "chunk", "text": msg},
                             )
                             responses.append(
-                                types.Part.from_function_response(
+                                ToolResponse(
                                     name=tool_call.name,
-                                    response={
-                                        "result": f"The tool '{tool_call.name}' is not available for this project because no {tool_label} command is configured in project options."
-                                    },
+                                    response=f"The tool '{tool_call.name}' is not available for this project because no {tool_label} command is configured in project options.",
+                                    call_id=call_id,
                                 )
                             )
                             continue
@@ -885,11 +926,10 @@ class ChatSession(CommSession):
                                 },
                             )
                             responses.append(
-                                types.Part.from_function_response(
+                                ToolResponse(
                                     name=tool_call.name,
-                                    response={
-                                        "result": f"Command rejected: {res_or_err}"
-                                    },
+                                    response=f"Command rejected: {res_or_err}",
+                                    call_id=call_id,
                                 )
                             )
                             continue
@@ -967,8 +1007,10 @@ class ChatSession(CommSession):
                                 "Tool execution cancelled or rejected by user."
                             )
                         responses.append(
-                            types.Part.from_function_response(
-                                name=tool_call.name, response={"result": result_text}
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": result_text},
+                                call_id=call_id,
                             )
                         )
                     elif tool_call.name == "read_file":
@@ -980,8 +1022,10 @@ class ChatSession(CommSession):
                                 "Tool execution cancelled or rejected by user."
                             )
                         responses.append(
-                            types.Part.from_function_response(
-                                name=tool_call.name, response={"result": result_text}
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": result_text},
+                                call_id=call_id,
                             )
                         )
                     elif tool_call.name == "list_git_commits":
@@ -1000,8 +1044,10 @@ class ChatSession(CommSession):
                                 "Tool execution cancelled or rejected by user."
                             )
                         responses.append(
-                            types.Part.from_function_response(
-                                name=tool_call.name, response={"result": result_text}
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": result_text},
+                                call_id=call_id,
                             )
                         )
                     elif tool_call.name == "get_git_commit":
@@ -1020,8 +1066,10 @@ class ChatSession(CommSession):
                                 "Tool execution cancelled or rejected by user."
                             )
                         responses.append(
-                            types.Part.from_function_response(
-                                name=tool_call.name, response={"result": result_text}
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": result_text},
+                                call_id=call_id,
                             )
                         )
                     elif tool_call.name == "git_grep":
@@ -1044,8 +1092,10 @@ class ChatSession(CommSession):
                                 "Tool execution cancelled or rejected by user."
                             )
                         responses.append(
-                            types.Part.from_function_response(
-                                name=tool_call.name, response={"result": result_text}
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": result_text},
+                                call_id=call_id,
                             )
                         )
                     elif tool_call.name == "apply_patch":
@@ -1082,8 +1132,10 @@ class ChatSession(CommSession):
                             patch_result = "Apply patch command was refused. Do not retry and instead prompt the user for more instructions."
 
                         responses.append(
-                            types.Part.from_function_response(
-                                name=tool_call.name, response={"result": patch_result}
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": patch_result},
+                                call_id=call_id,
                             )
                         )
                     elif tool_call.name in ("build_code", "test_code", "fix_format"):
@@ -1111,8 +1163,10 @@ class ChatSession(CommSession):
                                 "Tool execution cancelled or rejected by user."
                             )
                         responses.append(
-                            types.Part.from_function_response(
-                                name=tool_call.name, response={"result": result_text}
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": result_text},
+                                call_id=call_id,
                             )
                         )
                     else:
@@ -1121,8 +1175,10 @@ class ChatSession(CommSession):
                         else:
                             result_text = "Tool execution rejected by user."
                         responses.append(
-                            types.Part.from_function_response(
-                                name=tool_call.name, response={"result": result_text}
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": result_text},
+                                call_id=call_id,
                             )
                         )
 
@@ -1132,10 +1188,17 @@ class ChatSession(CommSession):
 
         if not process_prompt_stream(prompt, req_id):
             return
-        try:
-            self.chat_history = self.session.get_history()
-        except Exception:
-            pass
+        if (
+            self.session
+            and hasattr(self.session, "has_history")
+            and not self.session.has_history()
+        ):
+            self.chat_history = None
+        elif self.session and hasattr(self.session, "get_history"):
+            try:
+                self.chat_history = self.session.get_history()
+            except Exception:
+                pass
         if not self.running:
             return
         self.send_response(req_id, conn, result={"status": "done"})

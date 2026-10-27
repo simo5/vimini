@@ -3,9 +3,17 @@ import logging
 import re
 import json
 import subprocess
-from google.genai import types
 from vimini.agent.comms import CommSession
-from vimini.common.genai import get_client, create_generation_config
+from vimini.common.backends import (
+    get_client,
+    Tool,
+    FunctionDeclaration,
+    Schema,
+    Type,
+    ToolResponse,
+    BaseClient,
+    StreamChunk,
+)
 from vimini.common.util import (
     list_directory,
     read_file,
@@ -21,102 +29,102 @@ logger = logging.getLogger("vimini_agent")
 DEFAULT_MAX_TURNS = 30
 
 review_tools = [
-    types.Tool(
+    Tool(
         function_declarations=[
-            types.FunctionDeclaration(
+            FunctionDeclaration(
                 name="read_file",
                 description="Reads the content of a file. Only files within the current working directory or its subdirectories can be read. Use sparingly and only as needed.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
+                parameters=Schema(
+                    type=Type.OBJECT,
                     properties={
-                        "filepath": types.Schema(
-                            type=types.Type.STRING,
+                        "filepath": Schema(
+                            type=Type.STRING,
                             description="Path to the file to read.",
                         )
                     },
                     required=["filepath"],
                 ),
             ),
-            types.FunctionDeclaration(
+            FunctionDeclaration(
                 name="list_directory",
                 description="Reads the list of files and directories in a given path. Cannot list above the current working directory. Use sparingly and only as needed.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
+                parameters=Schema(
+                    type=Type.OBJECT,
                     properties={
-                        "directory_path": types.Schema(
-                            type=types.Type.STRING,
+                        "directory_path": Schema(
+                            type=Type.STRING,
                             description='The relative path to the directory to list. Defaults to "." for the current directory.',
                         )
                     },
                 ),
             ),
-            types.FunctionDeclaration(
+            FunctionDeclaration(
                 name="list_git_commits",
                 description="Lists recent git commits in the repository. Use this to inspect history, identify commit IDs, or track changes to specific files.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
+                parameters=Schema(
+                    type=Type.OBJECT,
                     properties={
-                        "max_count": types.Schema(
-                            type=types.Type.INTEGER,
+                        "max_count": Schema(
+                            type=Type.INTEGER,
                             description="Maximum number of commits to list (default 10, max 50).",
                         ),
-                        "revision": types.Schema(
-                            type=types.Type.STRING,
+                        "revision": Schema(
+                            type=Type.STRING,
                             description="Git revision, branch, or range to list commits from (e.g. 'HEAD', 'main', 'HEAD~5..HEAD'). Defaults to 'HEAD'.",
                         ),
-                        "file_path": types.Schema(
-                            type=types.Type.STRING,
+                        "file_path": Schema(
+                            type=Type.STRING,
                             description="Optional relative file or directory path to filter commits affecting that path.",
                         ),
                     },
                 ),
             ),
-            types.FunctionDeclaration(
+            FunctionDeclaration(
                 name="get_git_commit",
                 description="Retrieves the commit message and diff/patch for a specific git commit ID. Use this to inspect what changed in a previous commit.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
+                parameters=Schema(
+                    type=Type.OBJECT,
                     properties={
-                        "commit_id": types.Schema(
-                            type=types.Type.STRING,
+                        "commit_id": Schema(
+                            type=Type.STRING,
                             description="The commit hash, short hash, or ref to inspect (e.g., 'a1b2c3d', 'HEAD~1').",
                         ),
-                        "file_path": types.Schema(
-                            type=types.Type.STRING,
+                        "file_path": Schema(
+                            type=Type.STRING,
                             description="Optional relative file path to view diff for that specific file only.",
                         ),
-                        "stat_only": types.Schema(
-                            type=types.Type.BOOLEAN,
+                        "stat_only": Schema(
+                            type=Type.BOOLEAN,
                             description="If true, returns only the diffstat instead of the full patch diff. Useful for large commits.",
                         ),
                     },
                     required=["commit_id"],
                 ),
             ),
-            types.FunctionDeclaration(
+            FunctionDeclaration(
                 name="git_grep",
                 description="Searches repository code for a keyword or pattern using git grep and returns matching lines with surrounding context lines. Use this to quickly locate code definitions, usages, or snippets without reading whole files.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
+                parameters=Schema(
+                    type=Type.OBJECT,
                     properties={
-                        "pattern": types.Schema(
-                            type=types.Type.STRING,
+                        "pattern": Schema(
+                            type=Type.STRING,
                             description="The keyword or search pattern to find.",
                         ),
-                        "path": types.Schema(
-                            type=types.Type.STRING,
+                        "path": Schema(
+                            type=Type.STRING,
                             description="Optional relative file or directory pathspec to limit search (e.g. 'src/' or '*.py').",
                         ),
-                        "revision": types.Schema(
-                            type=types.Type.STRING,
+                        "revision": Schema(
+                            type=Type.STRING,
                             description="Optional git revision or commit ref to search (e.g. 'HEAD', 'main'). Defaults to working tree.",
                         ),
-                        "context_lines": types.Schema(
-                            type=types.Type.INTEGER,
+                        "context_lines": Schema(
+                            type=Type.INTEGER,
                             description="Number of context lines before and after match (default 2, max 10).",
                         ),
-                        "ignore_case": types.Schema(
-                            type=types.Type.BOOLEAN,
+                        "ignore_case": Schema(
+                            type=Type.BOOLEAN,
                             description="If true, perform case-insensitive search (default false).",
                         ),
                     },
@@ -202,7 +210,30 @@ def _execute_review_stream(
             if not session._check_running(req_id, conn):
                 break
 
-            if (
+            if isinstance(chunk, StreamChunk):
+                if chunk.thought and not save:
+                    session.send_response(
+                        req_id,
+                        conn,
+                        result={
+                            "status": "thought",
+                            "thought": chunk.thought,
+                            "verbose": verbose,
+                        },
+                    )
+                if chunk.text:
+                    if save:
+                        accumulator.append(chunk.text)
+                    else:
+                        session.send_response(
+                            req_id,
+                            conn,
+                            result={"status": "chunk", "text": chunk.text},
+                        )
+                if chunk.tool_calls:
+                    for tc in chunk.tool_calls:
+                        pending_tool_calls.append(tc)
+            elif (
                 hasattr(chunk, "candidates")
                 and chunk.candidates
                 and chunk.candidates[0].content
@@ -266,6 +297,7 @@ def _execute_review_stream(
             args_dict = dict(tool_call.args) if tool_call.args else {}
             logger.info(f"Review tool call: {tool_call.name}({args_dict})")
             args_str = json.dumps(args_dict) if args_dict else ""
+            call_id = getattr(tool_call, "call_id", None)
 
             if save:
                 commit_prefix = f"Commit {commit_sha[:7]} " if commit_sha else ""
@@ -366,8 +398,10 @@ def _execute_review_stream(
                 result_text = raw_result
 
             responses.append(
-                types.Part.from_function_response(
-                    name=tool_call.name, response={"result": result_text}
+                ToolResponse(
+                    name=tool_call.name,
+                    response={"result": result_text},
+                    call_id=call_id,
                 )
             )
 
@@ -516,16 +550,17 @@ class ReviewSession(CommSession):
                         max_turns=max_turns,
                     )
 
-                    generation_config = create_generation_config(
-                        tools=review_tools,
-                        verbose=verbose,
-                        disable_function_calling=False,
-                    )
-
                     try:
-                        chat = client.chats.create(
-                            model=model, config=generation_config
-                        )
+                        if isinstance(client, BaseClient) or not hasattr(
+                            client, "chats"
+                        ):
+                            chat = client.create_chat(
+                                model=model,
+                                tools=review_tools,
+                                verbose=verbose,
+                            )
+                        else:
+                            chat = client.chats.create(model=model, config=None)
 
                         content = _execute_review_stream(
                             self,
@@ -661,13 +696,14 @@ class ReviewSession(CommSession):
                 max_turns=max_turns,
             )
 
-            generation_config = create_generation_config(
-                tools=review_tools,
-                verbose=verbose,
-                disable_function_calling=False,
-            )
-
-            chat = client.chats.create(model=model, config=generation_config)
+            if isinstance(client, BaseClient) or not hasattr(client, "chats"):
+                chat = client.create_chat(
+                    model=model,
+                    tools=review_tools,
+                    verbose=verbose,
+                )
+            else:
+                chat = client.chats.create(model=model, config=None)
 
             with temporary_git_worktree(project_root, worktree_ref) as active_root:
                 _execute_review_stream(
