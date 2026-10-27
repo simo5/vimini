@@ -159,20 +159,10 @@ class ProxyChatSession(BaseChatSession):
         """
         if not incoming:
             return current or ""
-        if not current:
+        if not current or incoming == current:
             return incoming
-        if incoming == current:
-            return current
         if incoming.startswith(current):
             return incoming
-        if current.endswith(incoming):
-            return current
-
-        max_overlap = min(len(current), len(incoming))
-        for overlap in range(max_overlap, 0, -1):
-            if current.endswith(incoming[:overlap]):
-                return current + incoming[overlap:]
-
         return current + incoming
 
     @staticmethod
