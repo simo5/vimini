@@ -23,6 +23,7 @@ from vimini.common.config import (
     get_active_backend,
     load_backend_api_key,
     validate_global_config,
+    backend_requires_api_key,
 )
 
 
@@ -64,7 +65,7 @@ def get_backend(
     if api_key is None:
         api_key = load_backend_api_key(backend_cfg)
 
-    if not api_key:
+    if backend_requires_api_key(backend_cfg) and not api_key:
         key_file = backend_cfg.get("api_key_file")
         raise RuntimeError(
             f"API key for backend '{backend_name}' could not be loaded from "

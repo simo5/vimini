@@ -144,6 +144,18 @@ def test_validate_global_config_errors():
             }
         )
 
+    validate_global_config(
+        {
+            "active_backend": "Local",
+            "backends": {
+                "Local": {
+                    "api": "openai",
+                    "base_url": "http://localhost:11434/v1",
+                }
+            },
+        }
+    )
+
     with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
         validate_global_config(
             {
