@@ -123,6 +123,19 @@ def test_validate_global_config_errors():
             }
         )
 
+    with pytest.raises(ValueError, match="api 'anthropic' is not supported"):
+        validate_global_config(
+            {
+                "active_backend": "Anthropic",
+                "backends": {
+                    "Anthropic": {
+                        "api": "anthropic",
+                        "api_key_file": "~/.config/anthropic.token",
+                    }
+                },
+            }
+        )
+
     with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
         validate_global_config(
             {
