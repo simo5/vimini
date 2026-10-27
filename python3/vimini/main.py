@@ -22,7 +22,7 @@ from vimini.context import (
     files_command,
     restore_context_files,
 )
-from vimini.config import config_command
+from vimini.config import config_command, global_config_command
 from vimini.handler import (
     BaseChannelHandler,
     register_handler,
@@ -132,6 +132,40 @@ def send_setup():
     return util.send_channel_request(req, silent=False)
 
 
+def apply_backend_config(cfg, backend_name, persist=True):
+    """
+    Applies a backend from a loaded global config to the current Vim/runtime state.
+    Optionally persists active_backend in the config file.
+    """
+    from vimini.common.config import set_active_backend
+
+    backends = cfg.get("backends", {}) if isinstance(cfg, dict) else {}
+    if backend_name not in backends:
+        available = list(backends.keys())
+        raise ValueError(f"Backend '{backend_name}' not found. Available: {available}")
+
+    if persist:
+        set_active_backend(backend_name)
+
+    target_cfg = backends[backend_name]
+    util._BACKEND = backend_name
+    try:
+        vim.command(f"let g:vimini_backend = {json.dumps(backend_name)}")
+    except Exception:
+        pass
+
+    if target_cfg.get("default_model"):
+        util._MODEL = target_cfg.get("default_model")
+        util._MODEL_NAME = None
+        try:
+            vim.command(f"let g:vimini_model = {json.dumps(util._MODEL)}")
+        except Exception:
+            pass
+    if target_cfg.get("api_key_file"):
+        util._API_KEY_FILE = os.path.expanduser(target_cfg.get("api_key_file"))
+    send_setup()
+
+
 def backend_command(backend_name=None):
     """
     Handles :ViminiBackend [backend_name].
@@ -142,7 +176,6 @@ def backend_command(backend_name=None):
     from vimini.common.config import (
         load_global_config,
         get_active_backend,
-        set_active_backend,
     )
 
     try:
@@ -176,33 +209,10 @@ def backend_command(backend_name=None):
         return
 
     try:
-        set_active_backend(backend_name_str)
+        apply_backend_config(cfg, backend_name_str, persist=True)
     except Exception as e:
         util.display_message(f"Error setting active backend: {e}", error=True)
         return
-
-    target_cfg = backends[backend_name_str]
-    default_model = target_cfg.get("default_model")
-    api_key_file = target_cfg.get("api_key_file")
-
-    util._BACKEND = backend_name_str
-    try:
-        vim.command(f"let g:vimini_backend = '{backend_name_str}'")
-    except Exception:
-        pass
-
-    if default_model:
-        util._MODEL = default_model
-        util._MODEL_NAME = None
-        try:
-            vim.command(f"let g:vimini_model = '{default_model}'")
-        except Exception:
-            pass
-
-    if api_key_file:
-        util._API_KEY_FILE = os.path.expanduser(api_key_file)
-
-    send_setup()
     util.display_message(
         f"Switched backend to {backend_name_str} (model: {util._MODEL})",
         history=True,
@@ -418,6 +428,9 @@ def help(command_name=None):
         "",
         ":ViminiConfig",
         "    Opens a guided editor to configure project settings (build/test/format commands, worktree directory).",
+        "",
+        ":ViminiGlobalConfig",
+        "    Opens a guided editor to configure global settings and model provider backends.",
         "",
         ":ViminiReview [-c <git_objects>] [--pr <number>] [--mr <number>] [--remote <remote>] [--security] [--save[=<path>]] [{prompt}]",
         "    Reviews code in current buffer, git objects, GitHub PR, or GitLab MR.",
