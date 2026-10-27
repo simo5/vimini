@@ -536,11 +536,21 @@ def test_merge_streamed_function_name_preserves_chunked_names():
     merge = ProxyChatSession._merge_streamed_function_name
 
     name = merge("", "read")
+    assert name == "read"
+    assert merge(name, "") == "read"
     name = merge(name, "_file")
     assert name == "read_file"
 
-    # Overlapping chunks should be merged rather than duplicated.
-    assert merge("read_f", "file") == "read_file"
+    # Character-by-character streaming preserves repeated characters across boundaries
+    chars = list("apply_patch")
+    char_merged = ""
+    for c in chars:
+        char_merged = merge(char_merged, c)
+    assert char_merged == "apply_patch"
+
+    assert merge("ap", "p") == "app"
+    assert merge("get_git_com", "m") == "get_git_comm"
+    assert merge("edit", "text") == "edittext"
 
     # Repeated complete names should not be appended.
     assert merge("read_file", "read_file") == "read_file"
