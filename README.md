@@ -360,6 +360,18 @@ You can add an optional `{prompt}` to guide the AI's review. The review will be 
 *   `--security`: Narrows the scope of the review to focus exclusively on security vulnerabilities, insecure coding practices, and potential attack vectors.
 *   `--save[=<path>]`: Used with `-c`, `--pr`, or `--mr`. This option reviews each commit in the given range individually and saves each review to a separate file. If a path is provided (e.g., `--save=./reviews`), files are saved there. Otherwise, they are saved in the root of the git repository (e.g., `0001-fix-login-bug.review.txt`).
 
+> **Note on the reviewed commit range:** Only the commits that belong to the
+> PR/MR are reviewed. Vimini first refreshes the selected remote (a plain
+> `git fetch`, without tags) so that the remote-tracking base branch is current,
+> then determines which branch the PR/MR was opened against without contacting
+> GitHub or GitLab: every remote-tracking branch of that remote is compared with
+> the pulled head and the branch with the fewest missing commits is chosen, with
+> the remote's default branch breaking ties. This also handles PRs/MRs that
+> target a non-default branch. If no base branch can be determined, or it shares
+> no history with the PR/MR, Vimini reports a warning and falls back to reviewing
+> only the tip commit. The resolved base and commit count are echoed before the
+> review starts.
+
 > **Note on Worktrees:** When reviewing PRs or MRs, Vimini creates an isolated temporary git worktree so the review agent can inspect post-change files without altering your working copy or interfering with unstaged changes. Worktrees are only created if the `worktree` option is set in `:ViminiConfig` (e.g., `~/.var/vimini/worktree`). If not set (default), worktrees are not allowed and Vimini falls back to your local repository directory.
 
 **Examples:**
