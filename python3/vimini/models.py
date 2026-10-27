@@ -141,23 +141,72 @@ def categorize_model(model):
     return "Other / Specialized"
 
 
-def build_models_buffer(models, current_model):
+def build_models_buffer(models, current_model, backend_name=None, api_type=None):
     """
     Builds the buffer lines and line-to-model mapping grouped by category.
     Returns (buffer_lines, line_map, current_model_line).
     """
+    if backend_name is None or api_type is None:
+        from vimini.common.config import load_global_config, get_active_backend
+
+        try:
+            cfg = load_global_config()
+            backend_name = getattr(util, "_BACKEND", None) or get_active_backend(cfg)
+            b_cfg = cfg.get("backends", {}).get(backend_name, {})
+            api_type = b_cfg.get("api", "genai")
+        except Exception:
+            backend_name = getattr(util, "_BACKEND", "Gemini")
+            api_type = "genai"
+
     buffer_lines = [
-        "| Vimini Available Models",
+        f"| Vimini Available Models (Backend: {backend_name})",
         "|----------------------------------------------------------------------",
         "| <CR>: switch model | q: close",
-        "| Note: Only 'Multimodal & Text Generation' models are currently supported.",
-        "",
     ]
+    if api_type == "genai":
+        buffer_lines.append(
+            "| Note: Only 'Multimodal & Text Generation' models are currently supported.",
+        )
+    buffer_lines.append("")
+
     line_map = {}
     current_model_line = None
 
     if current_model and current_model.startswith("models/"):
         current_model = current_model[7:]
+
+    if api_type == "openai":
+        cat = "Available Models"
+        buffer_lines.append(f"[{cat}]")
+        line_map[len(buffer_lines)] = None
+
+        for m in models:
+            if isinstance(m, str):
+                name = m
+                display = m
+            else:
+                name = m.get("name", "")
+                display = m.get("display_name", name)
+
+            if name.startswith("models/"):
+                name = name[7:]
+
+            is_current = name == current_model
+            prefix = " * " if is_current else "   "
+            buffer_lines.append(f"{prefix}{display}")
+            line_num = len(buffer_lines)
+            line_map[line_num] = {
+                "model": m,
+                "name": name,
+                "display": display,
+                "category": cat,
+            }
+            if is_current and current_model_line is None:
+                current_model_line = line_num
+
+        buffer_lines.append("")
+        line_map[len(buffer_lines)] = None
+        return buffer_lines, line_map, current_model_line
 
     from collections import defaultdict
 
@@ -278,7 +327,7 @@ def select_model():
             return
 
         cat = entry.get("category")
-        if cat != SUPPORTED_CATEGORY:
+        if cat != SUPPORTED_CATEGORY and cat != "Available Models":
             util.display_message(f"Category '{cat}' is unsupported", error=True)
             return
 

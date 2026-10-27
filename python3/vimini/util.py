@@ -10,6 +10,7 @@ from vimini.common.genai import (
 
 # Module-level variables to store the API key file, model name, and client instance.
 _API_KEY_FILE = None
+_BACKEND = None
 _MODEL = None
 _MODEL_NAME = None
 _GENAI_CLIENT = None  # Global, lazily-initialized client.
@@ -844,8 +845,32 @@ def update_status_buffer():
         # so it updates when we switch back to the tab with status window.
         return
 
-    lines = [f"{_STATUS_BUFFER_NAME}", "===========================", ""]
+    from vimini.common.config import load_global_config, get_active_backend
 
+    try:
+        cfg = load_global_config()
+        backend_name = _BACKEND or get_active_backend(cfg)
+        b_cfg = cfg.get("backends", {}).get(backend_name, {})
+        api_type = b_cfg.get("api", "genai")
+        endpoint = b_cfg.get(
+            "base_url",
+            "https://generativelanguage.googleapis.com"
+            if api_type == "genai"
+            else "N/A",
+        )
+    except Exception:
+        backend_name = _BACKEND or "Gemini"
+        api_type = "genai"
+        endpoint = "N/A"
+
+    lines = [
+        f"{_STATUS_BUFFER_NAME}",
+        "===========================",
+        f"Backend:  {backend_name} ({api_type})",
+        f"Endpoint: {endpoint}",
+        f"Model:    {_MODEL or 'default'}",
+        "",
+    ]
     if not _ACTIVE_JOBS:
         lines.append("No active jobs.")
     else:

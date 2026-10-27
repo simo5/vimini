@@ -31,12 +31,26 @@ from vimini.handler import (
 )
 
 
-def initialize(api_key_file, model, logfile=None):
+def initialize(api_key_file, model, logfile=None, backend=None):
     """
     Initializes the plugin with the user's API key file path, model name, and
     optional logfile path.
     This function is called from the plugin's Vimscript entry point.
     """
+    from vimini.common.config import load_global_config, get_active_backend
+
+    try:
+        cfg = load_global_config(default_model=model, api_key_file=api_key_file)
+        if not backend:
+            backend = get_active_backend(cfg)
+        util._BACKEND = backend
+        active_b_cfg = cfg.get("backends", {}).get(backend, {})
+        if active_b_cfg.get("api_key_file"):
+            api_key_file = os.path.expanduser(active_b_cfg.get("api_key_file"))
+    except Exception as e:
+        util.log_info(f"Failed to load global config during initialize: {e}")
+        util._BACKEND = backend or "Gemini"
+
     util._API_KEY_FILE = api_key_file
     util._MODEL = model
     util._GENAI_CLIENT = None  # Reset client if key/model changes.
@@ -116,6 +130,99 @@ def send_setup():
         },
     }
     return util.send_channel_request(req, silent=False)
+
+
+def backend_command(backend_name=None):
+    """
+    Handles :ViminiBackend [backend_name].
+    Without arguments, echoes active backend and lists other available backends.
+    With argument, validates backend exists, updates active backend, updates model to default,
+    and sends setup to agent server.
+    """
+    from vimini.common.config import (
+        load_global_config,
+        get_active_backend,
+        set_active_backend,
+    )
+
+    try:
+        cfg = load_global_config()
+    except Exception as e:
+        util.display_message(f"Error loading configuration: {e}", error=True)
+        return
+
+    active = get_active_backend(cfg)
+    backends = cfg.get("backends", {})
+
+    if not backend_name:
+        others = [b for b in backends.keys() if b != active]
+        if others:
+            util.display_message(
+                f"{active} (available: {', '.join(others)})", history=True
+            )
+        else:
+            util.display_message(
+                f"{active} (no other backends configured)", history=True
+            )
+        return
+
+    backend_name_str = str(backend_name).strip()
+    if backend_name_str not in backends:
+        available = list(backends.keys())
+        util.display_message(
+            f"Backend '{backend_name_str}' not found. Available: {available}",
+            error=True,
+        )
+        return
+
+    try:
+        set_active_backend(backend_name_str)
+    except Exception as e:
+        util.display_message(f"Error setting active backend: {e}", error=True)
+        return
+
+    target_cfg = backends[backend_name_str]
+    default_model = target_cfg.get("default_model")
+    api_key_file = target_cfg.get("api_key_file")
+
+    util._BACKEND = backend_name_str
+    try:
+        vim.command(f"let g:vimini_backend = '{backend_name_str}'")
+    except Exception:
+        pass
+
+    if default_model:
+        util._MODEL = default_model
+        util._MODEL_NAME = None
+        try:
+            vim.command(f"let g:vimini_model = '{default_model}'")
+        except Exception:
+            pass
+
+    if api_key_file:
+        util._API_KEY_FILE = os.path.expanduser(api_key_file)
+
+    send_setup()
+    util.display_message(
+        f"Switched backend to {backend_name_str} (model: {util._MODEL})",
+        history=True,
+    )
+
+
+def get_available_backends(arg_lead=""):
+    """
+    Returns a list of backend names matching arg_lead for command completion.
+    """
+    from vimini.common.config import load_global_config
+
+    try:
+        cfg = load_global_config()
+        backends = list(cfg.get("backends", {}).keys())
+        if arg_lead:
+            return [b for b in backends if b.lower().startswith(arg_lead.lower())]
+        return backends
+    except Exception:
+        return []
 
 
 def start_agent():
@@ -282,6 +389,10 @@ def help(command_name=None):
     help_content = [
         "VIMINI HELP",
         "===========",
+        "",
+        ":ViminiBackend [backend_name]",
+        "    Switches or displays the active model backend (e.g. Gemini, ProxyAPI).",
+        "    Without arguments, echoes active backend and other available backends.",
         "",
         ":ViminiListModels",
         "    Lists all available Gemini models in a new split window.",

@@ -184,7 +184,30 @@ customizations.
     }
     ```
 
+    You can configure multiple backends (Google Gemini via `"api": "genai"`, or OpenAI-compatible proxies and endpoints via `"api": "openai"`).
+
+12. **Active Backend (`g:vimini_backend`)**:
+    Specifies the active backend name matching a key in `~/.var/vimini/config.json`. The default is `'Gemini'`.
+    You can switch backends at runtime using the `:ViminiBackend` command.
+    ```vim
+    let g:vimini_backend = 'Gemini'
+    ```
+
 ## Usage
+
+### `:ViminiBackend [backend_name]`
+
+Displays or switches the active model provider backend at runtime without restarting Vim:
+*   **Without arguments**: Echoes the active backend and lists other available backends in parentheses (e.g. `Gemini (available: Custom 1, Custom 2)`).
+*   **With argument**: Validates and switches to the specified backend, updating `g:vimini_backend` and `g:vimini_model` to that backend's default model, and sends an updated setup message to the background agent. Supports tab completion.
+
+```vim
+" Check current backend
+:ViminiBackend
+
+" Switch to an alternative backend
+:ViminiBackend Custom 1
+```
 
 Vimini exposes several commands for interacting with the Gemini API:
 

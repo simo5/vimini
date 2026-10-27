@@ -1,5 +1,6 @@
 import sys
 import os
+import pytest
 from unittest.mock import MagicMock, patch
 
 # Ensure python3 root is in sys.path
@@ -16,6 +17,22 @@ from vimini.models import (
 )
 import vimini.models as models_module
 from vimini import util
+
+GENAI_GLOBAL_CONFIG = {
+    "active_backend": "Gemini",
+    "backends": {
+        "Gemini": {"api": "genai"},
+    },
+}
+
+
+@pytest.fixture
+def genai_global_config():
+    """Isolate tests from the developer's real global vimini config."""
+    with patch(
+        "vimini.common.config.load_global_config", return_value=GENAI_GLOBAL_CONFIG
+    ):
+        yield
 
 
 def test_categorize_model():
@@ -163,7 +180,7 @@ def test_categorize_model():
     )
 
 
-def test_build_models_buffer():
+def test_build_models_buffer(genai_global_config):
     models = [
         {"name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash"},
         {"name": "gemini-2.5-pro", "display_name": "Gemini 2.5 Pro"},
@@ -189,7 +206,7 @@ def test_build_models_buffer():
     assert pro_line == "   Gemini 2.5 Pro"
 
 
-def test_select_supported_model():
+def test_select_supported_model(genai_global_config):
     models = [
         {"name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash"},
         {"name": "imagen-3.0", "display_name": "Imagen 3"},
@@ -221,7 +238,7 @@ def test_select_supported_model():
         mock_display.assert_called_once_with("Switched model to gemini-2.5-flash")
 
 
-def test_select_unsupported_model_emits_error():
+def test_select_unsupported_model_emits_error(genai_global_config):
     models = [
         {"name": "gemini-2.5-flash", "display_name": "Gemini 2.5 Flash"},
         {"name": "imagen-3.0", "display_name": "Imagen 3"},

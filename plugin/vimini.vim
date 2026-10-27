@@ -12,6 +12,9 @@ let s:api_key_file = expand('~/.config/gemini.token')
 " Configuration: Model name
 let g:vimini_model = get(g:, 'vimini_model', 'gemini-3.6-flash')
 
+" Configuration: Active Backend name
+let g:vimini_backend = get(g:, 'vimini_backend', '')
+
 " Configuration: How to split new windows ('vertical' or 'horizontal').
 let g:vimini_split_method = get(g:, 'vimini_split_method', 'vertical')
 
@@ -61,8 +64,13 @@ try:
     from vimini import main
     api_key_file = vim.eval('s:api_key_file')
     model = vim.eval('g:vimini_model')
+    backend = vim.eval('g:vimini_backend')
     log_file = vim.eval('g:vimini_log_file') if vim.eval('g:vimini_logging') == 'on' else None
-    main.initialize(api_key_file=api_key_file, model=model, logfile=log_file)
+    main.initialize(api_key_file=api_key_file, model=model, logfile=log_file, backend=backend if backend else None)
+    from vimini import util
+    if util._BACKEND:
+        vim.command(f"let g:vimini_backend = '{util._BACKEND}'")
+        vim.command(f"let g:vimini_model = '{util._MODEL}'")
     socket_path = main.start_agent()
     if socket_path:
         vim.command(f"let s:socket_path = '{socket_path}'")
@@ -101,6 +109,26 @@ function! ViminiListModels()
 endfunction
 
 command! ViminiListModels call ViminiListModels()
+
+" Expose a function to switch or display backend
+function! ViminiBackend(...)
+  let l:backend = get(a:, 1, '')
+  py3 << EOF
+try:
+    from vimini import main
+    backend_arg = vim.eval('l:backend')
+    main.backend_command(backend_arg if backend_arg else None)
+except Exception as e:
+    error_message = str(e).replace("\n", " ").replace("\r", " ").replace("'", "''")
+    vim.command(f"echoerr '[Vimini] Error: {error_message}'")
+EOF
+endfunction
+
+function! ViminiBackendComplete(ArgLead, CmdLine, CursorPos)
+  return py3eval("main.get_available_backends(vim.eval('a:ArgLead'))")
+endfunction
+
+command! -nargs=? -complete=customlist,ViminiBackendComplete ViminiBackend call ViminiBackend(<f-args>)
 
 " Expose a function to Chat with Gemini
 function! ViminiChat()
