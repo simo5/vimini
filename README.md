@@ -70,12 +70,12 @@ customizations.
     YOUR_API_KEY_HERE
     ```
 
-2.  **Default Model (`g:vimini_model`)**:
-    Specify the default Gemini model you want to use. The default is
-    `gemini-2.5-flash`. You can list available models using `:ViminiListModels`.
-    ```vim
-    let g:vimini_model = 'gemini-2.5-flash' " Or 'gemini-2.5-pro', etc.
-    ```
+2.  **Default Model (`~/.var/vimini/config.json`)**:
+    The default model is configured per backend in the global Vimini configuration
+    file under each backend's `default_model` field. Setting `g:vimini_model` in
+    your Vim config is deprecated and no longer controls startup model selection.
+    Use `:ViminiGlobalConfig` or press `D` on a model in `:ViminiListModels` to
+    save it as the active backend's default model.
 
 3.  **Thinking Display (`g:vimini_thinking`)**:
     Control whether the AI's "thinking" process is displayed in a
@@ -232,7 +232,10 @@ Vimini exposes several commands for interacting with the Gemini API:
 ### `:ViminiListModels`
 
 Lists all available Gemini models in a new split window. This is
-useful for knowing which models you can set for `g:vimini_model`.
+useful for viewing models available to the active backend.
+Press `<Enter>` on a supported model to switch to it for the current session.
+Press `D` on a supported model to save it as the active backend's default model
+in `~/.var/vimini/config.json` and switch to it immediately.
 
 ```vim
 :ViminiListModels

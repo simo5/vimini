@@ -9,9 +9,6 @@ let g:loaded_vimini = 1
 " Configuration: API Key file path
 let s:api_key_file = expand('~/.config/gemini.token')
 
-" Configuration: Model name
-let g:vimini_model = get(g:, 'vimini_model', 'gemini-3.6-flash')
-
 " Configuration: Active Backend name
 let g:vimini_backend = get(g:, 'vimini_backend', '')
 
@@ -63,10 +60,9 @@ try:
 
     from vimini import main
     api_key_file = vim.eval('s:api_key_file')
-    model = vim.eval('g:vimini_model')
     backend = vim.eval('g:vimini_backend')
     log_file = vim.eval('g:vimini_log_file') if vim.eval('g:vimini_logging') == 'on' else None
-    main.initialize(api_key_file=api_key_file, model=model, logfile=log_file, backend=backend if backend else None)
+    main.initialize(api_key_file=api_key_file, logfile=log_file, backend=backend if backend else None)
     from vimini import util
     if util._BACKEND:
         vim.command(f"let g:vimini_backend = '{util._BACKEND}'")

@@ -31,30 +31,42 @@ from vimini.handler import (
 )
 
 
-def initialize(api_key_file, model, logfile=None, backend=None):
+def initialize(api_key_file, model=None, logfile=None, backend=None):
     """
-    Initializes the plugin with the user's API key file path, model name, and
-    optional logfile path.
+    Initializes the plugin with the user's API key file path and optional logfile path.
+    The model is always read from the active backend in the global config.
     This function is called from the plugin's Vimscript entry point.
     """
-    from vimini.common.config import load_global_config, get_active_backend
+    from vimini.common.config import (
+        DEFAULT_MODEL,
+        load_global_config,
+        get_active_backend,
+    )
 
     try:
-        cfg = load_global_config(default_model=model, api_key_file=api_key_file)
+        cfg = load_global_config(api_key_file=api_key_file)
         if not backend:
             backend = get_active_backend(cfg)
         util._BACKEND = backend
         active_b_cfg = cfg.get("backends", {}).get(backend, {})
         if active_b_cfg.get("api_key_file"):
             api_key_file = os.path.expanduser(active_b_cfg.get("api_key_file"))
+        active_model = active_b_cfg.get("default_model") or DEFAULT_MODEL
     except Exception as e:
         util.log_info(f"Failed to load global config during initialize: {e}")
         util._BACKEND = backend or "Gemini"
+        active_model = DEFAULT_MODEL
 
     util._API_KEY_FILE = api_key_file
-    util._MODEL = model
+    util._MODEL = active_model
+    util._MODEL_NAME = None
     util._GENAI_CLIENT = None  # Reset client if key/model changes.
     util.set_logging(logfile)
+    try:
+        vim.command(f"let g:vimini_backend = {json.dumps(util._BACKEND)}")
+        vim.command(f"let g:vimini_model = {json.dumps(util._MODEL)}")
+    except Exception:
+        pass
     restore_context_files()
     if not util.get_api_key():
         util.display_message(
@@ -339,7 +351,6 @@ def reload_vimini():
         from vimini import util as old_util
 
         api_key_file = old_util._API_KEY_FILE
-        model = old_util._MODEL
         job_counter = old_util._JOB_COUNTER
         log_file = None
         if old_util._LOGGER and old_util._LOGGER.handlers:
@@ -351,7 +362,6 @@ def reload_vimini():
                     break
     except Exception:
         api_key_file = os.path.expanduser("~/.config/gemini.token")
-        model = vim.eval("get(g:, 'vimini_model', 'gemini-3.6-flash')")
         job_counter = 0
         log_file = vim.eval("get(g:, 'vimini_log_file', '')")
         if not log_file or vim.eval("get(g:, 'vimini_logging', 'off')") != "on":
@@ -365,7 +375,7 @@ def reload_vimini():
     # Re-import main and re-initialize
     from vimini import main
 
-    main.initialize(api_key_file=api_key_file, model=model, logfile=log_file)
+    main.initialize(api_key_file=api_key_file, logfile=log_file)
 
     # Use the freshly imported util to display the message and restore _JOB_COUNTER
     from vimini import util as new_util
@@ -405,7 +415,7 @@ def help(command_name=None):
         "    Without arguments, echoes active backend and other available backends.",
         "",
         ":ViminiListModels",
-        "    Lists all available Gemini models in a new split window.",
+        "    Lists available models. Press D on a model to save it as the backend default.",
         "",
         ":ViminiChat",
         "    Opens the chat buffer for interactive mode with Gemini.",
