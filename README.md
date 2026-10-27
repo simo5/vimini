@@ -186,6 +186,24 @@ customizations.
 
     You can configure multiple backends (Google Gemini via `"api": "genai"`, or OpenAI-compatible proxies and endpoints via `"api": "openai"`).
 
+    You can also edit this file interactively from Vim with `:ViminiGlobalConfig`.
+
+### `:ViminiGlobalConfig`
+
+Opens an interactive configuration editor in a new split window to configure global Vimini settings and model provider backends stored in `~/.var/vimini/config.json`.
+
+**How to use the global configuration manager:**
+*   Move the cursor to any configuration option or backend line.
+*   **`<Enter>` or `e`**: Edits the selected value. On `active_backend`, enter one of the configured backend names. On a backend header, rename the backend.
+*   **`a`**: Adds a new backend and prompts for API type, default model, API key file, and base URL for OpenAI-compatible backends.
+*   **`d`**: Clears the selected backend field or deletes the selected backend after confirmation. The last backend cannot be deleted.
+*   **`r`**: Resets all global configuration options to their last saved state.
+*   **`q`**: Closes the configuration window. If modifications were made, a confirmation prompt asks whether to save changes permanently to `~/.var/vimini/config.json`.
+
+```vim
+:ViminiGlobalConfig
+```
+
 12. **Active Backend (`g:vimini_backend`)**:
     Specifies the active backend name matching a key in `~/.var/vimini/config.json`. The default is `'Gemini'`.
     You can switch backends at runtime using the `:ViminiBackend` command.

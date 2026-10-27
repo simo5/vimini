@@ -2,6 +2,7 @@ import vim
 import os
 import json
 import tempfile
+import copy
 from . import util
 from vimini.common.util import (
     PROJECT_CONFIG_SCHEMA,
@@ -10,6 +11,12 @@ from vimini.common.util import (
     create_default_project_data,
     get_project_data_file_path,
     get_project_name,
+)
+from vimini.common.config import (
+    get_global_config_path,
+    load_global_config,
+    save_global_config,
+    validate_global_config,
 )
 
 CONFIG_JSON_HELP_HEADER = """# Vimini Project Command Configuration
@@ -73,11 +80,386 @@ _VIMINI_CONFIG_PROJECT_ROOT = None
 _VIMINI_CONFIG_PROJECT_NAME = None
 _JSON_EDITOR_STATE = {}
 
+_VIMINI_PENDING_GLOBAL_CONFIG = None
+_VIMINI_ORIGINAL_GLOBAL_CONFIG = None
+_VIMINI_GLOBAL_CONFIG_PATH = None
+_GLOBAL_CONFIG_LINE_MAP = {}
+
 
 def _to_str(val):
     if isinstance(val, bytes):
         return val.decode("utf-8", errors="replace")
     return str(val) if val is not None else ""
+
+
+def _vim_string(value):
+    return json.dumps(_to_str(value))
+
+
+def _add_mapped_line(lines, line_map, line, target=None):
+    lines.append(line)
+    if target is not None:
+        line_map[len(lines)] = target
+
+
+def _ordered_backend_fields(backend_cfg):
+    fields = []
+    for key in ("api", "api_key_file", "default_model"):
+        if key in backend_cfg or key == "api":
+            fields.append(key)
+    if backend_cfg.get("api") == "openai" or "base_url" in backend_cfg:
+        fields.append("base_url")
+    for key in backend_cfg.keys():
+        if key not in fields:
+            fields.append(key)
+    return fields
+
+
+def _draw_global_config_listing(config_data, config_path=None):
+    config_path = config_path or get_global_config_path()
+    active_backend = config_data.get("active_backend", "")
+    backends = config_data.get("backends", {})
+    lines = []
+    line_map = {}
+
+    _add_mapped_line(lines, line_map, "| Vimini Global Configuration")
+    _add_mapped_line(
+        lines,
+        line_map,
+        "|----------------------------------------------------------------------",
+    )
+    _add_mapped_line(
+        lines,
+        line_map,
+        "| <CR>/e: edit value | a: add backend | d: delete/clear | r: reset | q: close",
+    )
+    _add_mapped_line(lines, line_map, f"| File: {config_path}")
+    _add_mapped_line(lines, line_map, "")
+    _add_mapped_line(lines, line_map, "> GLOBAL OPTIONS")
+    _add_mapped_line(
+        lines,
+        line_map,
+        f"  active_backend = {active_backend or '(not set)'}",
+        ("global", "active_backend"),
+    )
+    _add_mapped_line(lines, line_map, "    # Currently selected model backend")
+    _add_mapped_line(lines, line_map, "")
+    _add_mapped_line(lines, line_map, "> BACKENDS")
+
+    if not isinstance(backends, dict) or not backends:
+        _add_mapped_line(lines, line_map, "  (no backends configured)")
+    else:
+        for backend_name, backend_cfg in backends.items():
+            if not isinstance(backend_cfg, dict):
+                backend_cfg = {}
+            _add_mapped_line(lines, line_map, "")
+            marker = "*" if backend_name == active_backend else " "
+            _add_mapped_line(
+                lines,
+                line_map,
+                f"{marker} {backend_name}",
+                ("backend", backend_name),
+            )
+            for field in _ordered_backend_fields(backend_cfg):
+                value = backend_cfg.get(field)
+                value_str = (
+                    str(value) if value is not None and value != "" else "(not set)"
+                )
+                _add_mapped_line(
+                    lines,
+                    line_map,
+                    f"    {field} = {value_str}",
+                    ("backend_field", backend_name, field),
+                )
+
+    return lines, line_map
+
+
+def _set_global_config_syntax():
+    vim.command("syntax match ViminiConfigKey '^\\s*[a-zA-Z0-9_-]\\+\\ze\\s*='")
+    vim.command("syntax match ViminiConfigValue '=\\s*\\zs.*$'")
+    vim.command("syntax match ViminiConfigComment '^\\s*#.*$'")
+    vim.command("syntax match ViminiConfigHeader '^|.*'")
+    vim.command("syntax match ViminiConfigSection '^>.*'")
+    vim.command("syntax match ViminiConfigBackend '^\\s*[ *] .*$'")
+    vim.command("highlight default link ViminiConfigKey Identifier")
+    vim.command("highlight default link ViminiConfigValue String")
+    vim.command("highlight default link ViminiConfigComment Comment")
+    vim.command("highlight default link ViminiConfigHeader Comment")
+    vim.command("highlight default link ViminiConfigSection Title")
+    vim.command("highlight default link ViminiConfigBackend Type")
+
+
+def _get_global_target_at_cursor():
+    try:
+        line_num, _col = vim.current.window.cursor
+        return _GLOBAL_CONFIG_LINE_MAP.get(line_num)
+    except Exception:
+        return None
+
+
+def _refresh_global_config_buffer(win=None, line_num=None, col=None, buf_nr=None):
+    global _GLOBAL_CONFIG_LINE_MAP
+    target_buf = None
+    if buf_nr:
+        try:
+            target_buf_nr = int(buf_nr)
+            for b in vim.buffers:
+                if b.number == target_buf_nr:
+                    target_buf = b
+                    break
+        except Exception:
+            pass
+
+    if target_buf is None and win is not None:
+        try:
+            target_buf = win.buffer
+        except Exception:
+            pass
+
+    if target_buf is None:
+        for b in vim.buffers:
+            if b.name and os.path.basename(b.name) == "ViminiGlobalConfig":
+                target_buf = b
+                break
+
+    if target_buf is None:
+        target_buf = vim.current.buffer
+
+    lines, line_map = _draw_global_config_listing(
+        _VIMINI_PENDING_GLOBAL_CONFIG or {}, _VIMINI_GLOBAL_CONFIG_PATH
+    )
+    _GLOBAL_CONFIG_LINE_MAP = line_map
+
+    target_buf.options["readonly"] = False
+    target_buf.options["modifiable"] = True
+    try:
+        target_buf[:] = lines
+    finally:
+        target_buf.options["modifiable"] = False
+        target_buf.options["readonly"] = True
+
+    for w in vim.windows:
+        try:
+            if w.buffer.number == target_buf.number:
+                w.options["wrap"] = True
+                if line_num is not None and col is not None:
+                    w.cursor = (min(line_num, len(lines)), col)
+        except Exception:
+            pass
+    vim.command("redraw")
+
+
+def global_config_command():
+    """Shows a guided editor for ~/.var/vimini/config.json."""
+    global _VIMINI_PENDING_GLOBAL_CONFIG, _VIMINI_ORIGINAL_GLOBAL_CONFIG
+    global _VIMINI_GLOBAL_CONFIG_PATH, _GLOBAL_CONFIG_LINE_MAP
+    util.log_info("global_config_command()")
+    try:
+        config_path = get_global_config_path()
+        data = load_global_config(config_path=config_path)
+        _VIMINI_ORIGINAL_GLOBAL_CONFIG = copy.deepcopy(data)
+        _VIMINI_PENDING_GLOBAL_CONFIG = copy.deepcopy(data)
+        _VIMINI_GLOBAL_CONFIG_PATH = config_path
+        lines, line_map = _draw_global_config_listing(data, config_path)
+        _GLOBAL_CONFIG_LINE_MAP = line_map
+
+        util.new_split()
+        vim.command("file ViminiGlobalConfig")
+        buf = vim.current.buffer
+        buf[:] = lines
+        buf.options["buftype"] = "nofile"
+        buf.options["swapfile"] = False
+        buf.options["modifiable"] = False
+        buf.options["readonly"] = True
+        try:
+            vim.current.window.options["wrap"] = True
+        except Exception:
+            pass
+        buf.vars["vimini_global_config_path"] = config_path
+
+        _set_global_config_syntax()
+        vim.command(
+            "nnoremap <buffer> <silent> <CR> :py3 from vimini.config import edit_global_config_option; edit_global_config_option()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> e :py3 from vimini.config import edit_global_config_option; edit_global_config_option()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> a :py3 from vimini.config import add_global_backend; add_global_backend()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> d :py3 from vimini.config import delete_or_clear_global_config_option; delete_or_clear_global_config_option()<CR>"
+        )
+        vim.command(
+            "nnoremap <buffer> <silent> r :py3 from vimini.config import reset_global_config_options; reset_global_config_options()<CR>"
+        )
+        vim.command("nnoremap <buffer> <silent> q :q<CR>")
+        vim.command(
+            "autocmd BufUnload <buffer> :py3 from vimini.config import confirm_global_config; confirm_global_config()"
+        )
+        vim.current.window.cursor = (7, 2)
+    except Exception as e:
+        util.display_message(f"Error opening global configuration: {e}", error=True)
+
+
+def edit_global_config_option():
+    global _VIMINI_PENDING_GLOBAL_CONFIG
+    try:
+        target = _get_global_target_at_cursor()
+        if _VIMINI_PENDING_GLOBAL_CONFIG is None or not target:
+            util.display_message("No editable global configuration option selected.")
+            return
+        win = vim.current.window
+        line_num, col = win.cursor
+        backends = _VIMINI_PENDING_GLOBAL_CONFIG.setdefault("backends", {})
+        kind = target[0]
+
+        if kind == "global" and target[1] == "active_backend":
+            names = list(backends.keys())
+            current = _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend", "")
+            prompt = f"Active backend ({', '.join(names)}): "
+            new_val = _to_str(
+                vim.eval(f"input({_vim_string(prompt)}, {_vim_string(current)})")
+            ).strip()
+            if new_val and new_val in backends:
+                _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = new_val
+                _refresh_global_config_buffer(win, line_num, col)
+                util.display_message(f"Set active backend to '{new_val}'.")
+            elif new_val:
+                util.display_message(
+                    f"Backend '{new_val}' is not configured.", error=True
+                )
+            return
+
+        if kind == "backend_field":
+            backend_name, field = target[1], target[2]
+            backend_cfg = backends.setdefault(backend_name, {})
+            current = backend_cfg.get(field, "")
+            prompt = f"{backend_name}.{field}: "
+            new_val = _to_str(
+                vim.eval(f"input({_vim_string(prompt)}, {_vim_string(current)})")
+            ).strip()
+            if not new_val:
+                if field == "api":
+                    util.display_message("Backend api cannot be empty.", error=True)
+                    return
+                backend_cfg.pop(field, None)
+            else:
+                backend_cfg[field] = new_val
+            _refresh_global_config_buffer(win, line_num, col)
+            util.display_message(f"Updated '{backend_name}.{field}'.")
+            return
+
+        if kind == "backend":
+            backend_name = target[1]
+            new_name = _to_str(
+                vim.eval(f"input('Backend name: ', {_vim_string(backend_name)})")
+            ).strip()
+            if new_name and new_name != backend_name:
+                if new_name in backends:
+                    util.display_message(
+                        f"Backend '{new_name}' already exists.", error=True
+                    )
+                    return
+                backends[new_name] = backends.pop(backend_name)
+                if _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend") == backend_name:
+                    _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = new_name
+                _refresh_global_config_buffer(win, line_num, col)
+                util.display_message(
+                    f"Renamed backend '{backend_name}' to '{new_name}'."
+                )
+    except Exception as e:
+        util.display_message(f"Error editing global configuration: {e}", error=True)
+
+
+def add_global_backend():
+    global _VIMINI_PENDING_GLOBAL_CONFIG
+    try:
+        if _VIMINI_PENDING_GLOBAL_CONFIG is None:
+            util.display_message(
+                "Global configuration editor is not active.", error=True
+            )
+            return
+        backends = _VIMINI_PENDING_GLOBAL_CONFIG.setdefault("backends", {})
+        name = _to_str(vim.eval("input('Backend name: ')")).strip()
+        if not name:
+            return
+        if name in backends:
+            util.display_message(f"Backend '{name}' already exists.", error=True)
+            return
+        api = (
+            _to_str(vim.eval("input('API type [genai/openai]: ', 'openai')")).strip()
+            or "openai"
+        )
+        default_model = _to_str(vim.eval("input('Default model: ')")).strip()
+        api_key_file = _to_str(vim.eval("input('API key file: ')")).strip()
+        backend_cfg = {"api": api}
+        if api_key_file:
+            backend_cfg["api_key_file"] = api_key_file
+        if default_model:
+            backend_cfg["default_model"] = default_model
+        if api == "openai":
+            base_url = _to_str(vim.eval("input('Base URL: ')")).strip()
+            if base_url:
+                backend_cfg["base_url"] = base_url
+        backends[name] = backend_cfg
+        if not _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend"):
+            _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = name
+        _refresh_global_config_buffer(vim.current.window, *vim.current.window.cursor)
+        util.display_message(f"Added backend '{name}'.")
+    except Exception as e:
+        util.display_message(f"Error adding backend: {e}", error=True)
+
+
+def delete_or_clear_global_config_option():
+    global _VIMINI_PENDING_GLOBAL_CONFIG
+    try:
+        target = _get_global_target_at_cursor()
+        if _VIMINI_PENDING_GLOBAL_CONFIG is None or not target:
+            util.display_message("No global configuration option selected.")
+            return
+        win = vim.current.window
+        line_num, col = win.cursor
+        backends = _VIMINI_PENDING_GLOBAL_CONFIG.setdefault("backends", {})
+        kind = target[0]
+        if kind == "backend_field":
+            backend_name, field = target[1], target[2]
+            if field == "api":
+                util.display_message("Backend api cannot be cleared.", error=True)
+                return
+            backends.setdefault(backend_name, {}).pop(field, None)
+            _refresh_global_config_buffer(win, line_num, col)
+            util.display_message(f"Cleared '{backend_name}.{field}'.")
+        elif kind == "backend":
+            backend_name = target[1]
+            if len(backends) <= 1:
+                util.display_message(
+                    "Cannot delete the last configured backend.", error=True
+                )
+                return
+            confirmed = (
+                int(
+                    vim.eval(
+                        f"confirm({_vim_string(f'Delete backend {backend_name}?')}, '&Yes\\n&No', 2)"
+                    )
+                )
+                == 1
+            )
+            if confirmed:
+                backends.pop(backend_name, None)
+                if _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend") == backend_name:
+                    _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = next(
+                        iter(backends.keys())
+                    )
+                _refresh_global_config_buffer(win, line_num, col)
+                util.display_message(f"Deleted backend '{backend_name}'.")
+        else:
+            util.display_message(
+                "active_backend cannot be cleared; select another backend instead."
+            )
+    except Exception as e:
+        util.display_message(f"Error updating global configuration: {e}", error=True)
 
 
 def _get_key_for_line(line):
@@ -877,6 +1259,80 @@ def reset_config_options():
         util.display_message("Reset configuration options to last saved state.")
     except Exception as e:
         util.display_message(f"Error resetting configuration options: {e}", error=True)
+
+
+def reset_global_config_options():
+    global _VIMINI_PENDING_GLOBAL_CONFIG
+    try:
+        if _VIMINI_ORIGINAL_GLOBAL_CONFIG is None:
+            return
+        _VIMINI_PENDING_GLOBAL_CONFIG = copy.deepcopy(_VIMINI_ORIGINAL_GLOBAL_CONFIG)
+        win = vim.current.window
+        line_num, col = win.cursor
+        _refresh_global_config_buffer(win, line_num, col)
+        util.display_message("Reset global configuration to last saved state.")
+    except Exception as e:
+        util.display_message(f"Error resetting global configuration: {e}", error=True)
+
+
+def _apply_saved_global_config_runtime(config_data):
+    try:
+        from vimini import main
+
+        backend_name = config_data.get("active_backend")
+        if backend_name:
+            main.apply_backend_config(config_data, backend_name, persist=False)
+    except Exception as e:
+        util.log_info(f"Failed to apply saved global config at runtime: {e}")
+
+
+def confirm_global_config():
+    global _VIMINI_PENDING_GLOBAL_CONFIG, _VIMINI_ORIGINAL_GLOBAL_CONFIG
+    global _VIMINI_GLOBAL_CONFIG_PATH, _GLOBAL_CONFIG_LINE_MAP
+    try:
+        if (
+            _VIMINI_PENDING_GLOBAL_CONFIG is None
+            or _VIMINI_ORIGINAL_GLOBAL_CONFIG is None
+        ):
+            return
+        if _VIMINI_PENDING_GLOBAL_CONFIG == _VIMINI_ORIGINAL_GLOBAL_CONFIG:
+            return
+
+        try:
+            validate_global_config(_VIMINI_PENDING_GLOBAL_CONFIG)
+        except Exception as e:
+            util.display_message(f"Global configuration is invalid: {e}", error=True)
+            return
+
+        confirmed = (
+            int(
+                vim.eval(
+                    "confirm('Save global configuration changes?', '&Yes\\n&No', 2)"
+                )
+            )
+            == 1
+        )
+        if confirmed:
+            if save_global_config(
+                _VIMINI_PENDING_GLOBAL_CONFIG, config_path=_VIMINI_GLOBAL_CONFIG_PATH
+            ):
+                _apply_saved_global_config_runtime(_VIMINI_PENDING_GLOBAL_CONFIG)
+                util.display_message(
+                    "Global configuration updated and saved.", history=True
+                )
+            else:
+                util.display_message("Failed to save global configuration.", error=True)
+        else:
+            util.display_message(
+                "Global configuration changes discarded.", history=True
+            )
+    except Exception as e:
+        util.display_message(f"Error confirming global configuration: {e}", error=True)
+    finally:
+        _VIMINI_PENDING_GLOBAL_CONFIG = None
+        _VIMINI_ORIGINAL_GLOBAL_CONFIG = None
+        _VIMINI_GLOBAL_CONFIG_PATH = None
+        _GLOBAL_CONFIG_LINE_MAP = {}
 
 
 def _refresh_config_buffer(win=None, line_num=None, col=None, buf_nr=None):
