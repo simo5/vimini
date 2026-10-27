@@ -147,6 +147,55 @@ class ProxyChatSession(BaseChatSession):
     def get_history(self) -> List[Any]:
         return []
 
+    @staticmethod
+    def _merge_streamed_tool_call(
+        target: Dict[str, Any], source: Dict[str, Any]
+    ) -> None:
+        """
+        Merge a streamed OpenAI-compatible tool_call delta.
+
+        Some providers expose OpenAI-compatible APIs while still requiring
+        opaque provider metadata to be replayed verbatim on the assistant
+        tool-call message in the next request. Google Gemini is one such
+        provider: when thinking/tool calls are used, it may attach a
+        thought_signature to function-call parts, and later rejects the
+        conversation if that signature is dropped.
+
+        Keep this strictly inside the ProxyAPI backend: the public Vimini
+        abstraction still exposes only ToolCall(name, args, call_id), while the
+        backend preserves unknown protocol fields in its own message history.
+        """
+        if source.get("id"):
+            target["id"] = source.get("id")
+        if source.get("type"):
+            target["type"] = source.get("type")
+
+        source_function = source.get("function") or {}
+        target_function = target.setdefault("function", {})
+        if source_function.get("name"):
+            target_function["name"] = target_function.get(
+                "name", ""
+            ) + source_function.get("name", "")
+        if source_function.get("arguments"):
+            target_function["arguments"] = target_function.get(
+                "arguments", ""
+            ) + source_function.get("arguments", "")
+
+        # Preserve provider-specific function metadata, for example Gemini's
+        # opaque thought_signature, without exposing it through ToolCall.
+        for key, value in source_function.items():
+            if key in ("name", "arguments"):
+                continue
+            if value is not None:
+                target_function[key] = value
+
+        # Preserve provider-specific top-level metadata as well.
+        for key, value in source.items():
+            if key in ("index", "id", "type", "function"):
+                continue
+            if value is not None:
+                target[key] = value
+
     def send_message_stream(
         self, prompt_or_tool_responses: Any
     ) -> Iterator[StreamChunk]:
@@ -211,20 +260,10 @@ class ProxyChatSession(BaseChatSession):
                     if idx not in tool_call_chunks:
                         tool_call_chunks[idx] = {
                             "id": tc.get("id"),
-                            "name": tc.get("function", {}).get("name", ""),
-                            "arguments": tc.get("function", {}).get("arguments", ""),
+                            "type": tc.get("type") or "function",
+                            "function": {"name": "", "arguments": ""},
                         }
-                    else:
-                        if tc.get("id"):
-                            tool_call_chunks[idx]["id"] = tc.get("id")
-                        if tc.get("function", {}).get("name"):
-                            tool_call_chunks[idx]["name"] += tc.get("function", {}).get(
-                                "name"
-                            )
-                        if tc.get("function", {}).get("arguments"):
-                            tool_call_chunks[idx]["arguments"] += tc.get(
-                                "function", {}
-                            ).get("arguments")
+                    self._merge_streamed_tool_call(tool_call_chunks[idx], tc)
 
             if text_chunk or thought_chunk:
                 yield StreamChunk(text=text_chunk, thought=thought_chunk)
@@ -235,14 +274,19 @@ class ProxyChatSession(BaseChatSession):
             for idx in sorted(tool_call_chunks.keys()):
                 tc_info = tool_call_chunks[idx]
                 call_id = tc_info.get("id") or f"call_{idx}"
-                args_str = tc_info.get("arguments", "")
+                fn_info = tc_info.get("function", {})
+                args_str = fn_info.get("arguments", "")
                 try:
                     args_dict = json.loads(args_str) if args_str else {}
                 except Exception:
                     args_dict = {"raw": args_str}
 
                 completed_tool_calls.append(
-                    ToolCall(name=tc_info["name"], args=args_dict, call_id=call_id)
+                    ToolCall(
+                        name=fn_info.get("name", ""),
+                        args=args_dict,
+                        call_id=call_id,
+                    )
                 )
 
             yield StreamChunk(tool_calls=completed_tool_calls)
@@ -252,17 +296,17 @@ class ProxyChatSession(BaseChatSession):
         if accumulated_text:
             asst_msg["content"] = accumulated_text
         if completed_tool_calls:
-            asst_msg["tool_calls"] = [
-                {
-                    "id": tc.call_id or f"call_{i}",
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": json.dumps(tc.args),
-                    },
-                }
-                for i, tc in enumerate(completed_tool_calls)
-            ]
+            asst_msg["tool_calls"] = []
+            for i, tc in enumerate(completed_tool_calls):
+                raw_tool_call = dict(tool_call_chunks.get(i, {}))
+                raw_function = dict(raw_tool_call.get("function", {}))
+                raw_function["name"] = tc.name
+                raw_function["arguments"] = json.dumps(tc.args)
+
+                raw_tool_call["id"] = tc.call_id or f"call_{i}"
+                raw_tool_call["type"] = raw_tool_call.get("type") or "function"
+                raw_tool_call["function"] = raw_function
+                asst_msg["tool_calls"].append(raw_tool_call)
         if accumulated_text or completed_tool_calls:
             self.messages.append(asst_msg)
 
