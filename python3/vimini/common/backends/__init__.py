@@ -37,49 +37,42 @@ def get_backend(
     Confines all backend selection logic within generic backend methods.
     """
     if isinstance(config, dict) and "backends" in config:
-        backends = config.get("backends", {})
+        global_cfg = config
         if backend_name is None:
             backend_name = (
                 config.get("active_backend") or config.get("backend") or "Gemini"
             )
     else:
-        try:
-            global_cfg = load_global_config(config_path=config_path)
-        except Exception:
-            from vimini.common.config import create_default_global_config
-
-            global_cfg = create_default_global_config()
-        backends = global_cfg.get("backends", {})
+        global_cfg = load_global_config(config_path=config_path)
         if backend_name is None and isinstance(config, dict):
             backend_name = config.get("backend")
         if backend_name is None:
             backend_name = get_active_backend(global_cfg)
 
+    backends = global_cfg.get("backends", {})
     if backend_name not in backends:
-        if backend_name not in backends:
-            available = list(backends.keys())
-            raise ValueError(
-                f"Backend '{backend_name}' not found in configuration. Available: {available}"
-            )
+        available = list(backends.keys())
+        raise ValueError(
+            f"Backend '{backend_name}' not found in configuration. Available: {available}"
+        )
 
     backend_cfg = dict(backends[backend_name])
-    if isinstance(config, dict):
-        # Allow runtime overrides from caller config if present
-        for k in ("api_key", "api_key_file", "base_url", "headers"):
-            if k in config and config[k] is not None:
-                backend_cfg[k] = config[k]
-
     api = backend_cfg.get("api", "genai")
 
     if api_key is None:
         api_key = load_backend_api_key(backend_cfg)
 
-    target_key_file = api_key_file or backend_cfg.get("api_key_file")
+    if not api_key:
+        key_file = backend_cfg.get("api_key_file")
+        raise RuntimeError(
+            f"API key for backend '{backend_name}' could not be loaded from "
+            f"api_key_file '{key_file}'"
+        )
 
     if api == "genai":
         return GenAIBackend(
             api_key=api_key,
-            api_key_file=target_key_file,
+            api_key_file=backend_cfg.get("api_key_file"),
             config=backend_cfg,
         )
     elif api == "openai":

@@ -48,7 +48,10 @@ def test_get_backend_genai(tmp_path):
         },
     }
 
-    with patch("vimini.common.backends.genai_backend.get_client") as mock_get_client:
+    with (
+        patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"),
+        patch("vimini.common.backends.genai_backend.get_client") as mock_get_client,
+    ):
         backend = get_backend("Gemini", config=config)
         assert isinstance(backend, GenAIBackend)
         mock_get_client.assert_called_once()
@@ -60,18 +63,27 @@ def test_get_backend_defaults_to_active(tmp_path):
         "backends": {
             "Gemini": {
                 "api": "genai",
+                "api_key_file": "~/.config/gemini.token",
                 "default_model": "gemini-3.8-flash",
             }
         },
     }
 
-    with patch("vimini.common.backends.genai_backend.get_client"):
+    with (
+        patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"),
+        patch("vimini.common.backends.genai_backend.get_client"),
+    ):
         backend = get_backend(config=config)
         assert isinstance(backend, GenAIBackend)
 
 
 def test_get_backend_unknown():
-    config = {"active_backend": "Gemini", "backends": {"Gemini": {"api": "genai"}}}
+    config = {
+        "active_backend": "Gemini",
+        "backends": {
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"}
+        },
+    }
     with pytest.raises(ValueError, match="Backend 'NonExistent' not found"):
         get_backend("NonExistent", config=config)
 
@@ -79,19 +91,45 @@ def test_get_backend_unknown():
 def test_get_backend_unsupported_api():
     config = {
         "active_backend": "Custom",
-        "backends": {"Custom": {"api": "unknown_api"}},
+        "backends": {
+            "Custom": {
+                "api": "unknown_api",
+                "api_key_file": "~/.config/custom.token",
+            }
+        },
     }
-    with pytest.raises(ValueError, match="Unsupported API protocol 'unknown_api'"):
+    with (
+        patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"),
+        pytest.raises(ValueError, match="Unsupported API protocol 'unknown_api'"),
+    ):
         get_backend("Custom", config=config)
 
 
 def test_get_backend_openai():
     config = {
         "active_backend": "Custom 1",
-        "backends": {"Custom 1": {"api": "openai"}},
+        "backends": {
+            "Custom 1": {"api": "openai", "api_key_file": "~/.config/openai.token"}
+        },
     }
-    backend = get_backend("Custom 1", config=config)
+    with patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"):
+        backend = get_backend("Custom 1", config=config)
     assert isinstance(backend, ProxyBackend)
+
+
+def test_get_backend_reports_missing_api_key():
+    config = {
+        "active_backend": "Custom 1",
+        "backends": {
+            "Custom 1": {"api": "openai", "api_key_file": "~/.config/missing.token"}
+        },
+    }
+
+    with (
+        patch("vimini.common.backends.load_backend_api_key", return_value=None),
+        pytest.raises(RuntimeError, match="API key for backend 'Custom 1'"),
+    ):
+        get_backend("Custom 1", config=config)
 
 
 def test_genai_backend_list_models():

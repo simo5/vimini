@@ -16,9 +16,9 @@ def test_backend_command_without_arguments():
     config = {
         "active_backend": "Gemini",
         "backends": {
-            "Gemini": {"api": "genai"},
-            "Custom 1": {"api": "openai"},
-            "Custom 2": {"api": "openai"},
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
+            "Custom 1": {"api": "openai", "api_key_file": "~/.config/c1.token"},
+            "Custom 2": {"api": "openai", "api_key_file": "~/.config/c2.token"},
         },
     }
 
@@ -36,7 +36,7 @@ def test_backend_command_without_arguments_no_others():
     config = {
         "active_backend": "Gemini",
         "backends": {
-            "Gemini": {"api": "genai"},
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
         },
     }
 
@@ -54,7 +54,11 @@ def test_backend_command_switch_success():
     config = {
         "active_backend": "Gemini",
         "backends": {
-            "Gemini": {"api": "genai", "default_model": "gemini-3.8-flash"},
+            "Gemini": {
+                "api": "genai",
+                "api_key_file": "~/.config/gemini.token",
+                "default_model": "gemini-3.8-flash",
+            },
             "Custom 1": {
                 "api": "openai",
                 "default_model": "gpt-4o",
@@ -87,7 +91,7 @@ def test_backend_command_switch_invalid():
     config = {
         "active_backend": "Gemini",
         "backends": {
-            "Gemini": {"api": "genai"},
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
         },
     }
 
@@ -105,9 +109,9 @@ def test_get_available_backends():
     config = {
         "active_backend": "Gemini",
         "backends": {
-            "Gemini": {"api": "genai"},
-            "Custom 1": {"api": "openai"},
-            "Custom 2": {"api": "openai"},
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
+            "Custom 1": {"api": "openai", "api_key_file": "~/.config/c1.token"},
+            "Custom 2": {"api": "openai", "api_key_file": "~/.config/c2.token"},
         },
     }
 
@@ -188,3 +192,41 @@ def test_initialize_uses_global_config_model_not_vim_config():
     assert util._BACKEND == "Gemini"
     assert util._MODEL == "gemini-global-default"
     assert util._API_KEY_FILE == os.path.expanduser("~/.config/gemini.token")
+
+
+def test_send_setup_does_not_send_api_key_file():
+    util._BACKEND = "Gemini"
+    util._MODEL = "gemini-3.8-flash"
+    util._API_KEY_FILE = os.path.expanduser("~/.config/gemini.token")
+
+    with (
+        patch("vimini.handler.register_handler"),
+        patch("vimini.util.send_channel_request") as mock_send,
+    ):
+        main.send_setup()
+
+    req = mock_send.call_args[0][0]
+    params = req["params"]
+    assert params == {"backend": "Gemini", "model": "gemini-3.8-flash"}
+    assert "api_key_file" not in params
+    assert "api_key" not in params
+
+
+def test_initialize_reports_invalid_global_config():
+    with (
+        patch(
+            "vimini.common.config.load_global_config",
+            side_effect=ValueError(
+                "Backend 'Gemini' must specify a non-empty 'api_key_file'"
+            ),
+        ),
+        patch("vimini.context.restore_context_files"),
+        patch("vimini.util.get_api_key", return_value="token"),
+        patch("vimini.util.display_message") as mock_display,
+    ):
+        main.initialize(api_key_file="~/.config/gemini.token", logfile=None)
+
+    mock_display.assert_called_once_with(
+        "Global configuration is invalid: Backend 'Gemini' must specify a non-empty 'api_key_file'",
+        error=True,
+    )

@@ -123,6 +123,22 @@ def test_validate_global_config_errors():
             }
         )
 
+    with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
+        validate_global_config(
+            {
+                "active_backend": "Gemini",
+                "backends": {"Gemini": {"api": "genai"}},
+            }
+        )
+
+    with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
+        validate_global_config(
+            {
+                "active_backend": "Gemini",
+                "backends": {"Gemini": {"api": "genai", "api_key_file": ""}},
+            }
+        )
+
     with pytest.raises(ValueError, match="'api_key_file' must be a string path"):
         validate_global_config(
             {
@@ -155,8 +171,12 @@ def test_get_active_backend_config():
     cfg = {
         "active_backend": "Proxy",
         "backends": {
-            "Proxy": {"api": "openai", "default_model": "gpt-4o"},
-            "Gemini": {"api": "genai"},
+            "Proxy": {
+                "api": "openai",
+                "api_key_file": "~/.config/proxy.token",
+                "default_model": "gpt-4o",
+            },
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
         },
     }
     name, b_cfg = get_active_backend_config(cfg)
@@ -173,8 +193,8 @@ def test_set_active_backend(tmp_path):
     data = {
         "active_backend": "Gemini",
         "backends": {
-            "Gemini": {"api": "genai"},
-            "Custom 1": {"api": "openai"},
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
+            "Custom 1": {"api": "openai", "api_key_file": "~/.config/custom.token"},
         },
     }
     save_global_config(data, config_path=str(config_file))
