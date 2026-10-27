@@ -10,7 +10,6 @@ sys.path.insert(
 
 from vimini import main, util
 from vimini.models import build_models_buffer
-from vimini.common.config import DEFAULT_MODEL
 
 
 def test_backend_command_without_arguments():
@@ -18,8 +17,16 @@ def test_backend_command_without_arguments():
         "active_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
-            "Custom 1": {"api": "openai", "api_key_file": "~/.config/c1.token"},
-            "Custom 2": {"api": "openai", "api_key_file": "~/.config/c2.token"},
+            "Custom 1": {
+                "api": "openai",
+                "api_key_file": "~/.config/c1.token",
+                "default_model": "gpt-4o",
+            },
+            "Custom 2": {
+                "api": "openai",
+                "api_key_file": "~/.config/c2.token",
+                "default_model": "gpt-4o-mini",
+            },
         },
     }
 
@@ -98,6 +105,7 @@ def test_backend_command_switch_success():
         assert util._BACKEND == "Custom 1"
         assert util._MODEL == "gpt-4o"
         assert util._API_KEY_FILE == os.path.expanduser("~/.config/proxy.token")
+        assert util._GENAI_CLIENT is None
         mock_send_setup.assert_called_once()
         mock_display.assert_called_once()
         assert (
@@ -118,6 +126,7 @@ def test_backend_command_switch_resets_key_and_model_when_missing():
             "Local": {
                 "api": "openai",
                 "base_url": "http://localhost:11434/v1",
+                "default_model": "llama3",
             },
         },
     }
@@ -126,6 +135,7 @@ def test_backend_command_switch_resets_key_and_model_when_missing():
     util._MODEL = "gemini-3.8-flash"
     util._API_KEY_FILE = os.path.expanduser("~/.config/gemini.token")
     util._MODEL_NAME = "Cached Model Name"
+    util._GENAI_CLIENT = object()
 
     with (
         patch("vimini.common.config.load_global_config", return_value=config),
@@ -137,9 +147,10 @@ def test_backend_command_switch_resets_key_and_model_when_missing():
 
         mock_set_active.assert_called_once_with("Local")
         assert util._BACKEND == "Local"
-        assert util._MODEL == DEFAULT_MODEL
+        assert util._MODEL == "llama3"
         assert util._MODEL_NAME is None
         assert util._API_KEY_FILE is None
+        assert util._GENAI_CLIENT is None
         mock_send_setup.assert_called_once()
         mock_display.assert_called_once()
 
@@ -167,8 +178,16 @@ def test_get_available_backends():
         "active_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
-            "Custom 1": {"api": "openai", "api_key_file": "~/.config/c1.token"},
-            "Custom 2": {"api": "openai", "api_key_file": "~/.config/c2.token"},
+            "Custom 1": {
+                "api": "openai",
+                "api_key_file": "~/.config/c1.token",
+                "default_model": "gpt-4o",
+            },
+            "Custom 2": {
+                "api": "openai",
+                "api_key_file": "~/.config/c2.token",
+                "default_model": "gpt-4o-mini",
+            },
         },
     }
 
@@ -301,6 +320,9 @@ def test_initialize_does_not_warn_for_keyless_openai_backend():
         },
     }
 
+    util._API_KEY_FILE = os.path.expanduser("~/.config/gemini.token")
+    util._GENAI_CLIENT = object()
+
     with (
         patch("vimini.common.config.load_global_config", return_value=config),
         patch("vimini.context.restore_context_files"),
@@ -311,6 +333,8 @@ def test_initialize_does_not_warn_for_keyless_openai_backend():
 
     assert util._BACKEND == "Local"
     assert util._MODEL == "local-model"
+    assert util._API_KEY_FILE is None
+    assert util._GENAI_CLIENT is None
     mock_display.assert_not_called()
 
 

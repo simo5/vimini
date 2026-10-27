@@ -112,6 +112,13 @@ def validate_global_config(config):
             raise ValueError(
                 f"Backend '{name}' must specify a non-empty 'api_key_file'"
             )
+        default_model = backend_info.get("default_model")
+        if api == "openai" and (
+            not isinstance(default_model, str) or not default_model.strip()
+        ):
+            raise ValueError(
+                f"Backend '{name}' must specify a non-empty 'default_model'"
+            )
 
     return config
 

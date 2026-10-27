@@ -197,10 +197,52 @@ def test_get_model_name_non_gemini_backend_does_not_call_get_client():
     util._BACKEND = "Local"
     util._MODEL = "llama3"
 
-    with patch("vimini.util.get_client") as mock_get_client:
+    config = {
+        "active_backend": "Local",
+        "backends": {
+            "Local": {
+                "api": "openai",
+                "base_url": "http://localhost:11434/v1",
+                "default_model": "llama3",
+            }
+        },
+    }
+
+    with (
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.util.get_client") as mock_get_client,
+    ):
         name = util.get_model_name()
         assert name == "llama3"
         assert not mock_get_client.called
+
+
+def test_get_model_name_custom_genai_backend_calls_client():
+    util._MODEL_NAME = None
+    util._BACKEND = "Work Gemini"
+    util._MODEL = "gemini-work"
+
+    config = {
+        "active_backend": "Work Gemini",
+        "backends": {
+            "Work Gemini": {
+                "api": "genai",
+                "api_key_file": "~/.config/work-gemini.token",
+                "default_model": "gemini-work",
+            }
+        },
+    }
+    mock_client = MagicMock()
+    mock_info = MagicMock()
+    mock_info.display_name = "Work Gemini Display"
+    mock_client.models.get.return_value = mock_info
+
+    with (
+        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.util.get_client", return_value=mock_client),
+    ):
+        assert util.get_model_name() == "Work Gemini Display"
+        mock_client.models.get.assert_called_once_with(model="gemini-work")
 
 
 def test_get_model_name_cached():

@@ -235,7 +235,9 @@ def get_model_name():
     except Exception:
         pass
 
-    if (backend and backend != "Gemini") or (api_type and api_type != "genai"):
+    if api_type is not None and api_type != "genai":
+        return _MODEL
+    if api_type is None and backend and backend != "Gemini":
         return _MODEL
 
     client = get_client()

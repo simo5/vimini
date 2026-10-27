@@ -152,10 +152,24 @@ def test_validate_global_config_errors():
                 "Local": {
                     "api": "openai",
                     "base_url": "http://localhost:11434/v1",
+                    "default_model": "llama3",
                 }
             },
         }
     )
+
+    with pytest.raises(ValueError, match="must specify a non-empty 'default_model'"):
+        validate_global_config(
+            {
+                "active_backend": "Local",
+                "backends": {
+                    "Local": {
+                        "api": "openai",
+                        "base_url": "http://localhost:11434/v1",
+                    }
+                },
+            }
+        )
 
     with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
         validate_global_config(
@@ -220,7 +234,11 @@ def test_set_active_backend(tmp_path):
         "active_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
-            "Custom 1": {"api": "openai", "api_key_file": "~/.config/custom.token"},
+            "Custom 1": {
+                "api": "openai",
+                "api_key_file": "~/.config/custom.token",
+                "default_model": "gpt-compatible",
+            },
         },
     }
     save_global_config(data, config_path=str(config_file))
