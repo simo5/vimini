@@ -31,6 +31,25 @@ from vimini.handler import (
 )
 
 
+def _get_backend_default_model(backend_name, backend_cfg, default_model):
+    """
+    Returns the configured model for a backend.
+
+    GenAI backends can fall back to the built-in Gemini default for legacy
+    configs. OpenAI-compatible backends must name an explicit model so we do
+    not accidentally send Gemini model names to non-Gemini providers.
+    """
+    configured_model = backend_cfg.get("default_model") if backend_cfg else None
+    if configured_model:
+        return configured_model
+    api = str((backend_cfg or {}).get("api", "genai")).strip()
+    if api == "openai":
+        raise ValueError(
+            f"Backend '{backend_name}' must specify a non-empty 'default_model'"
+        )
+    return default_model
+
+
 def initialize(api_key_file, model=None, logfile=None, backend=None):
     """
     Initializes the plugin with the user's API key file path and optional logfile path.
@@ -52,9 +71,12 @@ def initialize(api_key_file, model=None, logfile=None, backend=None):
             backend = get_active_backend(cfg)
         util._BACKEND = backend
         active_b_cfg = cfg.get("backends", {}).get(backend, {})
-        if active_b_cfg.get("api_key_file"):
-            api_key_file = os.path.expanduser(active_b_cfg.get("api_key_file"))
-        active_model = active_b_cfg.get("default_model") or DEFAULT_MODEL
+        api_key_file = (
+            os.path.expanduser(active_b_cfg["api_key_file"])
+            if active_b_cfg.get("api_key_file")
+            else None
+        )
+        active_model = _get_backend_default_model(backend, active_b_cfg, DEFAULT_MODEL)
     except Exception as e:
         util.log_info(f"Failed to load global config during initialize: {e}")
         config_error = e
@@ -165,19 +187,21 @@ def apply_backend_config(cfg, backend_name, persist=True):
         available = list(backends.keys())
         raise ValueError(f"Backend '{backend_name}' not found. Available: {available}")
 
+    target_cfg = backends[backend_name]
+    default_model = _get_backend_default_model(backend_name, target_cfg, DEFAULT_MODEL)
+
     if persist:
         set_active_backend(backend_name)
 
-    target_cfg = backends[backend_name]
     util._BACKEND = backend_name
     try:
         vim.command(f"let g:vimini_backend = {json.dumps(backend_name)}")
     except Exception:
         pass
 
-    default_model = target_cfg.get("default_model") or DEFAULT_MODEL
     util._MODEL = default_model
     util._MODEL_NAME = None
+    util._GENAI_CLIENT = None
     try:
         vim.command(f"let g:vimini_model = {json.dumps(util._MODEL)}")
     except Exception:

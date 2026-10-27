@@ -106,7 +106,11 @@ def test_get_backend_openai():
     config = {
         "active_backend": "Custom 1",
         "backends": {
-            "Custom 1": {"api": "openai", "api_key_file": "~/.config/openai.token"}
+            "Custom 1": {
+                "api": "openai",
+                "api_key_file": "~/.config/openai.token",
+                "default_model": "gpt-compatible",
+            }
         },
     }
     with patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"):
@@ -122,6 +126,7 @@ def test_get_backend_reports_missing_api_key():
                 "api": "openai",
                 "requires_api_key": True,
                 "api_key_file": "~/.config/missing.token",
+                "default_model": "gpt-compatible",
             }
         },
     }
@@ -140,6 +145,7 @@ def test_get_backend_reports_missing_api_key_when_requires_api_key_omitted():
             "Custom 1": {
                 "api": "openai",
                 "api_key_file": "~/.config/missing.token",
+                "default_model": "gpt-compatible",
             }
         },
     }
@@ -157,7 +163,11 @@ def test_get_backend_allows_openai_without_api_key_when_not_required():
     config = {
         "active_backend": "Local",
         "backends": {
-            "Local": {"api": "openai", "base_url": "http://localhost:11434/v1"}
+            "Local": {
+                "api": "openai",
+                "base_url": "http://localhost:11434/v1",
+                "default_model": "llama3",
+            }
         },
     }
 
