@@ -22,7 +22,7 @@ from vimini import util
 GENAI_GLOBAL_CONFIG = {
     "active_backend": "Gemini",
     "backends": {
-        "Gemini": {"api": "genai"},
+        "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
     },
 }
 
@@ -284,7 +284,11 @@ def test_set_default_model_persists_and_switches(genai_global_config):
     config = {
         "active_backend": "Gemini",
         "backends": {
-            "Gemini": {"api": "genai", "default_model": "gemini-2.5-flash"},
+            "Gemini": {
+                "api": "genai",
+                "api_key_file": "~/.config/gemini.token",
+                "default_model": "gemini-2.5-flash",
+            },
         },
     }
     util._BACKEND = "Gemini"

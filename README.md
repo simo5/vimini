@@ -186,7 +186,9 @@ customizations.
 
     You can configure multiple backends (Google Gemini via `"api": "genai"`, or OpenAI-compatible proxies and endpoints via `"api": "openai"`).
 
-    You can also edit this file interactively from Vim with `:ViminiGlobalConfig`.
+    Every backend must specify an `api_key_file`; the background agent always
+    reads API keys from this global configuration file and never receives API
+    key paths through runtime setup messages. You can also edit this file interactively from Vim with `:ViminiGlobalConfig`.
 
 ### `:ViminiGlobalConfig`
 

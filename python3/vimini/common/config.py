@@ -72,6 +72,10 @@ def validate_global_config(config):
             raise ValueError(
                 f"Backend '{name}' 'api_key_file' must be a string path if specified"
             )
+        if not isinstance(key_file, str) or not key_file.strip():
+            raise ValueError(
+                f"Backend '{name}' must specify a non-empty 'api_key_file'"
+            )
 
     return config
 

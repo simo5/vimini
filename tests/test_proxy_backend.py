@@ -368,11 +368,13 @@ def test_get_backend_factory_resolves_proxy_backend():
             "Custom 1": {
                 "api": "openai",
                 "base_url": "https://api.proxy.com/v1",
+                "api_key_file": "~/.config/proxyapi.token",
                 "default_model": "gpt-4o",
             }
         },
     }
 
-    backend = get_backend("Custom 1", config=config)
+    with patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"):
+        backend = get_backend("Custom 1", config=config)
     assert isinstance(backend, ProxyBackend)
     assert backend.base_url == "https://api.proxy.com/v1"

@@ -43,6 +43,7 @@ def initialize(api_key_file, model=None, logfile=None, backend=None):
         get_active_backend,
     )
 
+    config_error = None
     try:
         cfg = load_global_config(api_key_file=api_key_file)
         if not backend:
@@ -54,6 +55,7 @@ def initialize(api_key_file, model=None, logfile=None, backend=None):
         active_model = active_b_cfg.get("default_model") or DEFAULT_MODEL
     except Exception as e:
         util.log_info(f"Failed to load global config during initialize: {e}")
+        config_error = e
         util._BACKEND = backend or "Gemini"
         active_model = DEFAULT_MODEL
 
@@ -68,6 +70,10 @@ def initialize(api_key_file, model=None, logfile=None, backend=None):
     except Exception:
         pass
     restore_context_files()
+    if config_error is not None:
+        util.display_message(
+            f"Global configuration is invalid: {config_error}", error=True
+        )
     if not util.get_api_key():
         util.display_message(
             "API key not found. Please store it in ~/.config/gemini.token.", error=True
@@ -137,7 +143,6 @@ def send_setup():
         "method": "setup",
         "params": {
             "backend": backend_name,
-            "api_key_file": util._API_KEY_FILE,
             "model": util._MODEL,
         },
     }

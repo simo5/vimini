@@ -61,7 +61,10 @@ def execute_function(req_id, method, params, result_queue, conn):
     try:
         if method == "setup":
             if isinstance(params, dict):
-                AGENT_CONFIG.update(params)
+                safe_params = dict(params)
+                safe_params.pop("api_key_file", None)
+                safe_params.pop("api_key", None)
+                AGENT_CONFIG.update(safe_params)
             result = {"status": "ok"}
         elif method == "list_models":
             client = get_client(config=AGENT_CONFIG)
