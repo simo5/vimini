@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 from unittest.mock import MagicMock, patch
@@ -101,3 +102,169 @@ def test_apply_backend_config_updates_runtime():
         assert any(
             "g:vimini_backend" in call.args[0] for call in vim.command.call_args_list
         )
+
+
+def test_prompt_delete_backend_dialog_confirm():
+    import vim
+    from vimini.config import prompt_delete_backend_dialog
+
+    def mock_vim_eval(expr):
+        if "popup_create" in expr:
+            assert "Delete backend 'CustomBackend'?" in expr
+            assert "Delete Backend" in expr
+            return 101
+        if "getchar" in expr:
+            return ord("y")
+        if "popup_close" in expr:
+            return 0
+        return ""
+
+    with patch.object(vim, "eval", side_effect=mock_vim_eval):
+        assert prompt_delete_backend_dialog("CustomBackend") is True
+
+
+def test_prompt_delete_backend_dialog_reject():
+    import vim
+    from vimini.config import prompt_delete_backend_dialog
+
+    def mock_vim_eval(expr):
+        if "popup_create" in expr:
+            return 101
+        if "getchar" in expr:
+            return ord("n")
+        if "popup_close" in expr:
+            return 0
+        return ""
+
+    with patch.object(vim, "eval", side_effect=mock_vim_eval):
+        assert prompt_delete_backend_dialog("CustomBackend") is False
+
+
+def test_prompt_delete_backend_dialog_exception():
+    import vim
+    from vimini.config import prompt_delete_backend_dialog
+
+    with patch.object(vim, "eval", side_effect=Exception("popup failed")):
+        assert prompt_delete_backend_dialog("CustomBackend") is False
+
+
+def test_delete_backend_option_confirmed():
+    import vim
+    from vimini import config
+
+    config._VIMINI_PENDING_GLOBAL_CONFIG = _sample_global_config()
+    mock_win = MagicMock()
+    mock_win.cursor = (1, 0)
+    mock_win.buffer = MockBuffer()
+
+    with (
+        patch.object(vim.current, "window", mock_win),
+        patch(
+            "vimini.config._get_global_target_at_cursor",
+            return_value=("backend", "Proxy"),
+        ),
+        patch(
+            "vimini.config.prompt_delete_backend_dialog", return_value=True
+        ) as mock_dialog,
+        patch("vimini.config._refresh_global_config_buffer"),
+        patch("vimini.util.display_message") as mock_msg,
+    ):
+        config.delete_or_clear_global_config_option()
+
+        mock_dialog.assert_called_once_with("Proxy")
+        assert "Proxy" not in config._VIMINI_PENDING_GLOBAL_CONFIG["backends"]
+        mock_msg.assert_called_once_with("Deleted backend 'Proxy'.")
+
+
+def test_delete_backend_option_rejected():
+    import vim
+    from vimini import config
+
+    config._VIMINI_PENDING_GLOBAL_CONFIG = _sample_global_config()
+    mock_win = MagicMock()
+    mock_win.cursor = (1, 0)
+    mock_win.buffer = MockBuffer()
+
+    with (
+        patch.object(vim.current, "window", mock_win),
+        patch(
+            "vimini.config._get_global_target_at_cursor",
+            return_value=("backend", "Proxy"),
+        ),
+        patch(
+            "vimini.config.prompt_delete_backend_dialog", return_value=False
+        ) as mock_dialog,
+        patch("vimini.config._refresh_global_config_buffer"),
+        patch("vimini.util.display_message") as mock_msg,
+    ):
+        config.delete_or_clear_global_config_option()
+
+        mock_dialog.assert_called_once_with("Proxy")
+        assert "Proxy" in config._VIMINI_PENDING_GLOBAL_CONFIG["backends"]
+        assert not any("Deleted backend" in str(c) for c in mock_msg.call_args_list)
+
+
+def test_delete_backend_option_cannot_delete_last():
+    import vim
+    from vimini import config
+
+    single_backend_cfg = {
+        "active_backend": "Gemini",
+        "backends": {
+            "Gemini": {
+                "api": "genai",
+                "api_key_file": "~/.config/gemini.token",
+            }
+        },
+    }
+    config._VIMINI_PENDING_GLOBAL_CONFIG = single_backend_cfg
+    mock_win = MagicMock()
+    mock_win.cursor = (1, 0)
+    mock_win.buffer = MockBuffer()
+
+    with (
+        patch.object(vim.current, "window", mock_win),
+        patch(
+            "vimini.config._get_global_target_at_cursor",
+            return_value=("backend", "Gemini"),
+        ),
+        patch("vimini.config.prompt_delete_backend_dialog") as mock_dialog,
+        patch("vimini.util.display_message") as mock_msg,
+    ):
+        config.delete_or_clear_global_config_option()
+
+        mock_dialog.assert_not_called()
+        assert "Gemini" in config._VIMINI_PENDING_GLOBAL_CONFIG["backends"]
+        mock_msg.assert_called_once_with(
+            "Cannot delete the last configured backend.", error=True
+        )
+
+
+def test_confirm_global_config_dialog_confirmed():
+    import vim
+    from vimini import config
+
+    orig = _sample_global_config()
+    pending = copy.deepcopy(orig)
+    pending["active_backend"] = "Proxy"
+
+    config._VIMINI_ORIGINAL_GLOBAL_CONFIG = orig
+    config._VIMINI_PENDING_GLOBAL_CONFIG = pending
+    config._VIMINI_GLOBAL_CONFIG_PATH = "/tmp/test_config.json"
+
+    def mock_vim_eval(expr):
+        if "popup_create" in expr:
+            assert "Save global configuration changes?" in expr
+            return 201
+        if "getchar" in expr:
+            return ord("y")
+        if "popup_close" in expr:
+            return 0
+        return ""
+
+    with (
+        patch.object(vim, "eval", side_effect=mock_vim_eval),
+        patch("vimini.config.save_global_config", return_value=True) as mock_save,
+    ):
+        config.confirm_global_config()
+        mock_save.assert_called_once_with(pending, config_path="/tmp/test_config.json")
