@@ -271,3 +271,40 @@ def test_get_model_name_gemini_calls_client():
         assert name == "Gemini 3.8 Flash"
         assert util._MODEL_NAME == "Gemini 3.8 Flash"
         mock_client.models.get.assert_called_once_with(model="gemini-3.8-flash")
+
+
+def test_setup_highlights_default_and_custom():
+    import vim
+
+    with patch.object(vim, "command") as mock_cmd:
+        # Test with default config
+        util.setup_highlights({})
+        commands = [call.args[0] for call in mock_cmd.call_args_list]
+        assert (
+            "highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray"
+            in commands
+        )
+        assert (
+            "highlight default ViminiPrompt ctermfg=DarkBlue guifg=DarkBlue" in commands
+        )
+        assert "highlight default ViminiWaiting ctermfg=Green guifg=Green" in commands
+        assert any("ViminiService" in c and "cterm=italic" in c for c in commands)
+
+    with patch.object(vim, "command") as mock_cmd:
+        # Test with custom UI preferences
+        custom_cfg = {
+            "ui": {
+                "thinking_color": "Cyan",
+                "prompt_color": "Yellow",
+                "service_color": "ctermfg=244 guifg=#808080",
+            }
+        }
+        util.setup_highlights(custom_cfg)
+        commands = [call.args[0] for call in mock_cmd.call_args_list]
+        assert "highlight ViminiThinking ctermfg=Cyan guifg=Cyan" in commands
+        assert "highlight ViminiPrompt ctermfg=Yellow guifg=Yellow" in commands
+        assert (
+            "highlight ViminiService ctermfg=244 guifg=#808080 cterm=italic gui=italic"
+            in commands
+        )
+        assert "highlight default ViminiWaiting ctermfg=Green guifg=Green" in commands

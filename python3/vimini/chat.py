@@ -125,9 +125,7 @@ def _open_prompt_window(req_id):
 
         prompt_buf[:] = [HINT_MSG, ""]
 
-        vim.command(
-            "highlight default ViminiPromptHint ctermfg=Green guifg=Green cterm=italic gui=italic"
-        )
+        util.setup_highlights()
         vim.command("syntax match ViminiPromptHint '^Press .* to submit prompt$'")
 
         # Buffer-local mappings to submit prompt
@@ -392,9 +390,7 @@ def _open_denial_prompt_window(req_id):
 
         prompt_buf[:] = [HINT_MSG, DENIAL_PREFIX]
 
-        vim.command(
-            "highlight default ViminiPromptHint ctermfg=Green guifg=Green cterm=italic gui=italic"
-        )
+        util.setup_highlights()
         vim.command("syntax match ViminiPromptHint '^Press .* to submit prompt$'")
 
         # Buffer-local mappings to submit prompt
@@ -965,15 +961,7 @@ def chat():
     buffer.options["filetype"] = "markdown"
     buffer.options["swapfile"] = 0
     buffer.options["modifiable"] = 0
-    vim.command("highlight default ViminiWaiting ctermfg=Green guifg=Green")
-    vim.command("highlight default ViminiPrompt ctermfg=DarkBlue guifg=DarkBlue")
-    vim.command("highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray")
-    vim.command(
-        "highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic"
-    )
-    vim.command(
-        "highlight default ViminiError ctermfg=Red guifg=Red cterm=italic gui=italic"
-    )
+    util.setup_highlights()
     vim.command("syntax match ViminiWaiting '^\\(Welcome.*\\|Waiting for prompt.*\\)'")
     vim.command("syntax match ViminiPrompt '^< .*'")
     vim.command("syntax match ViminiThinking '^T>.*'")

@@ -74,9 +74,7 @@ class CodeChannelHandler(StreamBufferHandler):
                     )
 
                 vim.command(f"call setbufvar({buf_num}, '&filetype', 'diff')")
-                vim.command(
-                    "highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray"
-                )
+                util.setup_highlights()
                 vim.command("syntax match ViminiThinking '^T>.*'")
 
                 base_buffer_name = f"[{self.req_id}] Vimini Code"
@@ -182,7 +180,7 @@ def code(prompt, verbose=False):
     vim.command("setlocal bufhidden=wipe")
     vim.command("setlocal noswapfile")
     vim.command("setlocal filetype=markdown")
-    vim.command("highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray")
+    util.setup_highlights()
     vim.command("syntax match ViminiThinking '^T>.*'")
 
     code_buffer = vim.current.buffer

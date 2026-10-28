@@ -167,20 +167,15 @@ customizations.
           "api_key_file": "~/.config/gemini.token",
           "default_model": "gemini-3.8-flash"
         }
-      }
-    }
-    ```
-    Configure per-project settings such as whether compilation is needed, shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`), and the directory path where temporary git worktrees can be created. Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
-    ```json
-    {
-      "version": "0.1",
-      "configuration": {
-        "build-command": "make -j$(nproc)",
-        "test-command": "pytest",
-        "compilation-needed": false,
-        "worktree": "~/.var/vimini/worktree"
       },
-      "files": []
+      "ui": {
+        "thinking_color": "DarkGray",
+        "prompt_color": "DarkBlue",
+        "waiting_color": "Green",
+        "service_color": "Green",
+        "error_color": "Red",
+        "prompt_hint_color": "Green"
+      }
     }
     ```
 
@@ -198,9 +193,9 @@ Opens an interactive configuration editor in a new split window to configure glo
 
 **How to use the global configuration manager:**
 *   Move the cursor to any configuration option or backend line.
-*   **`<Enter>` or `e`**: Edits the selected value. On `active_backend`, enter one of the configured backend names. On a backend header, rename the backend.
+*   **`<Enter>` or `e`**: Edits the selected value. On `active_backend`, enter one of the configured backend names. On a backend header, rename the backend. Under `UI PREFERENCES`, customize colors (e.g. `thinking_color`, `prompt_color`, `waiting_color`, `service_color`, `error_color`, `prompt_hint_color`).
 *   **`a`**: Adds a new backend and prompts for API type, default model, API key file, and base URL for OpenAI-compatible backends.
-*   **`d`**: Clears the selected backend field or deletes the selected backend after confirmation. The last backend cannot be deleted.
+*   **`d`**: Clears the selected backend field, deletes a backend after confirmation, or resets a UI preference back to default. The last backend cannot be deleted.
 *   **`r`**: Resets all global configuration options to their last saved state.
 *   **`q`**: Closes the configuration window. If modifications were made, a confirmation prompt asks whether to save changes permanently to `~/.var/vimini/config.json`.
 
