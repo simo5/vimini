@@ -711,10 +711,7 @@ def review(
         vim.command("setlocal bufhidden=wipe")
         vim.command("setlocal noswapfile")
         vim.command("setlocal filetype=markdown")
-        vim.command("highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray")
-        vim.command(
-            "highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic"
-        )
+        util.setup_highlights()
         vim.command("syntax match ViminiThinking '^T>.*'")
         vim.command(
             "syntax match ViminiService '^\\[Agent requested tool execution: .*\\]'"

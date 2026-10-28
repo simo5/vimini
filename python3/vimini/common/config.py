@@ -11,6 +11,15 @@ DEFAULT_MODEL = "gemini-3.8-flash"
 DEFAULT_GEMINI_KEY_FILE = "~/.config/gemini.token"
 SUPPORTED_API_TYPES = {"genai", "openai"}
 
+DEFAULT_UI_CONFIG = {
+    "thinking_color": "DarkGray",
+    "prompt_color": "DarkBlue",
+    "waiting_color": "Green",
+    "service_color": "Green",
+    "error_color": "Red",
+    "prompt_hint_color": "Green",
+}
+
 
 def _to_bool(value, default=False):
     if isinstance(value, bool):
@@ -60,6 +69,7 @@ def create_default_global_config(default_model=None, api_key_file=None):
                 "default_model": default_model or DEFAULT_MODEL,
             }
         },
+        "ui": dict(DEFAULT_UI_CONFIG),
     }
 
 
@@ -120,6 +130,17 @@ def validate_global_config(config):
                 f"Backend '{name}' must specify a non-empty 'default_model'"
             )
 
+    ui = config.get("ui")
+    if ui is not None:
+        if not isinstance(ui, dict):
+            raise ValueError("Global configuration 'ui' must be a dictionary")
+        for key, val in ui.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(
+                    "Global configuration 'ui' keys must be non-empty strings"
+                )
+            if val is not None and not isinstance(val, str):
+                raise ValueError(f"Global configuration 'ui.{key}' must be a string")
     return config
 
 

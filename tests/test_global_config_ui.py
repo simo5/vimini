@@ -46,9 +46,12 @@ def test_draw_global_config_listing_contains_backends():
 
     assert "Vimini Global Configuration" in text
     assert "active_backend = Gemini" in text
+    assert "> UI PREFERENCES" in text
+    assert "thinking_color = DarkGray (default)" in text
     assert "* Gemini" in text
     assert "  Proxy" in text
     assert "base_url = https://proxy.example/v1" in text
+    assert ("ui", "thinking_color") in line_map.values()
     assert ("global", "active_backend") in line_map.values()
     assert ("backend", "Proxy") in line_map.values()
     assert ("backend_field", "Proxy", "default_model") in line_map.values()
@@ -268,3 +271,55 @@ def test_confirm_global_config_dialog_confirmed():
     ):
         config.confirm_global_config()
         mock_save.assert_called_once_with(pending, config_path="/tmp/test_config.json")
+
+
+def test_edit_ui_preference_option():
+    import vim
+    from vimini import config
+
+    config._VIMINI_PENDING_GLOBAL_CONFIG = _sample_global_config()
+    mock_win = MagicMock()
+    mock_win.cursor = (1, 0)
+    mock_win.buffer = MockBuffer()
+
+    with (
+        patch.object(vim.current, "window", mock_win),
+        patch(
+            "vimini.config._get_global_target_at_cursor",
+            return_value=("ui", "thinking_color"),
+        ),
+        patch.object(vim, "eval", return_value="Cyan"),
+        patch("vimini.config._refresh_global_config_buffer"),
+        patch("vimini.util.display_message") as mock_msg,
+    ):
+        config.edit_global_config_option()
+
+        assert config._VIMINI_PENDING_GLOBAL_CONFIG["ui"]["thinking_color"] == "Cyan"
+        mock_msg.assert_called_once_with("Set 'ui.thinking_color' to 'Cyan'.")
+
+
+def test_delete_or_clear_ui_preference_option():
+    import vim
+    from vimini import config
+
+    cfg = _sample_global_config()
+    cfg["ui"] = {"thinking_color": "Cyan", "prompt_color": "Blue"}
+    config._VIMINI_PENDING_GLOBAL_CONFIG = cfg
+    mock_win = MagicMock()
+    mock_win.cursor = (1, 0)
+    mock_win.buffer = MockBuffer()
+
+    with (
+        patch.object(vim.current, "window", mock_win),
+        patch(
+            "vimini.config._get_global_target_at_cursor",
+            return_value=("ui", "thinking_color"),
+        ),
+        patch("vimini.config._refresh_global_config_buffer"),
+        patch("vimini.util.display_message") as mock_msg,
+    ):
+        config.delete_or_clear_global_config_option()
+
+        assert "thinking_color" not in config._VIMINI_PENDING_GLOBAL_CONFIG["ui"]
+        assert config._VIMINI_PENDING_GLOBAL_CONFIG["ui"]["prompt_color"] == "Blue"
+        mock_msg.assert_called_once_with("Reset 'ui.thinking_color' to default.")

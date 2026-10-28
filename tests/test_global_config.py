@@ -12,6 +12,7 @@ from vimini.common.config import (
     DEFAULT_BACKEND,
     DEFAULT_MODEL,
     DEFAULT_GEMINI_KEY_FILE,
+    DEFAULT_UI_CONFIG,
     create_default_global_config,
     validate_global_config,
     load_global_config,
@@ -28,6 +29,8 @@ def test_create_default_global_config():
     cfg = create_default_global_config()
     assert cfg["active_backend"] == DEFAULT_BACKEND
     assert DEFAULT_BACKEND in cfg["backends"]
+    assert "ui" in cfg
+    assert cfg["ui"]["thinking_color"] == DEFAULT_UI_CONFIG["thinking_color"]
     gemini = cfg["backends"][DEFAULT_BACKEND]
     assert gemini["api"] == "genai"
     assert gemini["api_key_file"] == DEFAULT_GEMINI_KEY_FILE
@@ -184,6 +187,25 @@ def test_validate_global_config_errors():
             {
                 "active_backend": "Gemini",
                 "backends": {"Gemini": {"api": "genai", "api_key_file": 123}},
+            }
+        )
+
+    # UI preference validation
+    with pytest.raises(ValueError, match="'ui' must be a dictionary"):
+        validate_global_config(
+            {
+                "active_backend": "Gemini",
+                "backends": {"Gemini": {"api": "genai", "api_key_file": "~/.token"}},
+                "ui": "invalid",
+            }
+        )
+
+    with pytest.raises(ValueError, match="'ui.thinking_color' must be a string"):
+        validate_global_config(
+            {
+                "active_backend": "Gemini",
+                "backends": {"Gemini": {"api": "genai", "api_key_file": "~/.token"}},
+                "ui": {"thinking_color": 123},
             }
         )
 

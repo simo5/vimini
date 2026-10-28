@@ -119,6 +119,9 @@ def _draw_global_config_listing(config_data, config_path=None):
     config_path = config_path or get_global_config_path()
     active_backend = config_data.get("active_backend", "")
     backends = config_data.get("backends", {})
+    ui_cfg = config_data.get("ui", {})
+    if not isinstance(ui_cfg, dict):
+        ui_cfg = {}
     lines = []
     line_map = {}
 
@@ -143,6 +146,34 @@ def _draw_global_config_listing(config_data, config_path=None):
         ("global", "active_backend"),
     )
     _add_mapped_line(lines, line_map, "    # Currently selected model backend")
+    _add_mapped_line(lines, line_map, "")
+    _add_mapped_line(lines, line_map, "> UI PREFERENCES")
+
+    from vimini.common.config import DEFAULT_UI_CONFIG
+
+    ui_fields = [
+        ("thinking_color", "Color for streamed thoughts (T> ...)"),
+        ("prompt_color", "Color for chat user prompts (< ...)"),
+        ("waiting_color", "Color for status and waiting messages"),
+        ("service_color", "Color for agent service/tool execution notices"),
+        ("error_color", "Color for error messages"),
+        ("prompt_hint_color", "Color for prompt buffer hints"),
+    ]
+    for field, desc in ui_fields:
+        val = ui_cfg.get(field)
+        val_str = (
+            str(val)
+            if val is not None and val != ""
+            else f"{DEFAULT_UI_CONFIG.get(field, '')} (default)"
+        )
+        _add_mapped_line(
+            lines,
+            line_map,
+            f"  {field} = {val_str}",
+            ("ui", field),
+        )
+        if desc:
+            _add_mapped_line(lines, line_map, f"    # {desc}")
     _add_mapped_line(lines, line_map, "")
     _add_mapped_line(lines, line_map, "> BACKENDS")
 
@@ -332,6 +363,26 @@ def edit_global_config_option():
                 )
             return
 
+        if kind == "ui":
+            field = target[1]
+            from vimini.common.config import DEFAULT_UI_CONFIG
+
+            ui_cfg = _VIMINI_PENDING_GLOBAL_CONFIG.setdefault("ui", {})
+            current = ui_cfg.get(field, "")
+            default_val = DEFAULT_UI_CONFIG.get(field, "")
+            prompt = f"{field} (default: {default_val}): "
+            new_val = _to_str(
+                vim.eval(f"input({_vim_string(prompt)}, {_vim_string(current)})")
+            ).strip()
+            if not new_val:
+                ui_cfg.pop(field, None)
+            else:
+                ui_cfg[field] = new_val
+            _refresh_global_config_buffer(win, line_num, col)
+            val_disp = new_val if new_val else f"{default_val} (default)"
+            util.display_message(f"Set 'ui.{field}' to '{val_disp}'.")
+            return
+
         if kind == "backend_field":
             backend_name, field = target[1], target[2]
             backend_cfg = backends.setdefault(backend_name, {})
@@ -476,6 +527,14 @@ def delete_or_clear_global_config_option():
         win = vim.current.window
         line_num, col = win.cursor
         backends = _VIMINI_PENDING_GLOBAL_CONFIG.setdefault("backends", {})
+        if target[0] == "ui":
+            field = target[1]
+            ui_cfg = _VIMINI_PENDING_GLOBAL_CONFIG.get("ui")
+            if isinstance(ui_cfg, dict):
+                ui_cfg.pop(field, None)
+            _refresh_global_config_buffer(win, line_num, col)
+            util.display_message(f"Reset 'ui.{field}' to default.")
+            return
         kind = target[0]
         if kind == "backend_field":
             backend_name, field = target[1], target[2]
@@ -1328,6 +1387,7 @@ def _apply_saved_global_config_runtime(config_data):
         backend_name = config_data.get("active_backend")
         if backend_name:
             main.apply_backend_config(config_data, backend_name, persist=False)
+        util.setup_highlights(config_data)
     except Exception as e:
         util.log_info(f"Failed to apply saved global config at runtime: {e}")
 

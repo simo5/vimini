@@ -256,6 +256,81 @@ def get_model_name():
     return _MODEL_NAME
 
 
+def setup_highlights(config=None):
+    """
+    Applies Vimini syntax highlight groups across buffers.
+    Uses colors from the provided config or global configuration's 'ui' preferences,
+    falling back to standard defaults.
+    """
+    ui_cfg = {}
+    if config is not None and isinstance(config, dict):
+        ui_cfg = config.get("ui") or {}
+    else:
+        try:
+            from vimini.common.config import load_global_config
+
+            cfg = load_global_config()
+            ui_cfg = cfg.get("ui") or {}
+        except Exception:
+            ui_cfg = {}
+
+    if not isinstance(ui_cfg, dict):
+        ui_cfg = {}
+
+    from vimini.common.config import DEFAULT_UI_CONFIG
+
+    def _build_highlight_command(group, color_val, is_custom, extra=""):
+        default_clause = "" if is_custom else "default "
+        if "=" in str(color_val):
+            attrs = f"{color_val} {extra}".strip()
+        else:
+            attrs = f"ctermfg={color_val} guifg={color_val} {extra}".strip()
+        return f"highlight {default_clause}{group} {attrs}"
+
+    thinking_color = ui_cfg.get("thinking_color") or DEFAULT_UI_CONFIG["thinking_color"]
+    is_custom_thinking = "thinking_color" in ui_cfg and bool(ui_cfg["thinking_color"])
+
+    prompt_color = ui_cfg.get("prompt_color") or DEFAULT_UI_CONFIG["prompt_color"]
+    is_custom_prompt = "prompt_color" in ui_cfg and bool(ui_cfg["prompt_color"])
+
+    waiting_color = ui_cfg.get("waiting_color") or DEFAULT_UI_CONFIG["waiting_color"]
+    is_custom_waiting = "waiting_color" in ui_cfg and bool(ui_cfg["waiting_color"])
+
+    service_color = ui_cfg.get("service_color") or DEFAULT_UI_CONFIG["service_color"]
+    is_custom_service = "service_color" in ui_cfg and bool(ui_cfg["service_color"])
+
+    error_color = ui_cfg.get("error_color") or DEFAULT_UI_CONFIG["error_color"]
+    is_custom_error = "error_color" in ui_cfg and bool(ui_cfg["error_color"])
+
+    prompt_hint_color = (
+        ui_cfg.get("prompt_hint_color") or DEFAULT_UI_CONFIG["prompt_hint_color"]
+    )
+    is_custom_hint = "prompt_hint_color" in ui_cfg and bool(ui_cfg["prompt_hint_color"])
+
+    cmds = [
+        _build_highlight_command("ViminiWaiting", waiting_color, is_custom_waiting),
+        _build_highlight_command("ViminiPrompt", prompt_color, is_custom_prompt),
+        _build_highlight_command("ViminiThinking", thinking_color, is_custom_thinking),
+        _build_highlight_command(
+            "ViminiService", service_color, is_custom_service, "cterm=italic gui=italic"
+        ),
+        _build_highlight_command(
+            "ViminiError", error_color, is_custom_error, "cterm=italic gui=italic"
+        ),
+        _build_highlight_command(
+            "ViminiPromptHint",
+            prompt_hint_color,
+            is_custom_hint,
+            "cterm=italic gui=italic",
+        ),
+    ]
+    for cmd in cmds:
+        try:
+            vim.command(cmd)
+        except Exception:
+            pass
+
+
 def new_split(split_method=None):
     """Creates a new split using the user's preferred method or the specified split_method."""
     if split_method is None:
@@ -772,7 +847,7 @@ def create_thoughts_buffer(job_id):
     vim.command("setlocal bufhidden=wipe")
     vim.command("setlocal noswapfile")
     vim.command("setlocal filetype=markdown")
-    vim.command("highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray")
+    setup_highlights()
     vim.command("syntax match ViminiThinking '^T>.*'")
 
     return vim.current.buffer.number
