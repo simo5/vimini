@@ -111,7 +111,7 @@ def test_review_channel_handler_thought_and_chunk():
                 },
             }
         )
-        assert any("Thinking about security..." in line for line in buf)
+        assert any("T> Thinking about security..." in line for line in buf)
         assert "[<-G]" in buf.name
 
         # Test tool_use_requested response

@@ -3,6 +3,7 @@ import json
 from vimini import util
 
 _ACTIVE_HANDLERS = {}
+T_PREFIX = "T> "
 
 
 def register_handler(req_id, handler):
@@ -68,6 +69,11 @@ class StreamBufferHandler(BaseChannelHandler):
         self.buffer = buffer
         self.name_hint = name_hint
         self.first_chunk = False
+        self.reset_turn_state()
+
+    def reset_turn_state(self):
+        self.in_thought = False
+        self.thought_at_line_start = True
 
     def get_buffer(self):
         if self.buffer is None:
@@ -103,7 +109,40 @@ class StreamBufferHandler(BaseChannelHandler):
                 verbose = True
         buf = self.get_buffer()
         if verbose and thought and buf is not None:
-            util.write_to_buffer(buf, thought, append_to_last=True, redraw=True)
+            if not self.in_thought:
+                thought = thought.lstrip("\n")
+                if not thought:
+                    try:
+                        vim.command("redraw")
+                    except Exception:
+                        pass
+                    return
+                self.in_thought = True
+                self.thought_at_line_start = True
+
+            ends_with_nl = thought.endswith("\n")
+            body = thought[:-1] if ends_with_nl else thought
+
+            if body == "" and not self.thought_at_line_start:
+                self.thought_at_line_start = True
+                try:
+                    vim.command("redraw")
+                except Exception:
+                    pass
+                return
+
+            parts = body.split("\n")
+            is_empty_buf = len(buf) == 0 or (len(buf) == 1 and buf[0] == "")
+            if self.thought_at_line_start:
+                lines = [f"{T_PREFIX}{p}" if p else "" for p in parts]
+                if not is_empty_buf:
+                    lines.insert(0, "")
+                util.write_to_buffer(buf, lines, append_to_last=True, redraw=True)
+            else:
+                lines = [parts[0]] + [f"{T_PREFIX}{p}" if p else "" for p in parts[1:]]
+                util.write_to_buffer(buf, lines, append_to_last=True, redraw=True)
+
+            self.thought_at_line_start = ends_with_nl
         else:
             try:
                 vim.command("redraw")
@@ -114,9 +153,19 @@ class StreamBufferHandler(BaseChannelHandler):
         self.update_spinner()
         buf = self.get_buffer()
         if buf is not None and chunk_text:
+            if self.in_thought:
+                self.in_thought = False
+                self.thought_at_line_start = True
+                if (
+                    len(buf) > 0
+                    and not (len(buf) == 1 and buf[0] == "")
+                    and not chunk_text.startswith("\n")
+                ):
+                    chunk_text = "\n" + chunk_text
             util.write_to_buffer(buf, chunk_text, append_to_last=True, redraw=True)
 
     def handle_tool_request(self, result):
+        self.reset_turn_state()
         buf = self.get_buffer()
         text = result.get("text")
         if text:
@@ -136,6 +185,7 @@ class StreamBufferHandler(BaseChannelHandler):
             util.write_to_buffer(buf, req_line, append_to_last=True, redraw=True)
 
     def handle_error(self, error):
+        self.reset_turn_state()
         err_msg = (
             error.get("message", "Unknown error")
             if isinstance(error, dict)

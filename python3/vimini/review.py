@@ -52,6 +52,7 @@ class ReviewChannelHandler(StreamBufferHandler):
         elif status == "chunk":
             if not self.first_chunk:
                 self.first_chunk = True
+                self.reset_turn_state()
                 util.write_to_buffer(
                     buf, "\n========== REVIEW START ==========\n", append_to_last=True
                 )
@@ -60,6 +61,7 @@ class ReviewChannelHandler(StreamBufferHandler):
 
         elif status in ("completed", "terminated"):
             self.finished = True
+            self.reset_turn_state()
             base_buffer_name = f"[{self.req_id}] Vimini Review"
             try:
                 buf.name = base_buffer_name
@@ -72,6 +74,7 @@ class ReviewChannelHandler(StreamBufferHandler):
 
         elif status == "error":
             self.finished = True
+            self.reset_turn_state()
             err_msg = result.get("error", "Unknown error")
             util.write_to_buffer(
                 buf, f"\nError: {err_msg}\n", append_to_last=True, redraw=True
@@ -708,9 +711,11 @@ def review(
         vim.command("setlocal bufhidden=wipe")
         vim.command("setlocal noswapfile")
         vim.command("setlocal filetype=markdown")
+        vim.command("highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray")
         vim.command(
             "highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic"
         )
+        vim.command("syntax match ViminiThinking '^T>.*'")
         vim.command(
             "syntax match ViminiService '^\\[Agent requested tool execution: .*\\]'"
         )

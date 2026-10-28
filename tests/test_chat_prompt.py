@@ -149,17 +149,19 @@ def test_handle_channel_response_done_does_not_open_prompt_window():
         patch.object(vim.current, "buffer", chat_buf),
         patch("vimini.chat._find_chat_buffer", return_value=chat_buf),
         patch("vimini.chat._open_prompt_window") as mock_open_prompt,
+        patch("vimini.util.get_model_name", return_value="gpt-4o"),
     ):
         h = chat.ChatChannelHandler("1", buffer=chat_buf)
         h.handle_response({"status": "done", "text": "Task finished."})
 
         # Verify prompt window was NOT opened
         mock_open_prompt.assert_not_called()
+        assert "gpt-4o> Task finished." in chat_buf
         # Verify waiting message was added to chat buffer
         assert chat.WAITING_MSG in chat_buf
 
 
-def test_chat_command_registers_p_mapping():
+def test_chat_command_registers_p_mapping_and_thinking_highlight():
     import vim
 
     chat_buf = MockBuffer([], number=1)
@@ -169,6 +171,7 @@ def test_chat_command_registers_p_mapping():
         patch("vimini.util.new_split"),
         patch("vimini.chat._open_prompt_window"),
     ):
+        vim.command.reset_mock()
         chat.chat()
 
         commands_run = [call_args[0][0] for call_args in vim.command.call_args_list]
@@ -177,8 +180,14 @@ def test_chat_command_registers_p_mapping():
             in cmd
             for cmd in commands_run
         )
+        assert any(
+            "highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray" in cmd
+            for cmd in commands_run
+        )
+        assert any("syntax match ViminiThinking '^T>.*'" in cmd for cmd in commands_run)
         # Ensure BufEnter autocmd is not registered
         assert not any("autocmd BufEnter <buffer>" in cmd for cmd in commands_run)
+        vim.command.reset_mock()
 
 
 def test_open_prompt_from_chat():
@@ -292,6 +301,7 @@ def test_submit_denial_prompt_with_feedback():
         patch.object(vim.current, "buffer", prompt_buf),
         patch("vimini.chat._find_chat_buffer", return_value=chat_buf),
         patch("vimini.chat.send_agent_approval") as mock_send_approval,
+        patch("vimini.util.get_model_name", return_value="Gemini 3.8 Flash"),
     ):
         chat.submit_prompt(prompt_buf_num=2)
 
@@ -300,11 +310,12 @@ def test_submit_denial_prompt_with_feedback():
         mock_send_approval.assert_called_once_with(
             False, "1", error=expected_feedback, feedback=expected_feedback
         )
-        # Verify chat buffer updated with feedback
+        # Verify chat buffer updated with feedback and model-prefixed >
         assert any(
             "Patch denied: I want native JS methods instead of lodash" in line
             for line in chat_buf
         )
+        assert chat_buf[-1] == "Gemini 3.8 Flash> "
         assert chat_buf.vars.get("vimini_waiting") is True
         vim.command.reset_mock()
 
@@ -402,3 +413,173 @@ def test_handle_channel_response_fix_format_approved_by_permission():
         )
 
         mock_send_approval.assert_called_once_with(True, "1")
+
+
+def test_chat_prompt_and_response_with_thinking_and_model_prefix():
+    import vim
+
+    chat_buf = MockBuffer([chat.WELCOME_MSG], number=1, name="[1] Vimini Chat")
+    chat_buf.vars["vimini_job_id"] = "1"
+
+    h = chat.ChatChannelHandler("1", buffer=chat_buf)
+    chat.register_handler("1", h)
+
+    with (
+        patch.object(vim, "buffers", [chat_buf]),
+        patch("vimini.util.send_channel_request", return_value=True),
+        patch("vimini.util.get_model_name", return_value="gpt-5.5"),
+    ):
+        chat._send_prompt("How does this work?", chat_buf)
+
+        # Immediately after _send_prompt, model prefix is prepared
+        assert list(chat_buf) == [
+            "< How does this work?",
+            "---",
+            "gpt-5.5> ",
+        ]
+
+        # Stream thought chunks (including partial lines and newlines)
+        h.handle_response(
+            {"status": "thought", "thought": "Let me analyze ", "verbose": True}
+        )
+        h.handle_response(
+            {
+                "status": "thought",
+                "thought": "the code.\nChecking module structure.",
+                "verbose": True,
+            }
+        )
+
+        assert list(chat_buf) == [
+            "< How does this work?",
+            "---",
+            "T> Let me analyze the code.",
+            "T> Checking module structure.",
+        ]
+
+        # Stream model response chunks
+        h.handle_response({"status": "chunk", "text": "It works by "})
+        h.handle_response(
+            {"status": "chunk", "text": "dispatching requests.\nDetails below."}
+        )
+        h.handle_response({"status": "done"})
+
+        assert list(chat_buf) == [
+            "< How does this work?",
+            "---",
+            "T> Let me analyze the code.",
+            "T> Checking module structure.",
+            "gpt-5.5> It works by dispatching requests.",
+            "Details below.",
+            "",
+            chat.WAITING_MSG,
+        ]
+
+
+def test_chat_thought_line_ending_with_prompt_symbol_not_deleted():
+    import vim
+
+    chat_buf = MockBuffer(
+        ["< Review template usage", "---", "gpt-4o> "],
+        number=1,
+        name="[1] Vimini Chat",
+    )
+    chat_buf.vars["vimini_job_id"] = "1"
+
+    h = chat.ChatChannelHandler("1", buffer=chat_buf)
+
+    with (
+        patch.object(vim, "buffers", [chat_buf]),
+        patch("vimini.util.get_model_name", return_value="gpt-4o"),
+    ):
+        # First thought chunk whose line ends with "> " (like C++ template syntax)
+        # buffer[-2] is "---"
+        h.handle_response(
+            {
+                "status": "thought",
+                "thought": "Checking std::vector<int> ",
+                "verbose": True,
+            }
+        )
+        assert list(chat_buf) == [
+            "< Review template usage",
+            "---",
+            "T> Checking std::vector<int> ",
+        ]
+
+        # Second thought chunk arrives; _clear_pending_a_prefix must NOT delete the thought line
+        h.handle_response(
+            {"status": "thought", "thought": "and map types.\n", "verbose": True}
+        )
+        assert list(chat_buf) == [
+            "< Review template usage",
+            "---",
+            "T> Checking std::vector<int> and map types.",
+        ]
+
+        # First response chunk arrives; must NOT append onto the thought line
+        h.handle_response({"status": "chunk", "text": "Templates are supported."})
+        assert list(chat_buf) == [
+            "< Review template usage",
+            "---",
+            "T> Checking std::vector<int> and map types.",
+            "gpt-4o> Templates are supported.",
+        ]
+
+
+def test_clear_pending_a_prefix_restores_unmodifiable_buffer():
+    chat_buf = MockBuffer(["---", "gpt-4o> "], number=1)
+    chat_buf.options["modifiable"] = False
+
+    h = chat.ChatChannelHandler("1", buffer=chat_buf)
+    with patch("vimini.util.get_model_name", return_value="gpt-4o"):
+        h._clear_pending_a_prefix(chat_buf)
+
+    assert list(chat_buf) == ["---"]
+    assert not chat_buf.options["modifiable"]
+
+
+def test_chat_terminated_clears_pending_prefix():
+    chat_buf = MockBuffer(
+        ["< hello", "---", "gpt-4o> "], number=1, name="[1] Vimini Chat"
+    )
+    chat_buf.vars["vimini_job_id"] = "1"
+
+    h = chat.ChatChannelHandler("1", buffer=chat_buf)
+    with patch("vimini.util.get_model_name", return_value="gpt-4o"):
+        h.handle_response({"status": "terminated"})
+
+    assert list(chat_buf) == ["< hello", "---"]
+
+
+def test_clear_pending_a_prefix_only_called_at_start_of_thoughts():
+    chat_buf = MockBuffer(
+        ["< question", "---", "gpt-4o> "],
+        number=1,
+        name="[1] Vimini Chat",
+    )
+    chat_buf.vars["vimini_job_id"] = "1"
+
+    h = chat.ChatChannelHandler("1", buffer=chat_buf)
+
+    with (
+        patch.object(chat.vim, "buffers", [chat_buf]),
+        patch("vimini.util.get_model_name", return_value="gpt-4o"),
+        patch.object(
+            h, "_clear_pending_a_prefix", wraps=h._clear_pending_a_prefix
+        ) as mock_clear,
+    ):
+        # First thought chunk: starting thoughts, must invoke _clear_pending_a_prefix
+        h.handle_response(
+            {"status": "thought", "thought": "Chunk 1...", "verbose": True}
+        )
+        assert mock_clear.call_count == 1
+
+        # Second and third thought chunks: already in thought, must not invoke _clear_pending_a_prefix
+        h.handle_response(
+            {"status": "thought", "thought": "Chunk 2...", "verbose": True}
+        )
+        h.handle_response(
+            {"status": "thought", "thought": "Chunk 3...\n", "verbose": True}
+        )
+        assert mock_clear.call_count == 1
