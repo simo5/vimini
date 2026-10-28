@@ -127,18 +127,57 @@ def test_validate_global_config_errors():
             }
         )
 
-    with pytest.raises(ValueError, match="api 'anthropic' is not supported"):
+    with pytest.raises(ValueError, match="api 'unsupported' is not supported"):
         validate_global_config(
             {
-                "active_backend": "Anthropic",
+                "active_backend": "Unsupported",
                 "backends": {
-                    "Anthropic": {
+                    "Unsupported": {
+                        "api": "unsupported",
+                        "api_key_file": "~/.config/anthropic.token",
+                    }
+                },
+            }
+        )
+
+    with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
+        validate_global_config(
+            {
+                "active_backend": "Claude",
+                "backends": {
+                    "Claude": {
+                        "api": "anthropic",
+                        "default_model": "claude-3-7-sonnet-20250219",
+                    }
+                },
+            }
+        )
+
+    with pytest.raises(ValueError, match="must specify a non-empty 'default_model'"):
+        validate_global_config(
+            {
+                "active_backend": "Claude",
+                "backends": {
+                    "Claude": {
                         "api": "anthropic",
                         "api_key_file": "~/.config/anthropic.token",
                     }
                 },
             }
         )
+
+    validate_global_config(
+        {
+            "active_backend": "Claude",
+            "backends": {
+                "Claude": {
+                    "api": "anthropic",
+                    "api_key_file": "~/.config/anthropic.token",
+                    "default_model": "claude-3-7-sonnet-20250219",
+                }
+            },
+        }
+    )
 
     with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
         validate_global_config(
@@ -315,6 +354,16 @@ def test_backend_requires_api_key():
     )
     assert (
         backend_requires_api_key({"api": "genai", "requires_api_key": False}) is False
+    )
+    # Anthropic backends require API key by default
+    assert backend_requires_api_key({"api": "anthropic"}) is True
+    assert (
+        backend_requires_api_key({"api": "anthropic", "api_key_file": "~/.token"})
+        is True
+    )
+    assert (
+        backend_requires_api_key({"api": "anthropic", "requires_api_key": False})
+        is False
     )
 
     # OpenAI without api_key_file defaults to False
