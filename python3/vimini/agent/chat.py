@@ -404,7 +404,9 @@ class ChatSession(CommSession):
                 f"  {project_file_path}\n"
             )
             self.send_response(
-                current_req_id, conn, result={"status": "chunk", "text": msg}
+                current_req_id,
+                conn,
+                result={"status": "chunk", "text": msg, "tool_output": True},
             )
             return f"The tool '{tool}' is not available for this project because no {tool_label} command is configured in project options."
 
@@ -414,6 +416,7 @@ class ChatSession(CommSession):
             result={
                 "status": "chunk",
                 "text": f"\n[Executing {tool_label} command: {cmd}...]\n",
+                "tool_output": True,
             },
         )
 
@@ -433,7 +436,9 @@ class ChatSession(CommSession):
             for line in iter(proc.stdout.readline, ""):
                 output_lines.append(line)
                 self.send_response(
-                    current_req_id, conn, result={"status": "chunk", "text": line}
+                    current_req_id,
+                    conn,
+                    result={"status": "chunk", "text": line, "tool_output": True},
                 )
 
             proc.wait()
@@ -442,7 +447,9 @@ class ChatSession(CommSession):
         except Exception as e:
             err_text = f"Execution error: {e}\n"
             self.send_response(
-                current_req_id, conn, result={"status": "chunk", "text": err_text}
+                current_req_id,
+                conn,
+                result={"status": "chunk", "text": err_text, "tool_output": True},
             )
             returncode = -1
             full_output = err_text.strip()
@@ -452,7 +459,9 @@ class ChatSession(CommSession):
         )
         chat_msg = f"\n[{tool_label.capitalize()} command {status_str}]\n"
         self.send_response(
-            current_req_id, conn, result={"status": "chunk", "text": chat_msg}
+            current_req_id,
+            conn,
+            result={"status": "chunk", "text": chat_msg, "tool_output": True},
         )
 
         if returncode == 0:
@@ -899,7 +908,11 @@ class ChatSession(CommSession):
                             self.send_response(
                                 current_req_id,
                                 conn,
-                                result={"status": "chunk", "text": msg},
+                                result={
+                                    "status": "chunk",
+                                    "text": msg,
+                                    "tool_output": True,
+                                },
                             )
                             responses.append(
                                 ToolResponse(
@@ -923,6 +936,7 @@ class ChatSession(CommSession):
                                 result={
                                     "status": "chunk",
                                     "text": f"\n[Agent {tool_label} command rejected due to schema error:\n{res_or_err}]\n",
+                                    "tool_output": True,
                                 },
                             )
                             responses.append(
@@ -1157,6 +1171,7 @@ class ChatSession(CommSession):
                                 result={
                                     "status": "chunk",
                                     "text": f"\n[{tool_label.capitalize()} command execution rejected by user]\n",
+                                    "tool_output": True,
                                 },
                             )
                             result_text = (

@@ -87,11 +87,10 @@ def write_to_buffer(
     if buf is None:
         return
 
-    was_modifiable = (
-        bool(buf.options.get("modifiable", True))
-        if hasattr(buf, "options") and hasattr(buf.options, "get")
-        else True
-    )
+    try:
+        was_modifiable = bool(buf.options["modifiable"])
+    except Exception:
+        was_modifiable = True
     try:
         buf.options["modifiable"] = 1
     except Exception:
@@ -222,6 +221,8 @@ def get_model_name():
     global _MODEL_NAME
     if _MODEL_NAME is not None:
         return _MODEL_NAME
+    if not _MODEL:
+        return _MODEL
 
     backend = _BACKEND
     api_type = None
@@ -771,6 +772,8 @@ def create_thoughts_buffer(job_id):
     vim.command("setlocal bufhidden=wipe")
     vim.command("setlocal noswapfile")
     vim.command("setlocal filetype=markdown")
+    vim.command("highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray")
+    vim.command("syntax match ViminiThinking '^T>.*'")
 
     return vim.current.buffer.number
 

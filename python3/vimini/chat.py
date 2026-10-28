@@ -3,7 +3,13 @@ import json
 import subprocess
 import os
 from vimini import util, context
-from vimini.handler import StreamBufferHandler, register_handler, unregister_handler
+from vimini.handler import (
+    StreamBufferHandler,
+    register_handler,
+    unregister_handler,
+    get_handler,
+    T_PREFIX,
+)
 from vimini.common.util import get_project_config
 from vimini.code import _DIFF_SEPARATOR, _process_x_diff_chunks
 
@@ -14,6 +20,14 @@ DENIAL_PREFIX = "Patch denied: "
 
 Q_prefix = "< "
 A_prefix = "> "
+T_prefix = T_PREFIX
+
+
+def _get_a_prefix():
+    model_name = util.get_model_name()
+    if model_name:
+        return f"{model_name}{A_prefix}"
+    return A_prefix
 
 
 def _to_str(val):
@@ -242,6 +256,10 @@ def submit_prompt(prompt_buf_num=None, prompt_text=None):
                         finally:
                             chat_buf.options["modifiable"] = 0
 
+                    h = get_handler(req_id)
+                    if isinstance(h, ChatChannelHandler):
+                        h.reset_turn_state()
+
                     lines_to_add = []
                     last_line = chat_buf[-1] if len(chat_buf) > 0 else ""
                     if last_line != "":
@@ -249,7 +267,7 @@ def submit_prompt(prompt_buf_num=None, prompt_text=None):
                     for pl in feedback.split("\n"):
                         lines_to_add.append(f"{Q_prefix}{pl}")
                     lines_to_add.append("---")
-                    lines_to_add.append(A_prefix)
+                    lines_to_add.append(_get_a_prefix())
                     _write_to_buffer(chat_buf, lines_to_add)
                     _set_waiting(chat_buf, True)
 
@@ -660,6 +678,65 @@ class ChatChannelHandler(StreamBufferHandler):
 
     def __init__(self, req_id, buffer=None):
         super().__init__(req_id, buffer=buffer, name_hint="Vimini Chat")
+        self.reset_turn_state()
+
+    def reset_turn_state(self):
+        super().reset_turn_state()
+        self.in_response = False
+
+    def _has_pending_a_prefix(self, buffer):
+        if not buffer:
+            return False
+        last = str(buffer[-1])
+        if last.startswith(T_prefix):
+            return False
+        if last == _get_a_prefix() or last == A_prefix:
+            return True
+        if len(buffer) >= 2 and buffer[-2] == "---" and last.endswith(A_prefix):
+            model_part = last[: -len(A_prefix)]
+            return bool(model_part) and all(
+                c.isalnum() or c in "-._ " for c in model_part
+            )
+        return False
+
+    def _clear_pending_a_prefix(self, buffer):
+        if self._has_pending_a_prefix(buffer):
+            try:
+                was_modifiable = bool(buffer.options["modifiable"])
+            except Exception:
+                was_modifiable = True
+            try:
+                buffer.options["modifiable"] = 1
+                if len(buffer) == 1:
+                    buffer[:] = []
+                else:
+                    del buffer[-1]
+            except Exception:
+                pass
+            finally:
+                if not was_modifiable:
+                    try:
+                        buffer.options["modifiable"] = 0
+                    except Exception:
+                        pass
+
+    def _write_response_chunk(self, buffer, text):
+        if not text:
+            return
+        if not self.in_response:
+            clean_text = text.lstrip("\n")
+            if not clean_text:
+                return
+            if self._has_pending_a_prefix(buffer):
+                _write_to_buffer(buffer, clean_text, append_to_last=True)
+            else:
+                prefixed_text = f"{_get_a_prefix()}{clean_text}"
+                if len(buffer) > 0 and not (len(buffer) == 1 and buffer[0] == ""):
+                    prefixed_text = "\n" + prefixed_text
+                _write_to_buffer(buffer, prefixed_text, append_to_last=True)
+            self.in_response = True
+        else:
+            _write_to_buffer(buffer, text, append_to_last=True)
 
     def handle_response(self, result):
         if not isinstance(result, dict):
@@ -680,14 +757,26 @@ class ChatChannelHandler(StreamBufferHandler):
                 except Exception:
                     verbose = True
             if verbose and thought_text:
-                _write_to_buffer(buffer, thought_text, append_to_last=True)
+                self.in_response = False
+                if not self.in_thought:
+                    self._clear_pending_a_prefix(buffer)
+                self.handle_thought(thought_text, verbose=True)
 
         elif status == "chunk":
             text = result.get("text", "")
             if text:
-                _write_to_buffer(buffer, text, append_to_last=True)
+                self.in_thought = False
+                self.thought_at_line_start = True
+                if result.get("tool_output"):
+                    self.reset_turn_state()
+                    self._clear_pending_a_prefix(buffer)
+                    _write_to_buffer(buffer, text, append_to_last=True)
+                else:
+                    self._write_response_chunk(buffer, text)
 
         elif status == "tool_use_requested":
+            self.reset_turn_state()
+            self._clear_pending_a_prefix(buffer)
             tool = result.get("tool", "")
             temp_file = result.get("temp_file")
 
@@ -753,15 +842,22 @@ class ChatChannelHandler(StreamBufferHandler):
             _set_waiting(buffer, False)
             text = result.get("text", "")
             if text:
-                _write_to_buffer(buffer, text, append_to_last=True)
+                self.in_thought = False
+                self.thought_at_line_start = True
+                self._write_response_chunk(buffer, text)
+            self.reset_turn_state()
             _write_to_buffer(buffer, ["", WAITING_MSG])
 
         elif status == "terminated":
             _set_waiting(buffer, False)
+            self.reset_turn_state()
+            self._clear_pending_a_prefix(buffer)
             self.finished = True
 
         elif status == "error":
             _set_waiting(buffer, False)
+            self.reset_turn_state()
+            self._clear_pending_a_prefix(buffer)
             err_msg = result.get("error", "Unknown error")
             error_lines = [""]
             for line in str(err_msg).split("\n"):
@@ -801,6 +897,11 @@ def _send_prompt(prompt, buffer):
         finally:
             buffer.options["modifiable"] = 0
 
+    req_id = _to_str(buffer.vars.get("vimini_job_id", ""))
+    h = get_handler(req_id)
+    if isinstance(h, ChatChannelHandler):
+        h.reset_turn_state()
+
     last_line = buffer[-1] if len(buffer) > 0 else ""
     lines_to_add = []
     if last_line != "":
@@ -810,7 +911,7 @@ def _send_prompt(prompt, buffer):
     for pl in prompt_lines:
         lines_to_add.append(f"{Q_prefix}{pl}")
     lines_to_add.append("---")
-    lines_to_add.append(A_prefix)
+    lines_to_add.append(_get_a_prefix())
 
     _write_to_buffer(buffer, lines_to_add)
 
@@ -824,7 +925,7 @@ def _send_prompt(prompt, buffer):
         verbose = True
     req = {
         "jsonrpc": "2.0",
-        "id": _to_str(buffer.vars.get("vimini_job_id", "")),
+        "id": req_id,
         "method": "chat",
         "params": {
             "verbose": verbose,
@@ -866,6 +967,7 @@ def chat():
     buffer.options["modifiable"] = 0
     vim.command("highlight default ViminiWaiting ctermfg=Green guifg=Green")
     vim.command("highlight default ViminiPrompt ctermfg=DarkBlue guifg=DarkBlue")
+    vim.command("highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray")
     vim.command(
         "highlight default ViminiService ctermfg=Green guifg=Green cterm=italic gui=italic"
     )
@@ -874,6 +976,7 @@ def chat():
     )
     vim.command("syntax match ViminiWaiting '^\\(Welcome.*\\|Waiting for prompt.*\\)'")
     vim.command("syntax match ViminiPrompt '^< .*'")
+    vim.command("syntax match ViminiThinking '^T>.*'")
     vim.command("syntax match ViminiService '^Agent Requested: .*'")
     vim.command("syntax match ViminiError '^\\(\\[Error:.*\\|Error:.*\\)'")
     vim.command("syntax match ViminiError '^Please prompt again to retry later.*'")

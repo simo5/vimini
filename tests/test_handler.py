@@ -74,14 +74,59 @@ def test_stream_buffer_handler_thought_and_chunk():
 
     # Test thought
     h.handle_thought("Analyzing input...", verbose=True)
-    assert any("Analyzing input..." in line for line in buf)
+    assert buf[0] == "T> Analyzing input..."
     assert "[<-G]" in buf.name
 
-    # Test chunk
+    # Test multiline thought continuation
+    h.handle_thought(" more details\nSecond thought line\n", verbose=True)
+    assert buf[0] == "T> Analyzing input... more details"
+    assert buf[1] == "T> Second thought line"
+
+    # Test chunk starts on a new line without T>
     h.handle_chunk("Streamed response chunk.")
-    assert any("Streamed response chunk." in line for line in buf)
+    assert buf[2] == "Streamed response chunk."
     # Spinner should have advanced to [<-\]
     assert "[<-\\]" in buf.name
+
+
+def test_stream_buffer_handler_empty_lines_not_prefixed():
+    buf = MockBuffer([], number=43, name="[43] Job [->G?]")
+    buf.vars["vimini_job_id"] = "43"
+
+    h = handler.StreamBufferHandler("43", buffer=buf)
+
+    # Thought with an empty line inside a single chunk
+    h.handle_thought(
+        "First thought paragraph.\n\nSecond thought paragraph.\n", verbose=True
+    )
+    assert buf[0] == "T> First thought paragraph."
+    assert buf[1] == ""
+    assert buf[2] == "T> Second thought paragraph."
+
+    # Thought with an empty line streamed as an isolated chunk
+    h.handle_thought("\n", verbose=True)
+    assert buf[3] == ""
+
+    # Following thought chunk on a new line
+    h.handle_thought("Third thought paragraph.\n", verbose=True)
+    assert buf[4] == "T> Third thought paragraph."
+
+
+def test_stream_buffer_handler_leading_newlines_in_thoughts():
+    buf = MockBuffer([], number=44, name="[44] Job [->G?]")
+    buf.vars["vimini_job_id"] = "44"
+
+    h = handler.StreamBufferHandler("44", buffer=buf)
+
+    # Chunk containing only newlines should not prematurely set in_thought
+    h.handle_thought("\n\n", verbose=True)
+    assert not h.in_thought
+    assert len(buf) == 0
+
+    # Next chunk with content starts thought cleanly without stray lines
+    h.handle_thought("Beginning thought process.\n", verbose=True)
+    assert h.in_thought
+    assert list(buf) == ["T> Beginning thought process."]
 
 
 def test_stream_buffer_handler_tool_request():
@@ -162,7 +207,10 @@ def test_chat_channel_handler_turn_persists():
     h = chat.ChatChannelHandler("60", buffer=buf)
     handler.register_handler("60", h)
 
-    with patch.object(vim, "buffers", [buf]):
+    with (
+        patch.object(vim, "buffers", [buf]),
+        patch("vimini.util.get_model_name", return_value="Gemini 3.8 Flash"),
+    ):
         # Send first turn chunk
         main.handle_channel_message(
             {
@@ -170,7 +218,7 @@ def test_chat_channel_handler_turn_persists():
                 "result": {"status": "chunk", "text": "Turn 1 answer"},
             }
         )
-        assert any("Turn 1 answer" in line for line in buf)
+        assert any("Gemini 3.8 Flash> Turn 1 answer" in line for line in buf)
 
         # Send done: chat handler must NOT be finished (multi-turn conversation)
         main.handle_channel_message(
@@ -190,7 +238,7 @@ def test_chat_channel_handler_turn_persists():
                 "result": {"status": "chunk", "text": "Turn 2 answer"},
             }
         )
-        assert any("Turn 2 answer" in line for line in buf)
+        assert any("Gemini 3.8 Flash> Turn 2 answer" in line for line in buf)
 
         # Send terminated: handler is now finished
         main.handle_channel_message(
@@ -229,7 +277,7 @@ def test_code_channel_handler_flow():
                 },
             }
         )
-        assert any("Refactoring code..." in line for line in buf)
+        assert any("T> Refactoring code..." in line for line in buf)
         assert "[<-G]" in buf.name
 
         # Send chunk

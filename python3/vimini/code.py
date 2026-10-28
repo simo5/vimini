@@ -47,6 +47,7 @@ class CodeChannelHandler(StreamBufferHandler):
 
         elif status == "completed":
             self.finished = True
+            self.reset_turn_state()
             files_to_process = result.get("files", [])
             diff_output = result.get("diff_output", "")
             project_root = (
@@ -73,6 +74,10 @@ class CodeChannelHandler(StreamBufferHandler):
                     )
 
                 vim.command(f"call setbufvar({buf_num}, '&filetype', 'diff')")
+                vim.command(
+                    "highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray"
+                )
+                vim.command("syntax match ViminiThinking '^T>.*'")
 
                 base_buffer_name = f"[{self.req_id}] Vimini Code"
                 try:
@@ -82,6 +87,7 @@ class CodeChannelHandler(StreamBufferHandler):
 
         elif status == "error":
             self.finished = True
+            self.reset_turn_state()
             err_msg = result.get("error", "Unknown error")
             if buf_num:
                 util.write_to_buffer(
@@ -176,6 +182,8 @@ def code(prompt, verbose=False):
     vim.command("setlocal bufhidden=wipe")
     vim.command("setlocal noswapfile")
     vim.command("setlocal filetype=markdown")
+    vim.command("highlight default ViminiThinking ctermfg=DarkGray guifg=DarkGray")
+    vim.command("syntax match ViminiThinking '^T>.*'")
 
     code_buffer = vim.current.buffer
     code_buffer_num = code_buffer.number
