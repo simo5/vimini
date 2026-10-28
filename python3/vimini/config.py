@@ -107,7 +107,7 @@ def _ordered_backend_fields(backend_cfg):
     for key in ("api", "api_key_file", "default_model"):
         if key in backend_cfg or key == "api":
             fields.append(key)
-    if backend_cfg.get("api") == "openai" or "base_url" in backend_cfg:
+    if backend_cfg.get("api") in ("openai", "anthropic") or "base_url" in backend_cfg:
         fields.append("base_url")
     for key in backend_cfg.keys():
         if key not in fields:
@@ -440,7 +440,9 @@ def add_global_backend():
             util.display_message(f"Backend '{name}' already exists.", error=True)
             return
         api = (
-            _to_str(vim.eval("input('API type [genai/openai]: ', 'openai')")).strip()
+            _to_str(
+                vim.eval("input('API type [genai/openai/anthropic]: ', 'openai')")
+            ).strip()
             or "openai"
         )
         default_model = _to_str(vim.eval("input('Default model: ')")).strip()
@@ -450,7 +452,7 @@ def add_global_backend():
             backend_cfg["api_key_file"] = api_key_file
         if default_model:
             backend_cfg["default_model"] = default_model
-        if api == "openai":
+        if api in ("openai", "anthropic"):
             base_url = _to_str(vim.eval("input('Base URL: ')")).strip()
             if base_url:
                 backend_cfg["base_url"] = base_url

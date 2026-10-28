@@ -179,7 +179,7 @@ customizations.
     }
     ```
 
-    You can configure multiple backends (Google Gemini via `"api": "genai"`, or OpenAI-compatible proxies and endpoints via `"api": "openai"`).
+    You can configure multiple backends (Google Gemini via `"api": "genai"`, OpenAI-compatible proxies and endpoints via `"api": "openai"`, or Anthropic via `"api": "anthropic"`).
 
     Backends that require credentials specify an `api_key_file`; Gemini requires
     one, while OpenAI-compatible local/proxy endpoints may omit it unless
@@ -194,7 +194,7 @@ Opens an interactive configuration editor in a new split window to configure glo
 **How to use the global configuration manager:**
 *   Move the cursor to any configuration option or backend line.
 *   **`<Enter>` or `e`**: Edits the selected value. On `active_backend`, enter one of the configured backend names. On a backend header, rename the backend. Under `UI PREFERENCES`, customize colors (e.g. `thinking_color`, `prompt_color`, `waiting_color`, `service_color`, `error_color`, `prompt_hint_color`).
-*   **`a`**: Adds a new backend and prompts for API type, default model, API key file, and base URL for OpenAI-compatible backends.
+*   **`a`**: Adds a new backend and prompts for API type, default model, API key file, and base URL for OpenAI-compatible or Anthropic backends.
 *   **`d`**: Clears the selected backend field, deletes a backend after confirmation, or resets a UI preference back to default. The last backend cannot be deleted.
 *   **`r`**: Resets all global configuration options to their last saved state.
 *   **`q`**: Closes the configuration window. If modifications were made, a confirmation prompt asks whether to save changes permanently to `~/.var/vimini/config.json`.

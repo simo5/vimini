@@ -9,7 +9,9 @@ DEFAULT_CONFIG_PATH = os.path.join(DEFAULT_CONFIG_DIR, "config.json")
 DEFAULT_BACKEND = "Gemini"
 DEFAULT_MODEL = "gemini-3.8-flash"
 DEFAULT_GEMINI_KEY_FILE = "~/.config/gemini.token"
-SUPPORTED_API_TYPES = {"genai", "openai"}
+DEFAULT_ANTHROPIC_KEY_FILE = "~/.config/anthropic.token"
+DEFAULT_ANTHROPIC_MODEL = "claude-3-7-sonnet-20250219"
+SUPPORTED_API_TYPES = {"genai", "openai", "anthropic"}
 
 DEFAULT_UI_CONFIG = {
     "thinking_color": "DarkGray",
@@ -37,15 +39,15 @@ def backend_requires_api_key(backend_config):
     """
     Returns whether a backend requires an API key.
 
-    Gemini always requires an API key. OpenAI-compatible endpoints default to
-    requiring one if api_key_file is defined and non-empty, and not requiring one
-    if omitted (e.g. for local keyless endpoints). Explicit requires_api_key
-    takes precedence if specified.
+    Gemini and Anthropic always require an API key by default. OpenAI-compatible
+    endpoints default to requiring one if api_key_file is defined and non-empty,
+    and not requiring one if omitted (e.g. for local keyless endpoints). Explicit
+    requires_api_key takes precedence if specified.
     """
     if not isinstance(backend_config, dict):
         return True
     api = str(backend_config.get("api", "genai")).strip()
-    default = api == "genai" or bool(backend_config.get("api_key_file"))
+    default = api in ("genai", "anthropic") or bool(backend_config.get("api_key_file"))
     return _to_bool(backend_config.get("requires_api_key"), default=default)
 
 
@@ -123,7 +125,7 @@ def validate_global_config(config):
                 f"Backend '{name}' must specify a non-empty 'api_key_file'"
             )
         default_model = backend_info.get("default_model")
-        if api == "openai" and (
+        if api in ("openai", "anthropic") and (
             not isinstance(default_model, str) or not default_model.strip()
         ):
             raise ValueError(

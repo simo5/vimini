@@ -18,6 +18,12 @@ from vimini.common.backends.proxy_backend import (
     convert_schema_to_openai,
     convert_tools_to_openai,
 )
+from vimini.common.backends.anthropic_backend import (
+    AnthropicBackend,
+    AnthropicChatSession,
+    convert_schema_to_anthropic,
+    convert_tools_to_anthropic,
+)
 from vimini.common.config import (
     load_global_config,
     get_active_backend,
@@ -85,6 +91,13 @@ def get_backend(
             base_url=backend_cfg.get("base_url"),
             headers=backend_cfg.get("headers"),
         )
+    elif api == "anthropic":
+        return AnthropicBackend(
+            config=backend_cfg,
+            api_key=api_key,
+            base_url=backend_cfg.get("base_url"),
+            headers=backend_cfg.get("headers"),
+        )
 
     raise ValueError(f"Unsupported API protocol '{api}' for backend '{backend_name}'.")
 
@@ -123,8 +136,12 @@ __all__ = [
     "GenAIChatSession",
     "ProxyBackend",
     "ProxyChatSession",
+    "AnthropicBackend",
+    "AnthropicChatSession",
     "convert_schema_to_openai",
     "convert_tools_to_openai",
+    "convert_schema_to_anthropic",
+    "convert_tools_to_anthropic",
     "get_backend",
     "get_client",
 ]

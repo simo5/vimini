@@ -16,6 +16,7 @@ from vimini.common.backends.base import (
 )
 from vimini.common.backends.genai_backend import GenAIBackend, GenAIChatSession
 from vimini.common.backends.proxy_backend import ProxyBackend
+from vimini.common.backends.anthropic_backend import AnthropicBackend
 from vimini.common.backends import get_backend
 
 
@@ -116,6 +117,25 @@ def test_get_backend_openai():
     with patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"):
         backend = get_backend("Custom 1", config=config)
     assert isinstance(backend, ProxyBackend)
+
+
+def test_get_backend_anthropic():
+    config = {
+        "active_backend": "Claude",
+        "backends": {
+            "Claude": {
+                "api": "anthropic",
+                "api_key_file": "~/.config/anthropic.token",
+                "default_model": "claude-3-7-sonnet-20250219",
+            }
+        },
+    }
+    with patch(
+        "vimini.common.backends.load_backend_api_key", return_value="fake-ant-key"
+    ):
+        backend = get_backend("Claude", config=config)
+    assert isinstance(backend, AnthropicBackend)
+    assert backend.api_key == "fake-ant-key"
 
 
 def test_get_backend_reports_missing_api_key():

@@ -135,6 +135,7 @@ def categorize_model(model):
         or name_lower.startswith("gemini")
         or name_lower.startswith("gemma")
         or name_lower.startswith("learnlm")
+        or name_lower.startswith("claude")
     ):
         return SUPPORTED_CATEGORY
 
@@ -175,7 +176,7 @@ def build_models_buffer(models, current_model, backend_name=None, api_type=None)
     if current_model and current_model.startswith("models/"):
         current_model = current_model[7:]
 
-    if api_type == "openai":
+    if api_type in ("openai", "anthropic"):
         cat = "Available Models"
         buffer_lines.append(f"[{cat}]")
         line_map[len(buffer_lines)] = None

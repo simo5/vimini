@@ -36,14 +36,14 @@ def _get_backend_default_model(backend_name, backend_cfg, default_model):
     Returns the configured model for a backend.
 
     GenAI backends can fall back to the built-in Gemini default for legacy
-    configs. OpenAI-compatible backends must name an explicit model so we do
-    not accidentally send Gemini model names to non-Gemini providers.
+    configs. OpenAI-compatible and Anthropic backends must name an explicit model
+    so we do not accidentally send Gemini model names to non-Gemini providers.
     """
     configured_model = backend_cfg.get("default_model") if backend_cfg else None
     if configured_model:
         return configured_model
     api = str((backend_cfg or {}).get("api", "genai")).strip()
-    if api == "openai":
+    if api in ("openai", "anthropic"):
         raise ValueError(
             f"Backend '{backend_name}' must specify a non-empty 'default_model'"
         )
