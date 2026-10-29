@@ -11,9 +11,15 @@ from vimini.common.backends.base import (
     ToolCall,
     ToolResponse,
 )
-from vimini.common.config import load_backend_api_key
+from vimini.common.config import (
+    DEFAULT_API_VERSION,
+    load_backend_api_key,
+    strip_api_version,
+)
 
 logger = logging.getLogger("vimini_agent")
+
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com"
 
 
 def convert_schema_to_openai(schema: Any) -> Dict[str, Any]:
@@ -342,14 +348,31 @@ class ProxyBackend(BaseClient):
             api_key = load_backend_api_key(config)
         self.api_key = api_key
 
-        url = base_url or self.config.get("base_url") or "https://api.openai.com/v1"
-        self.base_url = url.rstrip("/")
+        self.api_version = (
+            str(self.config.get("api_version") or DEFAULT_API_VERSION)
+            .strip()
+            .strip("/")
+        )
+
+        url = base_url or self.config.get("base_url") or DEFAULT_OPENAI_BASE_URL
+        # The API version is owned by the backend, not the configuration, so
+        # strip it if a legacy versioned base_url is supplied.
+        self.base_url = strip_api_version(url, api_version=self.api_version)
         self.headers = dict(headers or self.config.get("headers", {}))
+
+    @property
+    def api_base_url(self) -> str:
+        """
+        Returns the versioned base URL used for API requests.
+        """
+        if not self.api_version:
+            return self.base_url
+        return f"{self.base_url}/{self.api_version}"
 
     def _make_request(
         self, endpoint: str, data: Optional[Dict[str, Any]] = None, stream: bool = False
     ):
-        url = f"{self.base_url}{endpoint}"
+        url = f"{self.api_base_url}{endpoint}"
         req_headers = {
             "Content-Type": "application/json",
             "User-Agent": "Vimini/ProxyAPI",

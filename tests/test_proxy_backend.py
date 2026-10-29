@@ -95,7 +95,9 @@ def test_proxy_backend_init():
         },
         api_key="my-key",
     )
-    assert backend.base_url == "https://custom.api/v1"
+    assert backend.base_url == "https://custom.api"
+    assert backend.api_version == "v1"
+    assert backend.api_base_url == "https://custom.api/v1"
     assert backend.api_key == "my-key"
     assert backend.headers == {"X-Test": "123"}
 
@@ -607,4 +609,5 @@ def test_get_backend_factory_resolves_proxy_backend():
     with patch("vimini.common.backends.load_backend_api_key", return_value="fake-key"):
         backend = get_backend("Custom 1", config=config)
     assert isinstance(backend, ProxyBackend)
-    assert backend.base_url == "https://api.proxy.com/v1"
+    assert backend.base_url == "https://api.proxy.com"
+    assert backend.api_base_url == "https://api.proxy.com/v1"
