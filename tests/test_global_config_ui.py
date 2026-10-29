@@ -19,7 +19,7 @@ class MockBuffer(list):
 
 def _sample_global_config():
     return {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {
                 "api": "genai",
@@ -45,16 +45,102 @@ def test_draw_global_config_listing_contains_backends():
     text = "\n".join(lines)
 
     assert "Vimini Global Configuration" in text
-    assert "active_backend = Gemini" in text
+    assert "default_backend = Gemini" in text
+    assert "active_backend" not in text
     assert "> UI PREFERENCES" in text
     assert "thinking_color = DarkGray (default)" in text
     assert "* Gemini" in text
     assert "  Proxy" in text
     assert "base_url = https://proxy.example/v1" in text
     assert ("ui", "thinking_color") in line_map.values()
-    assert ("global", "active_backend") in line_map.values()
+    assert ("global", "default_backend") in line_map.values()
     assert ("backend", "Proxy") in line_map.values()
     assert ("backend_field", "Proxy", "default_model") in line_map.values()
+
+
+def test_anthropic_backend_fields_listed_and_saved_as_ints():
+    import vim
+    from vimini import config
+
+    cfg = {
+        "default_backend": "Claude",
+        "backends": {
+            "Claude": {
+                "api": "anthropic",
+                "api_key_file": "~/.config/anthropic.token",
+                "default_model": "claude-3-7-sonnet-20250219",
+            }
+        },
+    }
+    lines, line_map = config._draw_global_config_listing(cfg, "/tmp/vimini/config.json")
+    text = "\n".join(lines)
+    assert "max_tokens = (not set)" in text
+    assert "thinking_budget_tokens = (not set)" in text
+    assert ("backend_field", "Claude", "max_tokens") in line_map.values()
+    assert ("backend_field", "Claude", "thinking_budget_tokens") in line_map.values()
+
+    config._VIMINI_PENDING_GLOBAL_CONFIG = copy.deepcopy(cfg)
+    mock_win = MagicMock()
+    mock_win.cursor = (1, 0)
+    mock_win.buffer = MockBuffer()
+
+    with (
+        patch.object(vim.current, "window", mock_win),
+        patch(
+            "vimini.config._get_global_target_at_cursor",
+            return_value=("backend_field", "Claude", "max_tokens"),
+        ),
+        patch.object(vim, "eval", return_value="8192"),
+        patch("vimini.config._refresh_global_config_buffer"),
+        patch("vimini.util.display_message"),
+    ):
+        config.edit_global_config_option()
+        assert (
+            config._VIMINI_PENDING_GLOBAL_CONFIG["backends"]["Claude"]["max_tokens"]
+            == 8192
+        )
+        assert isinstance(
+            config._VIMINI_PENDING_GLOBAL_CONFIG["backends"]["Claude"]["max_tokens"],
+            int,
+        )
+
+
+def test_draw_and_delete_legacy_active_backend_in_global_config():
+    import vim
+    from vimini import config
+
+    cfg = _sample_global_config()
+    cfg["active_backend"] = "Proxy"
+
+    lines, line_map = config._draw_global_config_listing(cfg, "/tmp/vimini/config.json")
+    text = "\n".join(lines)
+
+    assert "default_backend = Gemini" in text
+    assert "active_backend = Proxy" in text
+    assert ("global", "active_backend") in line_map.values()
+    # Default backend is Gemini, so Gemini has the '*' marker (active_backend is ignored)
+    assert "* Gemini" in text
+    assert "  Proxy" in text
+
+    config._VIMINI_PENDING_GLOBAL_CONFIG = cfg
+    mock_win = MagicMock()
+    mock_win.cursor = (1, 0)
+    mock_win.buffer = MockBuffer()
+
+    with (
+        patch.object(vim.current, "window", mock_win),
+        patch(
+            "vimini.config._get_global_target_at_cursor",
+            return_value=("global", "active_backend"),
+        ),
+        patch("vimini.config._refresh_global_config_buffer"),
+        patch("vimini.util.display_message") as mock_msg,
+    ):
+        config.delete_or_clear_global_config_option()
+
+        assert "active_backend" not in config._VIMINI_PENDING_GLOBAL_CONFIG
+        assert config._VIMINI_PENDING_GLOBAL_CONFIG["default_backend"] == "Gemini"
+        mock_msg.assert_called_once_with("Deleted 'active_backend' from configuration.")
 
 
 def test_global_config_command_buffer_options_and_vars(tmp_path):
@@ -73,7 +159,7 @@ def test_global_config_command_buffer_options_and_vars(tmp_path):
         patch.object(vim.current, "window", mock_win),
         patch("vimini.util.new_split"),
         patch("vimini.config.get_global_config_path", return_value=config_path),
-        patch("vimini.config.load_global_config", return_value=_sample_global_config()),
+        patch("vimini.config.get_global_config", return_value=_sample_global_config()),
     ):
         vim.command.reset_mock()
         config.global_config_command()
@@ -86,18 +172,20 @@ def test_global_config_command_buffer_options_and_vars(tmp_path):
         assert any("Vimini Global Configuration" in line for line in mock_buf)
 
 
-def test_apply_backend_config_updates_runtime():
+def test_apply_backend_config_updates_runtime_only():
     import vim
     from vimini import main, util
 
     cfg = _sample_global_config()
     with (
-        patch("vimini.common.config.set_active_backend") as mock_set_active,
+        patch("vimini.common.config.save_global_config") as mock_save,
         patch("vimini.main.send_setup") as mock_send_setup,
     ):
-        main.apply_backend_config(cfg, "Proxy", persist=True)
+        main.apply_backend_config(cfg, "Proxy")
 
-        mock_set_active.assert_called_once_with("Proxy")
+        mock_save.assert_not_called()
+        assert "active_backend" not in cfg
+        assert cfg["default_backend"] == "Gemini"
         assert util._BACKEND == "Proxy"
         assert util._MODEL == "gpt-4o"
         assert util._API_KEY_FILE == os.path.expanduser("~/.config/proxy.token")
@@ -212,7 +300,7 @@ def test_delete_backend_option_cannot_delete_last():
     from vimini import config
 
     single_backend_cfg = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {
                 "api": "genai",
@@ -249,7 +337,7 @@ def test_confirm_global_config_dialog_confirmed():
 
     orig = _sample_global_config()
     pending = copy.deepcopy(orig)
-    pending["active_backend"] = "Proxy"
+    pending["default_backend"] = "Proxy"
 
     config._VIMINI_ORIGINAL_GLOBAL_CONFIG = orig
     config._VIMINI_PENDING_GLOBAL_CONFIG = pending

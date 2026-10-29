@@ -11,6 +11,8 @@ DEFAULT_MODEL = "gemini-3.8-flash"
 DEFAULT_GEMINI_KEY_FILE = "~/.config/gemini.token"
 DEFAULT_ANTHROPIC_KEY_FILE = "~/.config/anthropic.token"
 DEFAULT_ANTHROPIC_MODEL = "claude-3-7-sonnet-20250219"
+DEFAULT_ANTHROPIC_MAX_TOKENS = 4096
+MIN_ANTHROPIC_THINKING_BUDGET_TOKENS = 1024
 SUPPORTED_API_TYPES = {"genai", "openai", "anthropic"}
 VERSIONED_API_TYPES = ("openai", "anthropic")
 DEFAULT_API_VERSION = "v1"
@@ -23,6 +25,10 @@ DEFAULT_UI_CONFIG = {
     "error_color": "Red",
     "prompt_hint_color": "Green",
 }
+
+# Global variable holding the current configuration in memory so the config file
+# is only read at plugin/agent startup or on a full reload.
+_GLOBAL_CONFIG = None
 
 
 def _to_bool(value, default=False):
@@ -131,7 +137,7 @@ def create_default_global_config(default_model=None, api_key_file=None):
     Generates a default v1 configuration dictionary.
     """
     return {
-        "active_backend": DEFAULT_BACKEND,
+        "default_backend": DEFAULT_BACKEND,
         "backends": {
             DEFAULT_BACKEND: {
                 "api": "genai",
@@ -141,6 +147,23 @@ def create_default_global_config(default_model=None, api_key_file=None):
         },
         "ui": dict(DEFAULT_UI_CONFIG),
     }
+
+
+def parse_positive_int(value, field_name, backend_name=None):
+    prefix = (
+        f"Backend '{backend_name}' '{field_name}'"
+        if backend_name
+        else f"Invalid '{field_name}'"
+    )
+    if isinstance(value, bool):
+        raise ValueError(f"{prefix} must be a positive integer")
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"{prefix} must be a positive integer") from e
+    if parsed <= 0:
+        raise ValueError(f"{prefix} must be a positive integer")
+    return parsed
 
 
 def validate_global_config(config):
@@ -153,22 +176,24 @@ def validate_global_config(config):
             f"Global configuration must be a dictionary, got {type(config).__name__}"
         )
 
-    active_backend = config.get("active_backend")
-    if not isinstance(active_backend, str) or not active_backend.strip():
-        raise ValueError(
-            "Global configuration must specify a non-empty 'active_backend'"
-        )
-
     backends = config.get("backends")
     if not isinstance(backends, dict) or not backends:
         raise ValueError(
             "Global configuration must contain a non-empty 'backends' dictionary"
         )
 
-    if active_backend not in backends:
-        raise ValueError(
-            f"Active backend '{active_backend}' is not defined in 'backends'"
-        )
+    # 'active_backend' is a runtime-only variable; if it exists in the stored
+    # configuration (e.g. from an older config file), ignore it without removing it.
+    if "default_backend" in config or "active_backend" not in config:
+        default_backend = config.get("default_backend")
+        if not isinstance(default_backend, str) or not default_backend.strip():
+            raise ValueError(
+                "Global configuration must specify a non-empty 'default_backend'"
+            )
+        if default_backend not in backends:
+            raise ValueError(
+                f"Default backend '{default_backend}' is not defined in 'backends'"
+            )
 
     for name, backend_info in backends.items():
         if not isinstance(backend_info, dict):
@@ -200,6 +225,29 @@ def validate_global_config(config):
                 f"Backend '{name}' must specify a non-empty 'default_model'"
             )
 
+        raw_max_tokens = backend_info.get("max_tokens")
+        resolved_max_tokens = DEFAULT_ANTHROPIC_MAX_TOKENS
+        if raw_max_tokens is not None:
+            resolved_max_tokens = parse_positive_int(
+                raw_max_tokens, "max_tokens", backend_name=name
+            )
+
+        raw_thinking_budget = backend_info.get("thinking_budget_tokens")
+        if raw_thinking_budget is not None:
+            resolved_budget = parse_positive_int(
+                raw_thinking_budget, "thinking_budget_tokens", backend_name=name
+            )
+            if resolved_budget < MIN_ANTHROPIC_THINKING_BUDGET_TOKENS:
+                raise ValueError(
+                    f"Backend '{name}' 'thinking_budget_tokens' ({resolved_budget}) "
+                    f"must be at least {MIN_ANTHROPIC_THINKING_BUDGET_TOKENS}"
+                )
+            if resolved_budget >= resolved_max_tokens:
+                raise ValueError(
+                    f"Backend '{name}' 'thinking_budget_tokens' ({resolved_budget}) "
+                    f"must be less than 'max_tokens' ({resolved_max_tokens})"
+                )
+
     ui = config.get("ui")
     if ui is not None:
         if not isinstance(ui, dict):
@@ -214,11 +262,42 @@ def validate_global_config(config):
     return config
 
 
+def set_global_config(config):
+    """
+    Sets the in-memory global configuration dictionary.
+    """
+    global _GLOBAL_CONFIG
+    _GLOBAL_CONFIG = config
+    return _GLOBAL_CONFIG
+
+
+def get_global_config(config_path=None, default_model=None, api_key_file=None):
+    """
+    Returns the current in-memory global configuration dictionary.
+    If not yet loaded into memory (or if a specific config_path is requested),
+    loads it once via load_global_config().
+    """
+    global _GLOBAL_CONFIG
+    if config_path is not None:
+        return load_global_config(
+            config_path=config_path,
+            default_model=default_model,
+            api_key_file=api_key_file,
+        )
+    if _GLOBAL_CONFIG is None:
+        _GLOBAL_CONFIG = load_global_config(
+            default_model=default_model, api_key_file=api_key_file
+        )
+    return _GLOBAL_CONFIG
+
+
 def load_global_config(config_path=None, default_model=None, api_key_file=None):
     """
-    Loads configuration from ~/.var/vimini/config.json.
+    Loads configuration from ~/.var/vimini/config.json into the in-memory
+    global configuration variable.
     If the file does not exist, generates a default v1 config, saves it, and returns it.
     """
+    global _GLOBAL_CONFIG
     target_path = (
         os.path.realpath(os.path.expanduser(config_path))
         if config_path
@@ -230,6 +309,8 @@ def load_global_config(config_path=None, default_model=None, api_key_file=None):
             default_model=default_model, api_key_file=api_key_file
         )
         save_global_config(default_config, config_path=target_path)
+        if config_path is None:
+            _GLOBAL_CONFIG = default_config
         return default_config
 
     try:
@@ -252,13 +333,17 @@ def load_global_config(config_path=None, default_model=None, api_key_file=None):
                 f"Failed to persist normalized base_url values to '{target_path}': {e}"
             )
 
+    if config_path is None:
+        _GLOBAL_CONFIG = config
     return config
 
 
 def save_global_config(config, config_path=None):
     """
-    Saves the global configuration dictionary to ~/.var/vimini/config.json.
+    Saves the global configuration dictionary to ~/.var/vimini/config.json
+    and updates the in-memory global configuration variable.
     """
+    global _GLOBAL_CONFIG
     target_path = (
         os.path.realpath(os.path.expanduser(config_path))
         if config_path
@@ -281,32 +366,44 @@ def save_global_config(config, config_path=None):
             except OSError:
                 pass
 
+    default_real_path = os.path.realpath(os.path.expanduser(DEFAULT_CONFIG_PATH))
+    if config_path is None or target_path == default_real_path:
+        _GLOBAL_CONFIG = config
+
     return True
 
 
-def get_active_backend(config):
+def get_default_backend(config):
     """
-    Returns the name of the active backend.
+    Returns the name of the default backend configured for startup.
+    Ignores any 'active_backend' key if present in the configuration.
     """
     if isinstance(config, dict):
-        return config.get("active_backend", DEFAULT_BACKEND)
+        default_backend = config.get("default_backend")
+        if isinstance(default_backend, str) and default_backend.strip():
+            return default_backend.strip()
+        backends = config.get("backends")
+        if isinstance(backends, dict) and backends:
+            if DEFAULT_BACKEND in backends:
+                return DEFAULT_BACKEND
+            return next(iter(backends.keys()))
     return DEFAULT_BACKEND
 
 
-def get_active_backend_config(config):
+def get_default_backend_config(config):
     """
-    Returns a tuple (backend_name, backend_config_dict) for the active backend.
+    Returns a tuple (backend_name, backend_config_dict) for the default backend.
     """
     if not isinstance(config, dict):
         return None, None
-    name = get_active_backend(config)
+    name = get_default_backend(config)
     backends = config.get("backends", {})
     return name, backends.get(name)
 
 
-def set_active_backend(backend_name, config=None, config_path=None):
+def set_default_backend(backend_name, config=None, config_path=None):
     """
-    Switches the active backend in the configuration and saves the changes.
+    Updates the default_backend in the configuration and saves the changes.
     """
     target_path = (
         os.path.realpath(os.path.expanduser(config_path))
@@ -315,7 +412,10 @@ def set_active_backend(backend_name, config=None, config_path=None):
     )
 
     if config is None:
-        config = load_global_config(config_path=target_path)
+        if config_path is None:
+            config = get_global_config()
+        else:
+            config = load_global_config(config_path=target_path)
 
     backends = config.get("backends", {})
     if backend_name not in backends:
@@ -324,7 +424,7 @@ def set_active_backend(backend_name, config=None, config_path=None):
             f"Backend '{backend_name}' not found. Available backends: {available}"
         )
 
-    config["active_backend"] = backend_name
+    config["default_backend"] = backend_name
     save_global_config(config, config_path=target_path)
     return config
 

@@ -108,6 +108,7 @@ def test_anthropic_backend_init():
             "base_url": "https://api.anthropic.com",
             "headers": {"X-Custom": "custom-val"},
             "max_tokens": 8192,
+            "thinking_budget_tokens": 2048,
             "anthropic_version": "2023-06-01",
         },
         api_key="sk-ant-test",
@@ -118,7 +119,40 @@ def test_anthropic_backend_init():
     assert backend.api_key == "sk-ant-test"
     assert backend.headers == {"X-Custom": "custom-val"}
     assert backend.max_tokens == 8192
+    assert backend.thinking_budget_tokens == 2048
     assert backend.anthropic_version == "2023-06-01"
+
+
+def test_anthropic_backend_invalid_max_tokens_and_thinking_budget():
+    with pytest.raises(ValueError, match="Invalid 'max_tokens'"):
+        AnthropicBackend(config={"max_tokens": "not-an-int"})
+
+    with pytest.raises(ValueError, match="Invalid 'max_tokens'"):
+        AnthropicBackend(config={"max_tokens": 0})
+
+    with pytest.raises(ValueError, match="Invalid 'max_tokens'"):
+        AnthropicBackend(config={"max_tokens": -100})
+
+    with pytest.raises(ValueError, match="Invalid 'max_tokens'"):
+        AnthropicBackend(config={"max_tokens": True})
+
+    with pytest.raises(ValueError, match="Invalid 'thinking_budget_tokens'"):
+        AnthropicBackend(config={"thinking_budget_tokens": "bad"})
+
+    with pytest.raises(ValueError, match="Invalid 'thinking_budget_tokens'"):
+        AnthropicBackend(config={"thinking_budget_tokens": 0})
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid 'thinking_budget_tokens' \\(512\\): must be at least 1024",
+    ):
+        AnthropicBackend(config={"max_tokens": 4096, "thinking_budget_tokens": 512})
+
+    with pytest.raises(
+        ValueError,
+        match="Invalid 'thinking_budget_tokens' \\(4096\\): must be less than 'max_tokens' \\(4096\\)",
+    ):
+        AnthropicBackend(config={"max_tokens": 4096, "thinking_budget_tokens": 4096})
 
 
 def test_anthropic_backend_make_request_headers():
@@ -173,8 +207,9 @@ def test_anthropic_backend_list_models():
         ]
     }
 
-    with patch.object(backend, "_make_request", return_value=mock_data):
+    with patch.object(backend, "_make_request", return_value=mock_data) as mock_req:
         models = backend.list_models()
+        mock_req.assert_called_once_with("/models?limit=1000", stream=False)
         assert len(models) == 2
         assert models[0]["name"] == "claude-3-7-sonnet-20250219"
         assert models[0]["display_name"] == "Claude 3.7 Sonnet"
@@ -185,8 +220,44 @@ def test_anthropic_backend_list_models():
         assert models[1]["display_name"] == "Claude 3.5 Haiku"
 
 
-def test_anthropic_backend_generate_content():
+def test_anthropic_backend_list_models_pagination():
     backend = AnthropicBackend()
+    page1 = {
+        "data": [
+            {"id": "claude-opus-4", "display_name": "Claude Opus 4"},
+            {"id": "claude-sonnet-4", "display_name": "Claude Sonnet 4"},
+        ],
+        "has_more": True,
+        "last_id": "claude-sonnet-4",
+    }
+    page2 = {
+        "data": [
+            {"id": "claude-3-5-haiku", "display_name": "Claude 3.5 Haiku"},
+        ],
+        "has_more": False,
+        "last_id": "claude-3-5-haiku",
+    }
+
+    with patch.object(backend, "_make_request", side_effect=[page1, page2]) as mock_req:
+        models = backend.list_models()
+        assert len(models) == 3
+        assert [m["name"] for m in models] == [
+            "claude-opus-4",
+            "claude-sonnet-4",
+            "claude-3-5-haiku",
+        ]
+        assert mock_req.call_count == 2
+        assert mock_req.call_args_list[0][0][0] == "/models?limit=1000"
+        assert (
+            mock_req.call_args_list[1][0][0]
+            == "/models?limit=1000&after_id=claude-sonnet-4"
+        )
+
+
+def test_anthropic_backend_generate_content():
+    backend = AnthropicBackend(
+        config={"max_tokens": 8192, "thinking_budget_tokens": 1024}
+    )
     mock_resp_data = {
         "content": [
             {
@@ -211,6 +282,7 @@ def test_anthropic_backend_generate_content():
         assert payload["system"] == "Be helpful"
         assert payload["messages"] == [{"role": "user", "content": "Hello"}]
         assert payload["stream"] is False
+        assert payload["thinking"] == {"type": "enabled", "budget_tokens": 1024}
 
 
 def test_anthropic_backend_generate_content_stream():
@@ -368,6 +440,272 @@ def test_anthropic_chat_session_streaming_and_tools():
         assert messages[2]["content"][0]["type"] == "tool_result"
         assert messages[2]["content"][0]["tool_use_id"] == "toolu_01"
         assert messages[2]["content"][0]["content"] == "print('hello')"
+
+
+def test_anthropic_chat_session_thinking_signature_and_redacted_thinking():
+    backend = AnthropicBackend(
+        config={"max_tokens": 8192, "thinking_budget_tokens": 2048}
+    )
+    session = backend.create_chat(model="claude-3-7-sonnet-20250219")
+
+    # Block 0: thinking WITH signature -> replayed
+    # Block 1: thinking WITHOUT signature -> dropped from history
+    # Block 2: redacted_thinking -> echoed back verbatim
+    # Block 3: text -> replayed
+    events = [
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "thinking", "thinking": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "thinking_delta", "thinking": "Signed thought."},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "signature_delta", "signature": "sig_valid_123"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "thinking", "thinking": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "thinking_delta", "thinking": "Unsigned thought."},
+        },
+        {"type": "content_block_stop", "index": 1},
+        {
+            "type": "content_block_start",
+            "index": 2,
+            "content_block": {
+                "type": "redacted_thinking",
+                "data": "EvkBCg1yZWRhY3RlZF9kYXRh",
+            },
+        },
+        {"type": "content_block_stop", "index": 2},
+        {
+            "type": "content_block_start",
+            "index": 3,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 3,
+            "delta": {"type": "text_delta", "text": "Final answer."},
+        },
+        {"type": "content_block_stop", "index": 3},
+        {"type": "message_stop"},
+    ]
+
+    mock_resp = io.BytesIO(
+        b"".join([f"data: {json.dumps(ev)}\n\n".encode("utf-8") for ev in events])
+    )
+    with patch.object(backend, "_make_request", return_value=mock_resp) as mock_req:
+        chunks = list(session.send_message_stream("Solve this"))
+        assert mock_req.call_args[1]["data"]["thinking"] == {
+            "type": "enabled",
+            "budget_tokens": 2048,
+        }
+        assert [c.thought for c in chunks if c.thought] == [
+            "Signed thought.",
+            "Unsigned thought.",
+        ]
+        assert [c.text for c in chunks if c.text] == ["Final answer."]
+
+    asst_msg = session.messages[-1]
+    assert asst_msg["role"] == "assistant"
+    assert asst_msg["content"] == [
+        {
+            "type": "thinking",
+            "thinking": "Signed thought.",
+            "signature": "sig_valid_123",
+        },
+        {
+            "type": "redacted_thinking",
+            "data": "EvkBCg1yZWRhY3RlZF9kYXRh",
+        },
+        {
+            "type": "text",
+            "text": "Final answer.",
+        },
+    ]
+
+
+def test_anthropic_chat_session_unanswered_tool_use_synthesizes_tool_result():
+    backend = AnthropicBackend()
+    session = backend.create_chat(
+        model="claude-3-5-sonnet-20241022",
+        tools=[{"name": "read_file", "parameters": {}}],
+    )
+
+    events_turn1 = [
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_pending_1",
+                "name": "read_file",
+                "input": {},
+            },
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {
+                "type": "input_json_delta",
+                "partial_json": '{"filepath": "foo.py"}',
+            },
+        },
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_stop"},
+    ]
+    mock_resp1 = io.BytesIO(
+        b"".join([f"data: {json.dumps(ev)}\n\n".encode("utf-8") for ev in events_turn1])
+    )
+    with patch.object(backend, "_make_request", return_value=mock_resp1):
+        list(session.send_message_stream("Read foo.py"))
+
+    # User cancels tool execution and sends a plain prompt instead.
+    mock_resp2 = io.BytesIO(b'data: {"type": "message_stop"}\n\n')
+    with patch.object(backend, "_make_request", return_value=mock_resp2) as mock_req2:
+        list(session.send_message_stream("Cancel that, do something else"))
+        messages = mock_req2.call_args[1]["data"]["messages"]
+
+        assert len(messages) == 3
+        assert messages[1]["role"] == "assistant"
+        assert messages[2]["role"] == "user"
+        assert messages[2]["content"] == [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_pending_1",
+                "content": "Tool call not executed.",
+                "is_error": True,
+            },
+            {
+                "type": "text",
+                "text": "Cancel that, do something else",
+            },
+        ]
+
+
+def test_anthropic_chat_session_role_dict_inputs_preserve_invariants():
+    backend = AnthropicBackend()
+    session = backend.create_chat(
+        model="claude-3-5-sonnet-20241022",
+        tools=[{"name": "read_file", "parameters": {}}],
+    )
+
+    # Seed an assistant turn with an unanswered tool_use block
+    session.messages = [
+        {"role": "user", "content": "Read foo.py"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_pending_role",
+                    "name": "read_file",
+                    "input": {"filepath": "foo.py"},
+                }
+            ],
+        },
+    ]
+
+    # Sending a list with a ToolResponse and a raw {"role": "user", ...} dict
+    # merges them into a single user message rather than creating consecutive user turns.
+    mock_resp = io.BytesIO(b'data: {"type": "message_stop"}\n\n')
+    with patch.object(backend, "_make_request", return_value=mock_resp) as mock_req:
+        list(
+            session.send_message_stream(
+                [
+                    ToolResponse(
+                        name="read_file",
+                        response="contents",
+                        call_id="toolu_pending_role",
+                    ),
+                    {"role": "user", "content": "Now summarize it."},
+                ]
+            )
+        )
+        messages = mock_req.call_args[1]["data"]["messages"]
+        assert len(messages) == 3
+        assert messages[2]["role"] == "user"
+        assert messages[2]["content"] == [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_pending_role",
+                "content": "contents",
+            },
+            {"type": "text", "text": "Now summarize it."},
+        ]
+
+
+def test_anthropic_chat_session_tool_response_without_call_id():
+    backend = AnthropicBackend()
+    session = backend.create_chat(model="claude-3-5-sonnet-20241022")
+
+    # Turn 1: assistant emits tool_use with id 'toolu_hist_99'
+    events_turn1 = [
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "tool_use",
+                "id": "toolu_hist_99",
+                "name": "read_file",
+                "input": {"filepath": "a.py"},
+            },
+        },
+        {"type": "content_block_stop", "index": 0},
+        {"type": "message_stop"},
+    ]
+    mock_resp1 = io.BytesIO(
+        b"".join([f"data: {json.dumps(ev)}\n\n".encode("utf-8") for ev in events_turn1])
+    )
+    with patch.object(backend, "_make_request", return_value=mock_resp1):
+        list(session.send_message_stream("Read a.py"))
+
+    # Turn 2: ToolResponse with call_id=None falls back to pending id in history
+    mock_resp2 = io.BytesIO(b'data: {"type": "message_stop"}\n\n')
+    with patch.object(backend, "_make_request", return_value=mock_resp2) as mock_req2:
+        list(
+            session.send_message_stream(
+                ToolResponse(name="read_file", response="ok", call_id=None)
+            )
+        )
+        messages = mock_req2.call_args[1]["data"]["messages"]
+        assert messages[2]["content"] == [
+            {
+                "type": "tool_result",
+                "tool_use_id": "toolu_hist_99",
+                "content": "ok",
+            }
+        ]
+
+    # When no pending tool_use is in history, falls back to deterministic 'toolu_{i}'
+    fresh_session = backend.create_chat(model="claude-3-5-sonnet-20241022")
+    mock_resp3 = io.BytesIO(b'data: {"type": "message_stop"}\n\n')
+    with patch.object(backend, "_make_request", return_value=mock_resp3) as mock_req3:
+        list(
+            fresh_session.send_message_stream(
+                [
+                    ToolResponse(name="t1", response="r1", call_id=None),
+                    ToolResponse(name="t2", response="r2", call_id=None),
+                ]
+            )
+        )
+        messages = mock_req3.call_args[1]["data"]["messages"]
+        assert messages[0]["content"] == [
+            {"type": "tool_result", "tool_use_id": "toolu_0", "content": "r1"},
+            {"type": "tool_result", "tool_use_id": "toolu_1", "content": "r2"},
+        ]
 
 
 def test_anthropic_chat_session_multiple_tool_calls():

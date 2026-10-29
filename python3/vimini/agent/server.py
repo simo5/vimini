@@ -17,6 +17,7 @@ import logging
 import signal
 import atexit
 from vimini.common.backends import get_client
+from vimini.common.config import load_global_config
 
 MAX_RECEIVE_BUFFER_SIZE = 1024 * 1024
 AGENT_CONFIG = {}
@@ -60,6 +61,7 @@ def execute_function(req_id, method, params, result_queue, conn):
     logger.info(f"Executing method: {method} (id: {req_id})")
     try:
         if method == "setup":
+            load_global_config()
             if isinstance(params, dict):
                 safe_params = dict(params)
                 safe_params.pop("api_key_file", None)
@@ -198,6 +200,11 @@ class AgentServer:
 
     def start(self):
         logger.info(f"Starting AgentServer on socket: {self.socket_path}")
+        try:
+            load_global_config()
+        except Exception as e:
+            logger.error(f"Failed to load global config on agent startup: {e}")
+
         if os.path.exists(self.socket_path):
             try:
                 os.unlink(self.socket_path)

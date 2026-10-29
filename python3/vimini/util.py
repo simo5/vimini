@@ -227,10 +227,10 @@ def get_model_name():
     backend = _BACKEND
     api_type = None
     try:
-        from vimini.common.config import load_global_config, get_active_backend
+        from vimini.common.config import get_global_config, get_default_backend
 
-        cfg = load_global_config()
-        backend = backend or get_active_backend(cfg)
+        cfg = get_global_config()
+        backend = backend or get_default_backend(cfg)
         b_cfg = cfg.get("backends", {}).get(backend)
         if isinstance(b_cfg, dict):
             api_type = b_cfg.get("api", "genai")
@@ -267,9 +267,9 @@ def setup_highlights(config=None):
         ui_cfg = config.get("ui") or {}
     else:
         try:
-            from vimini.common.config import load_global_config
+            from vimini.common.config import get_global_config
 
-            cfg = load_global_config()
+            cfg = get_global_config()
             ui_cfg = cfg.get("ui") or {}
         except Exception:
             ui_cfg = {}
@@ -948,11 +948,11 @@ def update_status_buffer():
         # so it updates when we switch back to the tab with status window.
         return
 
-    from vimini.common.config import load_global_config, get_active_backend
+    from vimini.common.config import get_global_config, get_default_backend
 
     try:
-        cfg = load_global_config()
-        backend_name = _BACKEND or get_active_backend(cfg)
+        cfg = get_global_config()
+        backend_name = _BACKEND or get_default_backend(cfg)
         b_cfg = cfg.get("backends", {}).get(backend_name, {})
         api_type = b_cfg.get("api", "genai")
         endpoint = b_cfg.get(

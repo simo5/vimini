@@ -1,8 +1,9 @@
 import json
 import logging
+import urllib.parse
 import urllib.request
 import urllib.error
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Set
 
 from vimini.common.backends.base import (
     BaseChatSession,
@@ -12,8 +13,11 @@ from vimini.common.backends.base import (
     ToolResponse,
 )
 from vimini.common.config import (
+    DEFAULT_ANTHROPIC_MAX_TOKENS,
     DEFAULT_API_VERSION,
+    MIN_ANTHROPIC_THINKING_BUDGET_TOKENS,
     load_backend_api_key,
+    parse_positive_int,
     strip_api_version,
 )
 
@@ -167,11 +171,158 @@ class AnthropicChatSession(BaseChatSession):
     def get_history(self) -> List[Any]:
         return []
 
+    def _get_pending_tool_use_ids(self) -> List[str]:
+        """
+        Returns any tool_use IDs from the most recent assistant turn that do
+        not yet have a corresponding tool_result in the following user turn.
+        """
+        if not self.messages:
+            return []
+
+        last_msg = self.messages[-1]
+        if last_msg.get("role") == "assistant":
+            asst_content = last_msg.get("content")
+            if not isinstance(asst_content, list):
+                return []
+            return [
+                block["id"]
+                for block in asst_content
+                if isinstance(block, dict)
+                and block.get("type") == "tool_use"
+                and block.get("id")
+            ]
+
+        if (
+            len(self.messages) >= 2
+            and last_msg.get("role") == "user"
+            and self.messages[-2].get("role") == "assistant"
+        ):
+            asst_content = self.messages[-2].get("content")
+            if not isinstance(asst_content, list):
+                return []
+            tool_use_ids = [
+                block["id"]
+                for block in asst_content
+                if isinstance(block, dict)
+                and block.get("type") == "tool_use"
+                and block.get("id")
+            ]
+            if not tool_use_ids:
+                return []
+
+            user_content = last_msg.get("content")
+            answered_ids: Set[str] = set()
+            if isinstance(user_content, list):
+                answered_ids = {
+                    block["tool_use_id"]
+                    for block in user_content
+                    if isinstance(block, dict)
+                    and block.get("type") == "tool_result"
+                    and block.get("tool_use_id")
+                }
+            return [tid for tid in tool_use_ids if tid not in answered_ids]
+
+        return []
+
+    def _resolve_tool_use_id(
+        self,
+        call_id: Optional[str],
+        index: int = 0,
+        used_ids: Optional[Set[str]] = None,
+    ) -> str:
+        """
+        Resolves the tool_use_id for a ToolResponse. Prefers an explicit
+        call_id, then falls back to the next unanswered tool_use ID in
+        conversation history, and finally to a deterministic 'toolu_{index}'.
+        """
+        if call_id:
+            if used_ids is not None:
+                used_ids.add(call_id)
+            return call_id
+
+        for pending_id in self._get_pending_tool_use_ids():
+            if used_ids is None or pending_id not in used_ids:
+                if used_ids is not None:
+                    used_ids.add(pending_id)
+                return pending_id
+
+        fallback_id = f"toolu_{index}"
+        if used_ids is not None:
+            used_ids.add(fallback_id)
+        return fallback_id
+
+    @staticmethod
+    def _make_unexecuted_tool_result(tool_use_id: str) -> Dict[str, Any]:
+        return {
+            "type": "tool_result",
+            "tool_use_id": tool_use_id,
+            "content": "Tool call not executed.",
+            "is_error": True,
+        }
+
+    def _synthesize_pending_tool_results(
+        self, exclude_ids: Optional[Set[str]] = None
+    ) -> None:
+        """
+        Synthesizes error tool_result blocks for any unanswered tool_use IDs
+        so that Anthropic's strict tool_use -> tool_result pairing invariant
+        is preserved even if a turn was cancelled or only partially answered.
+        """
+        pending_ids = [
+            tid
+            for tid in self._get_pending_tool_use_ids()
+            if not exclude_ids or tid not in exclude_ids
+        ]
+        if not pending_ids:
+            return
+
+        synthesized = [self._make_unexecuted_tool_result(tid) for tid in pending_ids]
+
+        if self.messages and self.messages[-1].get("role") == "user":
+            prev = self.messages[-1]["content"]
+            if isinstance(prev, list):
+                # Keep all tool_result blocks at the start of the user content list.
+                tool_results = [
+                    b
+                    for b in prev
+                    if isinstance(b, dict) and b.get("type") == "tool_result"
+                ]
+                other_blocks = [
+                    b
+                    for b in prev
+                    if not (isinstance(b, dict) and b.get("type") == "tool_result")
+                ]
+                self.messages[-1]["content"] = tool_results + synthesized + other_blocks
+            elif isinstance(prev, str):
+                self.messages[-1]["content"] = synthesized + [
+                    {"type": "text", "text": prev}
+                ]
+        else:
+            self.messages.append({"role": "user", "content": synthesized})
+
     def _append_user_content(self, content: Any) -> None:
         """
-        Appends user content while strictly preserving Anthropic's rule that
-        messages must alternate between 'user' and 'assistant'.
+        Appends user content while strictly preserving Anthropic's rules that
+        messages must alternate between 'user' and 'assistant' and that every
+        assistant tool_use block must be immediately answered by a tool_result.
         """
+        if isinstance(content, str):
+            self._synthesize_pending_tool_results()
+        elif isinstance(content, list):
+            provided_ids = {
+                item.get("tool_use_id")
+                for item in content
+                if isinstance(item, dict)
+                and item.get("type") == "tool_result"
+                and item.get("tool_use_id")
+            }
+            has_non_tool_result = any(
+                not (isinstance(item, dict) and item.get("type") == "tool_result")
+                for item in content
+            )
+            if has_non_tool_result:
+                self._synthesize_pending_tool_results(exclude_ids=provided_ids)
+
         if self.messages and self.messages[-1].get("role") == "user":
             prev = self.messages[-1]["content"]
             if isinstance(prev, str) and isinstance(content, str):
@@ -189,6 +340,16 @@ class AnthropicChatSession(BaseChatSession):
         else:
             self.messages.append({"role": "user", "content": content})
 
+    def _append_role_message(self, msg: Dict[str, Any]) -> None:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        if role == "user":
+            self._append_user_content(content)
+            return
+
+        self._synthesize_pending_tool_results()
+        self.messages.append({"role": role, "content": content})
+
     def send_message_stream(
         self, prompt_or_tool_responses: Any
     ) -> Iterator[StreamChunk]:
@@ -200,11 +361,14 @@ class AnthropicChatSession(BaseChatSession):
                 if isinstance(prompt_or_tool_responses.response, str)
                 else json.dumps(prompt_or_tool_responses.response)
             )
+            tool_use_id = self._resolve_tool_use_id(
+                prompt_or_tool_responses.call_id, index=0
+            )
             self._append_user_content(
                 [
                     {
                         "type": "tool_result",
-                        "tool_use_id": prompt_or_tool_responses.call_id or "",
+                        "tool_use_id": tool_use_id,
                         "content": content,
                     }
                 ]
@@ -212,47 +376,77 @@ class AnthropicChatSession(BaseChatSession):
         elif isinstance(prompt_or_tool_responses, list):
             tool_results = []
             text_items = []
-            for item in prompt_or_tool_responses:
+            used_ids: Set[str] = {
+                item.call_id
+                for item in prompt_or_tool_responses
+                if isinstance(item, ToolResponse) and item.call_id
+            }
+
+            def flush_pending_user_items() -> None:
+                nonlocal tool_results, text_items
+                if tool_results:
+                    self._append_user_content(tool_results)
+                    tool_results = []
+                if text_items:
+                    self._append_user_content("\n\n".join(text_items))
+                    text_items = []
+
+            for i, item in enumerate(prompt_or_tool_responses):
                 if isinstance(item, ToolResponse):
                     content = (
                         item.response
                         if isinstance(item.response, str)
                         else json.dumps(item.response)
                     )
+                    tool_use_id = self._resolve_tool_use_id(
+                        item.call_id, index=i, used_ids=used_ids
+                    )
                     tool_results.append(
                         {
                             "type": "tool_result",
-                            "tool_use_id": item.call_id or "",
+                            "tool_use_id": tool_use_id,
                             "content": content,
                         }
                     )
                 elif isinstance(item, dict):
                     if item.get("type") == "tool_result":
-                        tool_results.append(item)
+                        resolved_item = dict(item)
+                        if not resolved_item.get("tool_use_id"):
+                            resolved_item["tool_use_id"] = self._resolve_tool_use_id(
+                                None, index=i, used_ids=used_ids
+                            )
+                        else:
+                            used_ids.add(resolved_item["tool_use_id"])
+                        tool_results.append(resolved_item)
                     elif "tool_call_id" in item:
+                        tool_use_id = self._resolve_tool_use_id(
+                            item.get("tool_call_id"), index=i, used_ids=used_ids
+                        )
                         tool_results.append(
                             {
                                 "type": "tool_result",
-                                "tool_use_id": item["tool_call_id"],
+                                "tool_use_id": tool_use_id,
                                 "content": str(item.get("content", "")),
                             }
                         )
                     elif "role" in item:
-                        self.messages.append(item)
+                        flush_pending_user_items()
+                        self._append_role_message(item)
                     else:
                         tool_results.append(item)
                 else:
                     text_items.append(str(item))
 
-            if tool_results:
-                self._append_user_content(tool_results)
-            elif text_items:
-                self._append_user_content("\n\n".join(text_items))
+            flush_pending_user_items()
         elif isinstance(prompt_or_tool_responses, dict):
             if "role" in prompt_or_tool_responses:
-                self.messages.append(prompt_or_tool_responses)
+                self._append_role_message(prompt_or_tool_responses)
             else:
                 self._append_user_content(json.dumps(prompt_or_tool_responses))
+
+        # Ensure any remaining unanswered tool_use blocks are closed out
+        # before sending the request.
+        self._synthesize_pending_tool_results()
 
         payload: Dict[str, Any] = {
             "model": self.model,
@@ -264,6 +458,11 @@ class AnthropicChatSession(BaseChatSession):
             payload["system"] = self.system_instruction
         if self.tools:
             payload["tools"] = self.tools
+        if self.backend.thinking_budget_tokens:
+            payload["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": self.backend.thinking_budget_tokens,
+            }
 
         resp = self.backend._make_request("/messages", data=payload, stream=True)
 
@@ -305,10 +504,11 @@ class AnthropicChatSession(BaseChatSession):
                     )
                 elif delta_type == "signature_delta":
                     sig = delta.get("signature", "") or ""
-                    if idx in content_blocks:
-                        content_blocks[idx]["signature"] = (
-                            content_blocks[idx].get("signature", "") + sig
-                        )
+                    if idx not in content_blocks:
+                        content_blocks[idx] = {"type": "thinking", "thinking": ""}
+                    content_blocks[idx]["signature"] = (
+                        content_blocks[idx].get("signature", "") + sig
+                    )
                 elif delta_type == "input_json_delta":
                     partial = delta.get("partial_json", "") or ""
                     if idx not in content_blocks:
@@ -357,11 +557,19 @@ class AnthropicChatSession(BaseChatSession):
                 if txt:
                     asst_content.append({"type": "text", "text": txt})
             elif b_type == "thinking":
+                # Anthropic rejects assistant thinking blocks lacking a non-empty
+                # signature or non-empty thinking text.
                 thk = block.get("thinking", "")
-                thk_block = {"type": "thinking", "thinking": thk}
-                if "signature" in block:
-                    thk_block["signature"] = block["signature"]
-                asst_content.append(thk_block)
+                sig = block.get("signature", "")
+                if thk and sig:
+                    asst_content.append(
+                        {"type": "thinking", "thinking": thk, "signature": sig}
+                    )
+            elif b_type == "redacted_thinking":
+                # Anthropic requires redacted_thinking blocks to be echoed back verbatim.
+                data = block.get("data", "")
+                if data:
+                    asst_content.append({"type": "redacted_thinking", "data": data})
             elif b_type == "tool_use":
                 call_id = block.get("id") or f"toolu_{idx}"
                 name = block.get("name", "")
@@ -414,7 +622,27 @@ class AnthropicBackend(BaseClient):
 
         self.headers = dict(headers or self.config.get("headers", {}))
         self.anthropic_version = self.config.get("anthropic_version") or "2023-06-01"
-        self.max_tokens = int(self.config.get("max_tokens") or 4096)
+
+        raw_max_tokens = self.config.get("max_tokens")
+        if raw_max_tokens is None or raw_max_tokens == "":
+            self.max_tokens = DEFAULT_ANTHROPIC_MAX_TOKENS
+        else:
+            self.max_tokens = parse_positive_int(raw_max_tokens, "max_tokens")
+
+        raw_thinking_budget = self.config.get("thinking_budget_tokens")
+        if raw_thinking_budget is None or raw_thinking_budget == "":
+            self.thinking_budget_tokens: Optional[int] = None
+        else:
+            budget = parse_positive_int(raw_thinking_budget, "thinking_budget_tokens")
+            if budget < MIN_ANTHROPIC_THINKING_BUDGET_TOKENS:
+                raise ValueError(
+                    f"Invalid 'thinking_budget_tokens' ({budget}): must be at least {MIN_ANTHROPIC_THINKING_BUDGET_TOKENS}"
+                )
+            if budget >= self.max_tokens:
+                raise ValueError(
+                    f"Invalid 'thinking_budget_tokens' ({budget}): must be less than 'max_tokens' ({self.max_tokens})"
+                )
+            self.thinking_budget_tokens = budget
 
     @property
     def api_base_url(self) -> str:
@@ -514,32 +742,48 @@ class AnthropicBackend(BaseClient):
                 pass
 
     def list_models(self) -> List[Dict[str, Any]]:
-        data = self._make_request("/models", stream=False)
-        raw_models = data if isinstance(data, list) else data.get("data", [])
         models: List[Dict[str, Any]] = []
-        for m in raw_models:
-            if isinstance(m, str):
-                m_id = m
-                disp_name = m
-                desc = ""
-            elif isinstance(m, dict):
-                m_id = m.get("id") or m.get("name")
-                disp_name = m.get("display_name") or m.get("name") or m_id
-                desc = m.get("description", "")
-            else:
-                continue
+        after_id: Optional[str] = None
+        seen_cursors: Set[str] = set()
 
-            if not m_id:
-                continue
+        while True:
+            endpoint = "/models?limit=1000"
+            if after_id:
+                endpoint += f"&after_id={urllib.parse.quote(str(after_id))}"
+            data = self._make_request(endpoint, stream=False)
+            raw_models = data if isinstance(data, list) else data.get("data", [])
+            for m in raw_models:
+                if isinstance(m, str):
+                    m_id = m
+                    disp_name = m
+                    desc = ""
+                elif isinstance(m, dict):
+                    m_id = m.get("id") or m.get("name")
+                    disp_name = m.get("display_name") or m.get("name") or m_id
+                    desc = m.get("description", "")
+                else:
+                    continue
 
-            models.append(
-                {
-                    "name": m_id,
-                    "display_name": disp_name,
-                    "description": desc,
-                    "supported_actions": ["generateContent"],
-                }
-            )
+                if not m_id:
+                    continue
+
+                models.append(
+                    {
+                        "name": m_id,
+                        "display_name": disp_name,
+                        "description": desc,
+                        "supported_actions": ["generateContent"],
+                    }
+                )
+
+            if not isinstance(data, dict) or not data.get("has_more"):
+                break
+            last_id = data.get("last_id")
+            if not last_id or last_id in seen_cursors or not raw_models:
+                break
+            seen_cursors.add(last_id)
+            after_id = last_id
+
         return models
 
     def generate_content(
@@ -566,6 +810,11 @@ class AnthropicBackend(BaseClient):
         }
         if system_instruction:
             payload["system"] = system_instruction
+        if self.thinking_budget_tokens:
+            payload["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": self.thinking_budget_tokens,
+            }
 
         data = self._make_request("/messages", data=payload, stream=False)
         content = data.get("content", [])
@@ -604,6 +853,11 @@ class AnthropicBackend(BaseClient):
         }
         if system_instruction:
             payload["system"] = system_instruction
+        if self.thinking_budget_tokens:
+            payload["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": self.thinking_budget_tokens,
+            }
 
         resp = self._make_request("/messages", data=payload, stream=True)
         for event_data in self._read_sse_stream(resp):

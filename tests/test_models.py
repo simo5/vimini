@@ -30,9 +30,9 @@ GENAI_GLOBAL_CONFIG = {
 @pytest.fixture
 def genai_global_config():
     """Isolate tests from the developer's real global vimini config."""
-    with patch(
-        "vimini.common.config.load_global_config", return_value=GENAI_GLOBAL_CONFIG
-    ):
+    from vimini.common import config as common_config
+
+    with patch.object(common_config, "_GLOBAL_CONFIG", GENAI_GLOBAL_CONFIG):
         yield
 
 
@@ -310,7 +310,7 @@ def test_set_default_model_persists_and_switches(genai_global_config):
 
     with (
         patch.object(vim.current, "buffer", mock_buffer),
-        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config.get_global_config", return_value=config),
         patch("vimini.common.config.save_global_config") as mock_save_config,
         patch("vimini.main.send_setup") as mock_setup,
         patch("vimini.util.display_message") as mock_display,

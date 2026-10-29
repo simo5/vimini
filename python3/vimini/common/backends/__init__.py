@@ -25,8 +25,9 @@ from vimini.common.backends.anthropic_backend import (
     convert_tools_to_anthropic,
 )
 from vimini.common.config import (
+    get_global_config,
     load_global_config,
-    get_active_backend,
+    get_default_backend,
     load_backend_api_key,
     validate_global_config,
     backend_requires_api_key,
@@ -41,22 +42,23 @@ def get_backend(
     api_key_file: Optional[str] = None,
 ) -> BaseClient:
     """
-    Factory function returning a BaseClient instance for the requested or active backend.
+    Factory function returning a BaseClient instance for the requested or default backend.
     Confines all backend selection logic within generic backend methods.
     """
     if isinstance(config, dict) and "backends" in config:
         validate_global_config(config)
         global_cfg = config
         if backend_name is None:
-            backend_name = (
-                config.get("active_backend") or config.get("backend") or "Gemini"
-            )
+            backend_name = config.get("backend") or get_default_backend(global_cfg)
     else:
-        global_cfg = load_global_config(config_path=config_path)
+        if config_path is not None:
+            global_cfg = load_global_config(config_path=config_path)
+        else:
+            global_cfg = get_global_config()
         if backend_name is None and isinstance(config, dict):
             backend_name = config.get("backend")
         if backend_name is None:
-            backend_name = get_active_backend(global_cfg)
+            backend_name = get_default_backend(global_cfg)
 
     backends = global_cfg.get("backends", {})
     if backend_name not in backends:

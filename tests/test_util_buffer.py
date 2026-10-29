@@ -209,7 +209,7 @@ def test_get_model_name_non_gemini_backend_does_not_call_get_client():
     }
 
     with (
-        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config.get_global_config", return_value=config),
         patch("vimini.util.get_client") as mock_get_client,
     ):
         name = util.get_model_name()
@@ -238,7 +238,7 @@ def test_get_model_name_custom_genai_backend_calls_client():
     mock_client.models.get.return_value = mock_info
 
     with (
-        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config.get_global_config", return_value=config),
         patch("vimini.util.get_client", return_value=mock_client),
     ):
         assert util.get_model_name() == "Work Gemini Display"

@@ -53,13 +53,14 @@ def _get_backend_default_model(backend_name, backend_cfg, default_model):
 def initialize(api_key_file, model=None, logfile=None, backend=None):
     """
     Initializes the plugin with the user's API key file path and optional logfile path.
-    The model is always read from the active backend in the global config.
+    The default backend and model are read from the global config at startup.
     This function is called from the plugin's Vimscript entry point.
     """
     from vimini.common.config import (
         DEFAULT_MODEL,
         load_global_config,
-        get_active_backend,
+        set_global_config,
+        get_default_backend,
         backend_requires_api_key,
     )
 
@@ -67,8 +68,9 @@ def initialize(api_key_file, model=None, logfile=None, backend=None):
     active_b_cfg = {}
     try:
         cfg = load_global_config(api_key_file=api_key_file)
+        set_global_config(cfg)
         if not backend:
-            backend = get_active_backend(cfg)
+            backend = get_default_backend(cfg)
         util._BACKEND = backend
         active_b_cfg = cfg.get("backends", {}).get(backend, {})
         api_key_file = (
@@ -157,10 +159,10 @@ def send_setup():
             backend_name = None
     if not backend_name:
         try:
-            from vimini.common.config import load_global_config, get_active_backend
+            from vimini.common.config import get_global_config, get_default_backend
 
-            cfg = load_global_config()
-            backend_name = get_active_backend(cfg)
+            cfg = get_global_config()
+            backend_name = get_default_backend(cfg)
         except Exception:
             backend_name = "Gemini"
     req = {
@@ -175,12 +177,12 @@ def send_setup():
     return util.send_channel_request(req, silent=False)
 
 
-def apply_backend_config(cfg, backend_name, persist=True):
+def apply_backend_config(cfg, backend_name):
     """
     Applies a backend from a loaded global config to the current Vim/runtime state.
-    Optionally persists active_backend in the config file.
+    The active backend is a runtime-only variable and is not persisted to disk.
     """
-    from vimini.common.config import set_active_backend, DEFAULT_MODEL
+    from vimini.common.config import DEFAULT_MODEL
 
     backends = cfg.get("backends", {}) if isinstance(cfg, dict) else {}
     if backend_name not in backends:
@@ -189,9 +191,6 @@ def apply_backend_config(cfg, backend_name, persist=True):
 
     target_cfg = backends[backend_name]
     default_model = _get_backend_default_model(backend_name, target_cfg, DEFAULT_MODEL)
-
-    if persist:
-        set_active_backend(backend_name)
 
     util._BACKEND = backend_name
     try:
@@ -217,23 +216,25 @@ def apply_backend_config(cfg, backend_name, persist=True):
 def backend_command(backend_name=None):
     """
     Handles :ViminiBackend [backend_name].
-    Without arguments, echoes active backend and lists other available backends.
-    With argument, validates backend exists, updates active backend, updates model to default,
-    and sends setup to agent server.
+    Without arguments, echoes active runtime backend and lists other available backends.
+    With argument, validates backend exists, updates active runtime backend,
+    updates model to default, and sends setup to agent server.
     """
     from vimini.common.config import (
-        load_global_config,
-        get_active_backend,
+        get_global_config,
+        get_default_backend,
     )
 
     try:
-        cfg = load_global_config()
+        cfg = get_global_config()
     except Exception as e:
         util.display_message(f"Error loading configuration: {e}", error=True)
         return
 
-    active = get_active_backend(cfg)
     backends = cfg.get("backends", {})
+    active = getattr(util, "_BACKEND", None)
+    if not active or active not in backends:
+        active = get_default_backend(cfg)
 
     backend_name_str = str(backend_name).strip() if backend_name else ""
     if not backend_name_str:
@@ -257,7 +258,7 @@ def backend_command(backend_name=None):
         return
 
     try:
-        apply_backend_config(cfg, backend_name_str, persist=True)
+        apply_backend_config(cfg, backend_name_str)
     except Exception as e:
         util.display_message(f"Error setting active backend: {e}", error=True)
         return
@@ -271,10 +272,10 @@ def get_available_backends(arg_lead=""):
     """
     Returns a list of backend names matching arg_lead for command completion.
     """
-    from vimini.common.config import load_global_config
+    from vimini.common.config import get_global_config
 
     try:
-        cfg = load_global_config()
+        cfg = get_global_config()
         backends = list(cfg.get("backends", {}).keys())
         if arg_lead:
             return [b for b in backends if b.lower().startswith(arg_lead.lower())]
@@ -387,6 +388,7 @@ def reload_vimini():
         from vimini import util as old_util
 
         api_key_file = old_util._API_KEY_FILE
+        backend = old_util._BACKEND
         job_counter = old_util._JOB_COUNTER
         log_file = None
         if old_util._LOGGER and old_util._LOGGER.handlers:
@@ -398,6 +400,7 @@ def reload_vimini():
                     break
     except Exception:
         api_key_file = os.path.expanduser("~/.config/gemini.token")
+        backend = None
         job_counter = 0
         log_file = vim.eval("get(g:, 'vimini_log_file', '')")
         if not log_file or vim.eval("get(g:, 'vimini_logging', 'off')") != "on":
@@ -411,7 +414,7 @@ def reload_vimini():
     # Re-import main and re-initialize
     from vimini import main
 
-    main.initialize(api_key_file=api_key_file, logfile=log_file)
+    main.initialize(api_key_file=api_key_file, logfile=log_file, backend=backend)
 
     # Use the freshly imported util to display the message and restore _JOB_COUNTER
     from vimini import util as new_util
