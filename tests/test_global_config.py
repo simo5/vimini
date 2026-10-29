@@ -14,6 +14,8 @@ from vimini.common.config import (
     DEFAULT_GEMINI_KEY_FILE,
     DEFAULT_UI_CONFIG,
     create_default_global_config,
+    normalize_global_config_base_urls,
+    strip_api_version,
     validate_global_config,
     load_global_config,
     save_global_config,
@@ -83,6 +85,48 @@ def test_load_global_config_reads_existing(tmp_path):
     cfg = load_global_config(config_path=str(config_file))
     assert cfg["active_backend"] == "Custom 1"
     assert "Custom 1" in cfg["backends"]
+    # Legacy '/v1' suffixes are stripped from stored base URLs.
+    assert cfg["backends"]["Custom 1"]["base_url"] == "https://api.proxy.com"
+
+    # The normalized configuration is written back to disk.
+    with open(config_file, "r", encoding="utf-8") as f:
+        disk_data = json.load(f)
+    assert disk_data["backends"]["Custom 1"]["base_url"] == "https://api.proxy.com"
+
+
+def test_strip_api_version():
+    assert strip_api_version("https://api.openai.com/v1") == "https://api.openai.com"
+    assert strip_api_version("https://api.openai.com/v1/") == "https://api.openai.com"
+    assert strip_api_version("http://localhost:11434") == "http://localhost:11434"
+    assert strip_api_version("http://localhost:11434/") == "http://localhost:11434"
+    assert strip_api_version("https://host/api/v1") == "https://host/api"
+    # Only the configured version suffix is stripped.
+    assert strip_api_version("https://host/v1beta") == "https://host/v1beta"
+    assert strip_api_version("") == ""
+    assert strip_api_version(None) is None
+
+
+def test_normalize_global_config_base_urls():
+    config = {
+        "active_backend": "Proxy",
+        "backends": {
+            "Gemini": {"api": "genai", "base_url": "https://genai.example/v1"},
+            "Proxy": {"api": "openai", "base_url": "https://proxy.example/v1"},
+            "Claude": {"api": "anthropic", "base_url": "https://claude.example/v1/"},
+            "Local": {"api": "openai", "base_url": "http://localhost:11434"},
+        },
+    }
+
+    assert normalize_global_config_base_urls(config) is True
+    backends = config["backends"]
+    assert backends["Proxy"]["base_url"] == "https://proxy.example"
+    assert backends["Claude"]["base_url"] == "https://claude.example"
+    assert backends["Local"]["base_url"] == "http://localhost:11434"
+    # Non-versioned APIs are left untouched.
+    assert backends["Gemini"]["base_url"] == "https://genai.example/v1"
+
+    # Already normalized configurations report no changes.
+    assert normalize_global_config_base_urls(config) is False
 
 
 def test_load_global_config_invalid_json(tmp_path):

@@ -112,7 +112,9 @@ def test_anthropic_backend_init():
         },
         api_key="sk-ant-test",
     )
-    assert backend.base_url == "https://api.anthropic.com/v1"
+    assert backend.base_url == "https://api.anthropic.com"
+    assert backend.api_version == "v1"
+    assert backend.api_base_url == "https://api.anthropic.com/v1"
     assert backend.api_key == "sk-ant-test"
     assert backend.headers == {"X-Custom": "custom-val"}
     assert backend.max_tokens == 8192
@@ -493,7 +495,8 @@ def test_get_backend_factory_resolves_anthropic_backend():
     ):
         backend = get_backend("Claude", config=config)
     assert isinstance(backend, AnthropicBackend)
-    assert backend.base_url == "https://api.anthropic.com/v1"
+    assert backend.base_url == "https://api.anthropic.com"
+    assert backend.api_base_url == "https://api.anthropic.com/v1"
     assert backend.api_key == "fake-ant-key"
 
 
@@ -530,4 +533,5 @@ def test_anthropic_backend_keyless_allowed():
     backend = get_backend("LocalClaude", config=config)
     assert isinstance(backend, AnthropicBackend)
     assert backend.api_key is None
-    assert backend.base_url == "http://localhost:8000/v1"
+    assert backend.base_url == "http://localhost:8000"
+    assert backend.api_base_url == "http://localhost:8000/v1"

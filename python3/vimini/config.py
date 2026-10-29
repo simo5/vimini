@@ -16,6 +16,7 @@ from vimini.common.config import (
     get_global_config_path,
     load_global_config,
     save_global_config,
+    strip_api_version,
     validate_global_config,
 )
 
@@ -397,6 +398,10 @@ def edit_global_config_option():
                     return
                 backend_cfg.pop(field, None)
             else:
+                if field == "base_url":
+                    # The API version is applied by the backend, so it is never
+                    # stored as part of the configured base URL.
+                    new_val = strip_api_version(new_val)
                 backend_cfg[field] = new_val
             _refresh_global_config_buffer(win, line_num, col)
             util.display_message(f"Updated '{backend_name}.{field}'.")
@@ -453,7 +458,9 @@ def add_global_backend():
         if default_model:
             backend_cfg["default_model"] = default_model
         if api in ("openai", "anthropic"):
-            base_url = _to_str(vim.eval("input('Base URL: ')")).strip()
+            base_url = strip_api_version(
+                _to_str(vim.eval("input('Base URL (no API version suffix): ')")).strip()
+            )
             if base_url:
                 backend_cfg["base_url"] = base_url
         backends[name] = backend_cfg
