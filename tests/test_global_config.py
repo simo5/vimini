@@ -17,11 +17,13 @@ from vimini.common.config import (
     normalize_global_config_base_urls,
     strip_api_version,
     validate_global_config,
+    get_global_config,
+    set_global_config,
     load_global_config,
     save_global_config,
-    get_active_backend,
-    get_active_backend_config,
-    set_active_backend,
+    get_default_backend,
+    get_default_backend_config,
+    set_default_backend,
     load_backend_api_key,
     backend_requires_api_key,
 )
@@ -29,7 +31,8 @@ from vimini.common.config import (
 
 def test_create_default_global_config():
     cfg = create_default_global_config()
-    assert cfg["active_backend"] == DEFAULT_BACKEND
+    assert cfg["default_backend"] == DEFAULT_BACKEND
+    assert "active_backend" not in cfg
     assert DEFAULT_BACKEND in cfg["backends"]
     assert "ui" in cfg
     assert cfg["ui"]["thinking_color"] == DEFAULT_UI_CONFIG["thinking_color"]
@@ -53,7 +56,8 @@ def test_load_global_config_creates_default_when_missing(tmp_path):
 
     cfg = load_global_config(config_path=str(config_file), default_model="gemini-test")
     assert config_file.exists()
-    assert cfg["active_backend"] == "Gemini"
+    assert cfg["default_backend"] == "Gemini"
+    assert "active_backend" not in cfg
     assert cfg["backends"]["Gemini"]["default_model"] == "gemini-test"
 
     # Verify content written to disk
@@ -65,7 +69,7 @@ def test_load_global_config_creates_default_when_missing(tmp_path):
 def test_load_global_config_reads_existing(tmp_path):
     config_file = tmp_path / "config.json"
     data = {
-        "active_backend": "Custom 1",
+        "default_backend": "Custom 1",
         "backends": {
             "Gemini": {
                 "api": "genai",
@@ -83,7 +87,7 @@ def test_load_global_config_reads_existing(tmp_path):
     config_file.write_text(json.dumps(data), encoding="utf-8")
 
     cfg = load_global_config(config_path=str(config_file))
-    assert cfg["active_backend"] == "Custom 1"
+    assert cfg["default_backend"] == "Custom 1"
     assert "Custom 1" in cfg["backends"]
     # Legacy '/v1' suffixes are stripped from stored base URLs.
     assert cfg["backends"]["Custom 1"]["base_url"] == "https://api.proxy.com"
@@ -92,6 +96,32 @@ def test_load_global_config_reads_existing(tmp_path):
     with open(config_file, "r", encoding="utf-8") as f:
         disk_data = json.load(f)
     assert disk_data["backends"]["Custom 1"]["base_url"] == "https://api.proxy.com"
+
+
+def test_load_global_config_preserves_and_ignores_legacy_active_backend(tmp_path):
+    config_file = tmp_path / "config.json"
+    data = {
+        "active_backend": "Custom 1",
+        "backends": {
+            "Gemini": {
+                "api": "genai",
+                "api_key_file": "~/.config/gemini.token",
+                "default_model": "gemini-3.8-flash",
+            },
+            "Custom 1": {
+                "api": "openai",
+                "base_url": "https://api.proxy.com",
+                "api_key_file": "~/.config/proxyapi.token",
+                "default_model": "gpt-4o",
+            },
+        },
+    }
+    config_file.write_text(json.dumps(data), encoding="utf-8")
+
+    cfg = load_global_config(config_path=str(config_file))
+    # active_backend is not removed, but is ignored when resolving the default backend
+    assert cfg["active_backend"] == "Custom 1"
+    assert get_default_backend(cfg) == "Gemini"
 
 
 def test_strip_api_version():
@@ -108,7 +138,7 @@ def test_strip_api_version():
 
 def test_normalize_global_config_base_urls():
     config = {
-        "active_backend": "Proxy",
+        "default_backend": "Proxy",
         "backends": {
             "Gemini": {"api": "genai", "base_url": "https://genai.example/v1"},
             "Proxy": {"api": "openai", "base_url": "https://proxy.example/v1"},
@@ -141,24 +171,42 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="must be a dictionary"):
         validate_global_config(["not a dict"])
 
-    with pytest.raises(ValueError, match="non-empty 'active_backend'"):
-        validate_global_config({"active_backend": "", "backends": {}})
-
     with pytest.raises(ValueError, match="non-empty 'backends' dictionary"):
-        validate_global_config({"active_backend": "Gemini", "backends": {}})
+        validate_global_config({"default_backend": "Gemini", "backends": {}})
+
+    with pytest.raises(ValueError, match="non-empty 'default_backend'"):
+        validate_global_config(
+            {
+                "default_backend": "",
+                "backends": {
+                    "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"}
+                },
+            }
+        )
 
     with pytest.raises(ValueError, match="not defined in 'backends'"):
         validate_global_config(
             {
-                "active_backend": "Unknown",
+                "default_backend": "Unknown",
                 "backends": {"Gemini": {"api": "genai"}},
             }
         )
 
+    # Legacy active_backend in config is ignored and not removed
+    legacy_cfg = {
+        "default_backend": "Gemini",
+        "active_backend": "StaleBackend",
+        "backends": {
+            "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"}
+        },
+    }
+    validated = validate_global_config(legacy_cfg)
+    assert validated["active_backend"] == "StaleBackend"
+
     with pytest.raises(ValueError, match="must be a dictionary"):
         validate_global_config(
             {
-                "active_backend": "Gemini",
+                "default_backend": "Gemini",
                 "backends": {"Gemini": "not a dict"},
             }
         )
@@ -166,7 +214,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="must specify a non-empty 'api' type"):
         validate_global_config(
             {
-                "active_backend": "Gemini",
+                "default_backend": "Gemini",
                 "backends": {"Gemini": {"api": ""}},
             }
         )
@@ -174,7 +222,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="api 'unsupported' is not supported"):
         validate_global_config(
             {
-                "active_backend": "Unsupported",
+                "default_backend": "Unsupported",
                 "backends": {
                     "Unsupported": {
                         "api": "unsupported",
@@ -187,7 +235,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
         validate_global_config(
             {
-                "active_backend": "Claude",
+                "default_backend": "Claude",
                 "backends": {
                     "Claude": {
                         "api": "anthropic",
@@ -200,7 +248,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="must specify a non-empty 'default_model'"):
         validate_global_config(
             {
-                "active_backend": "Claude",
+                "default_backend": "Claude",
                 "backends": {
                     "Claude": {
                         "api": "anthropic",
@@ -212,7 +260,7 @@ def test_validate_global_config_errors():
 
     validate_global_config(
         {
-            "active_backend": "Claude",
+            "default_backend": "Claude",
             "backends": {
                 "Claude": {
                     "api": "anthropic",
@@ -223,17 +271,68 @@ def test_validate_global_config_errors():
         }
     )
 
+    with pytest.raises(ValueError, match="'max_tokens' must be a positive integer"):
+        validate_global_config(
+            {
+                "default_backend": "Claude",
+                "backends": {
+                    "Claude": {
+                        "api": "anthropic",
+                        "api_key_file": "~/.config/anthropic.token",
+                        "default_model": "claude-3-7-sonnet-20250219",
+                        "max_tokens": "not-an-int",
+                    }
+                },
+            }
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="'thinking_budget_tokens' \\(512\\) must be at least 1024",
+    ):
+        validate_global_config(
+            {
+                "default_backend": "Claude",
+                "backends": {
+                    "Claude": {
+                        "api": "anthropic",
+                        "api_key_file": "~/.config/anthropic.token",
+                        "default_model": "claude-3-7-sonnet-20250219",
+                        "thinking_budget_tokens": 512,
+                    }
+                },
+            }
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="'thinking_budget_tokens' \\(4096\\) must be less than 'max_tokens' \\(4096\\)",
+    ):
+        validate_global_config(
+            {
+                "default_backend": "Claude",
+                "backends": {
+                    "Claude": {
+                        "api": "anthropic",
+                        "api_key_file": "~/.config/anthropic.token",
+                        "default_model": "claude-3-7-sonnet-20250219",
+                        "thinking_budget_tokens": 4096,
+                    }
+                },
+            }
+        )
+
     with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
         validate_global_config(
             {
-                "active_backend": "Gemini",
+                "default_backend": "Gemini",
                 "backends": {"Gemini": {"api": "genai"}},
             }
         )
 
     validate_global_config(
         {
-            "active_backend": "Local",
+            "default_backend": "Local",
             "backends": {
                 "Local": {
                     "api": "openai",
@@ -247,7 +346,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="must specify a non-empty 'default_model'"):
         validate_global_config(
             {
-                "active_backend": "Local",
+                "default_backend": "Local",
                 "backends": {
                     "Local": {
                         "api": "openai",
@@ -260,7 +359,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="must specify a non-empty 'api_key_file'"):
         validate_global_config(
             {
-                "active_backend": "Gemini",
+                "default_backend": "Gemini",
                 "backends": {"Gemini": {"api": "genai", "api_key_file": ""}},
             }
         )
@@ -268,7 +367,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="'api_key_file' must be a string path"):
         validate_global_config(
             {
-                "active_backend": "Gemini",
+                "default_backend": "Gemini",
                 "backends": {"Gemini": {"api": "genai", "api_key_file": 123}},
             }
         )
@@ -277,7 +376,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="'ui' must be a dictionary"):
         validate_global_config(
             {
-                "active_backend": "Gemini",
+                "default_backend": "Gemini",
                 "backends": {"Gemini": {"api": "genai", "api_key_file": "~/.token"}},
                 "ui": "invalid",
             }
@@ -286,7 +385,7 @@ def test_validate_global_config_errors():
     with pytest.raises(ValueError, match="'ui.thinking_color' must be a string"):
         validate_global_config(
             {
-                "active_backend": "Gemini",
+                "default_backend": "Gemini",
                 "backends": {"Gemini": {"api": "genai", "api_key_file": "~/.token"}},
                 "ui": {"thinking_color": 123},
             }
@@ -306,15 +405,56 @@ def test_save_global_config(tmp_path):
     assert saved == data
 
 
-def test_get_active_backend():
-    assert get_active_backend({"active_backend": "MyBackend"}) == "MyBackend"
-    assert get_active_backend({}) == DEFAULT_BACKEND
-    assert get_active_backend(None) == DEFAULT_BACKEND
+def test_get_global_config_reads_file_once_and_uses_memory_variable(tmp_path):
+    from vimini.common import config as common_config
+
+    config_file = tmp_path / "config.json"
+    data = create_default_global_config(default_model="cached-model")
+    config_file.write_text(json.dumps(data), encoding="utf-8")
+
+    with (
+        patch.object(common_config, "DEFAULT_CONFIG_PATH", str(config_file)),
+        patch.object(common_config, "_GLOBAL_CONFIG", None),
+    ):
+        first = get_global_config()
+        assert first["backends"]["Gemini"]["default_model"] == "cached-model"
+        assert common_config._GLOBAL_CONFIG is first
+
+        # Modify file on disk; subsequent get_global_config() calls must return
+        # the in-memory global variable without re-reading the file.
+        config_file.write_text("invalid json {{{", encoding="utf-8")
+        second = get_global_config()
+        assert second is first
 
 
-def test_get_active_backend_config():
+def test_get_default_backend():
+    assert get_default_backend({"default_backend": "MyBackend"}) == "MyBackend"
+    # Ignores active_backend
+    assert (
+        get_default_backend(
+            {
+                "active_backend": "Ignored",
+                "default_backend": "ConfiguredDefault",
+            }
+        )
+        == "ConfiguredDefault"
+    )
+    assert (
+        get_default_backend(
+            {
+                "active_backend": "Ignored",
+                "backends": {"Gemini": {}, "Ignored": {}},
+            }
+        )
+        == "Gemini"
+    )
+    assert get_default_backend({}) == DEFAULT_BACKEND
+    assert get_default_backend(None) == DEFAULT_BACKEND
+
+
+def test_get_default_backend_config():
     cfg = {
-        "active_backend": "Proxy",
+        "default_backend": "Proxy",
         "backends": {
             "Proxy": {
                 "api": "openai",
@@ -324,19 +464,19 @@ def test_get_active_backend_config():
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
         },
     }
-    name, b_cfg = get_active_backend_config(cfg)
+    name, b_cfg = get_default_backend_config(cfg)
     assert name == "Proxy"
     assert b_cfg["api"] == "openai"
 
-    name, b_cfg = get_active_backend_config(None)
+    name, b_cfg = get_default_backend_config(None)
     assert name is None
     assert b_cfg is None
 
 
-def test_set_active_backend(tmp_path):
+def test_set_default_backend(tmp_path):
     config_file = tmp_path / "config.json"
     data = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
             "Custom 1": {
@@ -348,21 +488,23 @@ def test_set_active_backend(tmp_path):
     }
     save_global_config(data, config_path=str(config_file))
 
-    updated = set_active_backend("Custom 1", config_path=str(config_file))
-    assert updated["active_backend"] == "Custom 1"
+    updated = set_default_backend("Custom 1", config_path=str(config_file))
+    assert updated["default_backend"] == "Custom 1"
+    assert "active_backend" not in updated
 
     # Verify persisted
     reloaded = load_global_config(config_path=str(config_file))
-    assert reloaded["active_backend"] == "Custom 1"
+    assert reloaded["default_backend"] == "Custom 1"
+    assert "active_backend" not in reloaded
 
 
-def test_set_active_backend_unknown(tmp_path):
+def test_set_default_backend_unknown(tmp_path):
     config_file = tmp_path / "config.json"
     data = create_default_global_config()
     save_global_config(data, config_path=str(config_file))
 
     with pytest.raises(ValueError, match="Backend 'NonExistent' not found"):
-        set_active_backend("NonExistent", config_path=str(config_file))
+        set_default_backend("NonExistent", config_path=str(config_file))
 
 
 def test_load_backend_api_key(tmp_path):

@@ -160,7 +160,7 @@ customizations.
     Vimini manages global settings and model provider backends in `~/.var/vimini/config.json`. If this file does not exist, Vimini automatically generates a default configuration on startup:
     ```json
     {
-      "active_backend": "Gemini",
+      "default_backend": "Gemini",
       "backends": {
         "Gemini": {
           "api": "genai",
@@ -193,7 +193,7 @@ Opens an interactive configuration editor in a new split window to configure glo
 
 **How to use the global configuration manager:**
 *   Move the cursor to any configuration option or backend line.
-*   **`<Enter>` or `e`**: Edits the selected value. On `active_backend`, enter one of the configured backend names. On a backend header, rename the backend. Under `UI PREFERENCES`, customize colors (e.g. `thinking_color`, `prompt_color`, `waiting_color`, `service_color`, `error_color`, `prompt_hint_color`).
+*   **`<Enter>` or `e`**: Edits the selected value. On `default_backend`, enter one of the configured backend names. On a backend header, rename the backend. Under `UI PREFERENCES`, customize colors (e.g. `thinking_color`, `prompt_color`, `waiting_color`, `service_color`, `error_color`, `prompt_hint_color`).
 *   **`a`**: Adds a new backend and prompts for API type, default model, API key file, and base URL for OpenAI-compatible or Anthropic backends.
 *   **`d`**: Clears the selected backend field, deletes a backend after confirmation, or resets a UI preference back to default. The last backend cannot be deleted.
 *   **`r`**: Resets all global configuration options to their last saved state.

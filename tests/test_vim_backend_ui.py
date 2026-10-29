@@ -13,8 +13,9 @@ from vimini.models import build_models_buffer
 
 
 def test_backend_command_without_arguments():
+    util._BACKEND = "Gemini"
     config = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
             "Custom 1": {
@@ -31,25 +32,29 @@ def test_backend_command_without_arguments():
     }
 
     with (
-        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config._GLOBAL_CONFIG", config),
+        patch("vimini.common.config.load_global_config") as mock_load,
         patch("vimini.util.display_message") as mock_display,
     ):
         main.backend_command(None)
         mock_display.assert_called_once()
+        mock_load.assert_not_called()
         msg = mock_display.call_args[0][0]
         assert "Gemini (available: Custom 1, Custom 2)" in msg
 
 
 def test_backend_command_without_arguments_no_others():
+    util._BACKEND = "Gemini"
     config = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
         },
     }
 
     with (
-        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config._GLOBAL_CONFIG", config),
+        patch("vimini.common.config.load_global_config") as mock_load,
         patch("vimini.util.display_message") as mock_display,
     ):
         main.backend_command("")
@@ -59,15 +64,17 @@ def test_backend_command_without_arguments_no_others():
 
 
 def test_backend_command_without_arguments_whitespace():
+    util._BACKEND = "Gemini"
     config = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
         },
     }
 
     with (
-        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config._GLOBAL_CONFIG", config),
+        patch("vimini.common.config.load_global_config") as mock_load,
         patch("vimini.util.display_message") as mock_display,
     ):
         main.backend_command("   ")
@@ -76,9 +83,10 @@ def test_backend_command_without_arguments_whitespace():
         assert "Gemini (no other backends configured)" in msg
 
 
-def test_backend_command_switch_success():
+def test_backend_command_switch_success_does_not_persist_to_config():
+    util._BACKEND = "Gemini"
     config = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {
                 "api": "genai",
@@ -94,14 +102,18 @@ def test_backend_command_switch_success():
     }
 
     with (
-        patch("vimini.common.config.load_global_config", return_value=config),
-        patch("vimini.common.config.set_active_backend") as mock_set_active,
+        patch("vimini.common.config._GLOBAL_CONFIG", config),
+        patch("vimini.common.config.load_global_config") as mock_load,
+        patch("vimini.common.config.save_global_config") as mock_save,
         patch("vimini.main.send_setup") as mock_send_setup,
         patch("vimini.util.display_message") as mock_display,
     ):
         main.backend_command("Custom 1")
 
-        mock_set_active.assert_called_once_with("Custom 1")
+        mock_load.assert_not_called()
+        mock_save.assert_not_called()
+        assert config["default_backend"] == "Gemini"
+        assert "active_backend" not in config
         assert util._BACKEND == "Custom 1"
         assert util._MODEL == "gpt-4o"
         assert util._API_KEY_FILE == os.path.expanduser("~/.config/proxy.token")
@@ -113,10 +125,16 @@ def test_backend_command_switch_success():
             in mock_display.call_args[0][0]
         )
 
+        # Calling :ViminiBackend without arguments now reports the runtime active backend
+        mock_display.reset_mock()
+        main.backend_command(None)
+        mock_display.assert_called_once()
+        assert "Custom 1 (available: Gemini)" in mock_display.call_args[0][0]
+
 
 def test_backend_command_switch_resets_key_and_model_when_missing():
     config = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {
                 "api": "genai",
@@ -138,14 +156,16 @@ def test_backend_command_switch_resets_key_and_model_when_missing():
     util._GENAI_CLIENT = object()
 
     with (
-        patch("vimini.common.config.load_global_config", return_value=config),
-        patch("vimini.common.config.set_active_backend") as mock_set_active,
+        patch("vimini.common.config._GLOBAL_CONFIG", config),
+        patch("vimini.common.config.load_global_config") as mock_load,
+        patch("vimini.common.config.save_global_config") as mock_save,
         patch("vimini.main.send_setup") as mock_send_setup,
         patch("vimini.util.display_message") as mock_display,
     ):
         main.backend_command("Local")
 
-        mock_set_active.assert_called_once_with("Local")
+        mock_load.assert_not_called()
+        mock_save.assert_not_called()
         assert util._BACKEND == "Local"
         assert util._MODEL == "llama3"
         assert util._MODEL_NAME is None
@@ -157,14 +177,14 @@ def test_backend_command_switch_resets_key_and_model_when_missing():
 
 def test_backend_command_switch_invalid():
     config = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
         },
     }
 
     with (
-        patch("vimini.common.config.load_global_config", return_value=config),
+        patch("vimini.common.config._GLOBAL_CONFIG", config),
         patch("vimini.util.display_message") as mock_display,
     ):
         main.backend_command("NonExistent")
@@ -175,7 +195,7 @@ def test_backend_command_switch_invalid():
 
 def test_get_available_backends():
     config = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
         "backends": {
             "Gemini": {"api": "genai", "api_key_file": "~/.config/gemini.token"},
             "Custom 1": {
@@ -191,12 +211,16 @@ def test_get_available_backends():
         },
     }
 
-    with patch("vimini.common.config.load_global_config", return_value=config):
+    with (
+        patch("vimini.common.config._GLOBAL_CONFIG", config),
+        patch("vimini.common.config.load_global_config") as mock_load,
+    ):
         all_b = main.get_available_backends()
         assert all_b == ["Gemini", "Custom 1", "Custom 2"]
 
         cust = main.get_available_backends("cust")
         assert cust == ["Custom 1", "Custom 2"]
+        mock_load.assert_not_called()
 
 
 def test_build_models_buffer_openai_single_group():
@@ -242,15 +266,21 @@ def test_build_models_buffer_genai_categories():
     assert any("Only 'Multimodal & Text Generation'" in line for line in buffer_lines)
 
 
-def test_initialize_uses_global_config_model_not_vim_config():
+def test_initialize_uses_global_config_default_backend_and_ignores_active_backend():
     config = {
-        "active_backend": "Gemini",
+        "default_backend": "Gemini",
+        "active_backend": "OtherBackend",
         "backends": {
             "Gemini": {
                 "api": "genai",
                 "api_key_file": "~/.config/gemini.token",
                 "default_model": "gemini-global-default",
-            }
+            },
+            "OtherBackend": {
+                "api": "openai",
+                "api_key_file": "~/.config/other.token",
+                "default_model": "other-model",
+            },
         },
     }
 
@@ -268,6 +298,8 @@ def test_initialize_uses_global_config_model_not_vim_config():
     assert util._BACKEND == "Gemini"
     assert util._MODEL == "gemini-global-default"
     assert util._API_KEY_FILE == os.path.expanduser("~/.config/gemini.token")
+    # active_backend is not removed from config
+    assert config["active_backend"] == "OtherBackend"
 
 
 def test_send_setup_does_not_send_api_key_file():
@@ -310,7 +342,7 @@ def test_initialize_reports_invalid_global_config():
 
 def test_initialize_does_not_warn_for_keyless_openai_backend():
     config = {
-        "active_backend": "Local",
+        "default_backend": "Local",
         "backends": {
             "Local": {
                 "api": "openai",
@@ -340,7 +372,7 @@ def test_initialize_does_not_warn_for_keyless_openai_backend():
 
 def test_initialize_warns_with_backend_specific_api_key_message():
     config = {
-        "active_backend": "Remote",
+        "default_backend": "Remote",
         "backends": {
             "Remote": {
                 "api": "openai",
@@ -367,7 +399,7 @@ def test_initialize_warns_with_backend_specific_api_key_message():
 
 def test_initialize_warns_when_api_key_file_specified_without_requires_api_key():
     config = {
-        "active_backend": "Remote",
+        "default_backend": "Remote",
         "backends": {
             "Remote": {
                 "api": "openai",

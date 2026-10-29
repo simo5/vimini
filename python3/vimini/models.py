@@ -148,11 +148,11 @@ def build_models_buffer(models, current_model, backend_name=None, api_type=None)
     Returns (buffer_lines, line_map, current_model_line).
     """
     if backend_name is None or api_type is None:
-        from vimini.common.config import load_global_config, get_active_backend
+        from vimini.common.config import get_global_config, get_default_backend
 
         try:
-            cfg = load_global_config()
-            backend_name = getattr(util, "_BACKEND", None) or get_active_backend(cfg)
+            cfg = get_global_config()
+            backend_name = getattr(util, "_BACKEND", None) or get_default_backend(cfg)
             b_cfg = cfg.get("backends", {}).get(backend_name, {})
             api_type = b_cfg.get("api", "genai")
         except Exception:
@@ -389,12 +389,12 @@ def set_default_model():
 
         model_name = _normalized_model_name(entry)
 
-        from vimini.common.config import load_global_config, save_global_config
-        from vimini.common.config import get_active_backend
+        from vimini.common.config import get_global_config, save_global_config
+        from vimini.common.config import get_default_backend
         from vimini import main
 
-        cfg = load_global_config()
-        backend_name = getattr(util, "_BACKEND", None) or get_active_backend(cfg)
+        cfg = get_global_config()
+        backend_name = getattr(util, "_BACKEND", None) or get_default_backend(cfg)
         backends = cfg.get("backends", {})
         if backend_name not in backends:
             util.display_message(

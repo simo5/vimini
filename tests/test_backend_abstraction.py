@@ -200,7 +200,7 @@ def test_get_backend_allows_openai_without_api_key_when_not_required():
 def test_get_backend_surfaces_global_config_load_errors():
     with (
         patch(
-            "vimini.common.backends.load_global_config",
+            "vimini.common.backends.get_global_config",
             side_effect=ValueError("bad config"),
         ),
         pytest.raises(ValueError, match="bad config"),

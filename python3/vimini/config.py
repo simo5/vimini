@@ -13,9 +13,13 @@ from vimini.common.util import (
     get_project_name,
 )
 from vimini.common.config import (
+    MIN_ANTHROPIC_THINKING_BUDGET_TOKENS,
+    get_default_backend,
+    get_global_config,
     get_global_config_path,
-    load_global_config,
+    parse_positive_int,
     save_global_config,
+    set_global_config,
     strip_api_version,
     validate_global_config,
 )
@@ -110,6 +114,10 @@ def _ordered_backend_fields(backend_cfg):
             fields.append(key)
     if backend_cfg.get("api") in ("openai", "anthropic") or "base_url" in backend_cfg:
         fields.append("base_url")
+    if backend_cfg.get("api") == "anthropic":
+        for key in ("max_tokens", "thinking_budget_tokens"):
+            if key not in fields:
+                fields.append(key)
     for key in backend_cfg.keys():
         if key not in fields:
             fields.append(key)
@@ -118,7 +126,7 @@ def _ordered_backend_fields(backend_cfg):
 
 def _draw_global_config_listing(config_data, config_path=None):
     config_path = config_path or get_global_config_path()
-    active_backend = config_data.get("active_backend", "")
+    default_backend = get_default_backend(config_data)
     backends = config_data.get("backends", {})
     ui_cfg = config_data.get("ui", {})
     if not isinstance(ui_cfg, dict):
@@ -143,10 +151,23 @@ def _draw_global_config_listing(config_data, config_path=None):
     _add_mapped_line(
         lines,
         line_map,
-        f"  active_backend = {active_backend or '(not set)'}",
-        ("global", "active_backend"),
+        f"  default_backend = {default_backend or '(not set)'}",
+        ("global", "default_backend"),
     )
-    _add_mapped_line(lines, line_map, "    # Currently selected model backend")
+    _add_mapped_line(lines, line_map, "    # Default model backend used at startup")
+    if "active_backend" in config_data:
+        active_backend = config_data.get("active_backend", "")
+        _add_mapped_line(
+            lines,
+            line_map,
+            f"  active_backend = {active_backend or '(not set)'}",
+            ("global", "active_backend"),
+        )
+        _add_mapped_line(
+            lines,
+            line_map,
+            "    # Deprecated setting (ignored); press d to delete",
+        )
     _add_mapped_line(lines, line_map, "")
     _add_mapped_line(lines, line_map, "> UI PREFERENCES")
 
@@ -185,7 +206,7 @@ def _draw_global_config_listing(config_data, config_path=None):
             if not isinstance(backend_cfg, dict):
                 backend_cfg = {}
             _add_mapped_line(lines, line_map, "")
-            marker = "*" if backend_name == active_backend else " "
+            marker = "*" if backend_name == default_backend else " "
             _add_mapped_line(
                 lines,
                 line_map,
@@ -289,7 +310,7 @@ def global_config_command():
     util.log_info("global_config_command()")
     try:
         config_path = get_global_config_path()
-        data = load_global_config(config_path=config_path)
+        data = get_global_config()
         _VIMINI_ORIGINAL_GLOBAL_CONFIG = copy.deepcopy(data)
         _VIMINI_PENDING_GLOBAL_CONFIG = copy.deepcopy(data)
         _VIMINI_GLOBAL_CONFIG_PATH = config_path
@@ -347,21 +368,27 @@ def edit_global_config_option():
         backends = _VIMINI_PENDING_GLOBAL_CONFIG.setdefault("backends", {})
         kind = target[0]
 
-        if kind == "global" and target[1] == "active_backend":
+        if kind == "global" and target[1] == "default_backend":
             names = list(backends.keys())
-            current = _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend", "")
-            prompt = f"Active backend ({', '.join(names)}): "
+            current = get_default_backend(_VIMINI_PENDING_GLOBAL_CONFIG)
+            prompt = f"Default backend ({', '.join(names)}): "
             new_val = _to_str(
                 vim.eval(f"input({_vim_string(prompt)}, {_vim_string(current)})")
             ).strip()
             if new_val and new_val in backends:
-                _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = new_val
+                _VIMINI_PENDING_GLOBAL_CONFIG["default_backend"] = new_val
                 _refresh_global_config_buffer(win, line_num, col)
-                util.display_message(f"Set active backend to '{new_val}'.")
+                util.display_message(f"Set default backend to '{new_val}'.")
             elif new_val:
                 util.display_message(
                     f"Backend '{new_val}' is not configured.", error=True
                 )
+            return
+
+        if kind == "global" and target[1] == "active_backend":
+            util.display_message(
+                "active_backend is deprecated and ignored; press 'd' to delete it."
+            )
             return
 
         if kind == "ui":
@@ -402,6 +429,18 @@ def edit_global_config_option():
                     # The API version is applied by the backend, so it is never
                     # stored as part of the configured base URL.
                     new_val = strip_api_version(new_val)
+                elif field in ("max_tokens", "thinking_budget_tokens"):
+                    new_val = parse_positive_int(
+                        new_val, field, backend_name=backend_name
+                    )
+                    if (
+                        field == "thinking_budget_tokens"
+                        and new_val < MIN_ANTHROPIC_THINKING_BUDGET_TOKENS
+                    ):
+                        raise ValueError(
+                            f"Backend '{backend_name}' 'thinking_budget_tokens' ({new_val}) "
+                            f"must be at least {MIN_ANTHROPIC_THINKING_BUDGET_TOKENS}"
+                        )
                 backend_cfg[field] = new_val
             _refresh_global_config_buffer(win, line_num, col)
             util.display_message(f"Updated '{backend_name}.{field}'.")
@@ -419,8 +458,8 @@ def edit_global_config_option():
                     )
                     return
                 backends[new_name] = backends.pop(backend_name)
-                if _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend") == backend_name:
-                    _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = new_name
+                if get_default_backend(_VIMINI_PENDING_GLOBAL_CONFIG) == backend_name:
+                    _VIMINI_PENDING_GLOBAL_CONFIG["default_backend"] = new_name
                 _refresh_global_config_buffer(win, line_num, col)
                 util.display_message(
                     f"Renamed backend '{backend_name}' to '{new_name}'."
@@ -464,8 +503,8 @@ def add_global_backend():
             if base_url:
                 backend_cfg["base_url"] = base_url
         backends[name] = backend_cfg
-        if not _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend"):
-            _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = name
+        if not _VIMINI_PENDING_GLOBAL_CONFIG.get("default_backend"):
+            _VIMINI_PENDING_GLOBAL_CONFIG["default_backend"] = name
         _refresh_global_config_buffer(vim.current.window, *vim.current.window.cursor)
         util.display_message(f"Added backend '{name}'.")
     except Exception as e:
@@ -561,16 +600,25 @@ def delete_or_clear_global_config_option():
                 )
                 return
             if prompt_delete_backend_dialog(backend_name):
+                default_before = get_default_backend(_VIMINI_PENDING_GLOBAL_CONFIG)
                 backends.pop(backend_name, None)
-                if _VIMINI_PENDING_GLOBAL_CONFIG.get("active_backend") == backend_name:
-                    _VIMINI_PENDING_GLOBAL_CONFIG["active_backend"] = next(
+                if default_before == backend_name:
+                    _VIMINI_PENDING_GLOBAL_CONFIG["default_backend"] = next(
                         iter(backends.keys())
                     )
                 _refresh_global_config_buffer(win, line_num, col)
                 util.display_message(f"Deleted backend '{backend_name}'.")
+        elif kind == "global" and target[1] == "active_backend":
+            if "default_backend" not in _VIMINI_PENDING_GLOBAL_CONFIG:
+                _VIMINI_PENDING_GLOBAL_CONFIG["default_backend"] = get_default_backend(
+                    _VIMINI_PENDING_GLOBAL_CONFIG
+                )
+            _VIMINI_PENDING_GLOBAL_CONFIG.pop("active_backend", None)
+            _refresh_global_config_buffer(win, line_num, col)
+            util.display_message("Deleted 'active_backend' from configuration.")
         else:
             util.display_message(
-                "active_backend cannot be cleared; select another backend instead."
+                "default_backend cannot be cleared; select another backend instead."
             )
     except Exception as e:
         util.display_message(f"Error updating global configuration: {e}", error=True)
@@ -1393,9 +1441,12 @@ def _apply_saved_global_config_runtime(config_data):
     try:
         from vimini import main
 
-        backend_name = config_data.get("active_backend")
-        if backend_name:
-            main.apply_backend_config(config_data, backend_name, persist=False)
+        backends = config_data.get("backends", {})
+        backend_name = getattr(util, "_BACKEND", None)
+        if not backend_name or backend_name not in backends:
+            backend_name = get_default_backend(config_data)
+        if backend_name and backend_name in backends:
+            main.apply_backend_config(config_data, backend_name)
         util.setup_highlights(config_data)
     except Exception as e:
         util.log_info(f"Failed to apply saved global config at runtime: {e}")
@@ -1467,6 +1518,7 @@ def confirm_global_config():
             if save_global_config(
                 _VIMINI_PENDING_GLOBAL_CONFIG, config_path=_VIMINI_GLOBAL_CONFIG_PATH
             ):
+                set_global_config(copy.deepcopy(_VIMINI_PENDING_GLOBAL_CONFIG))
                 _apply_saved_global_config_runtime(_VIMINI_PENDING_GLOBAL_CONFIG)
                 util.display_message(
                     "Global configuration updated and saved.", history=True
