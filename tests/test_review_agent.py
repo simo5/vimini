@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 import os
 import pytest
 from unittest.mock import MagicMock, patch, call
@@ -261,6 +262,24 @@ def test_construct_review_prompt_max_turns():
         "Prompt", "diff", "buffer", security_focus=False, max_turns=50
     )
     assert "maximum limit of 50 tool iterations" in prompt_custom
+
+
+def test_construct_review_prompt_includes_current_time():
+    prompt_custom = _construct_review_prompt(
+        "Prompt",
+        "diff",
+        "buffer",
+        security_focus=False,
+        current_time="2026-10-29 14:30:00 +0000",
+    )
+    assert "The current date and time is 2026-10-29 14:30:00 +0000." in prompt_custom
+    assert "Use this as the reference for the current time" in prompt_custom
+
+    prompt_default = _construct_review_prompt(
+        "Prompt", "diff", "buffer", security_focus=False
+    )
+    assert "The current date and time is" in prompt_default
+    assert str(datetime.now().year) in prompt_default
 
 
 def test_execute_review_stream_reaches_max_turns():
