@@ -287,25 +287,32 @@ def setup_highlights(config=None):
             attrs = f"ctermfg={color_val} guifg={color_val} {extra}".strip()
         return f"highlight {default_clause}{group} {attrs}"
 
+    def _is_custom(field):
+        return (
+            field in ui_cfg
+            and bool(ui_cfg[field])
+            and ui_cfg[field] != DEFAULT_UI_CONFIG.get(field)
+        )
+
     thinking_color = ui_cfg.get("thinking_color") or DEFAULT_UI_CONFIG["thinking_color"]
-    is_custom_thinking = "thinking_color" in ui_cfg and bool(ui_cfg["thinking_color"])
+    is_custom_thinking = _is_custom("thinking_color")
 
     prompt_color = ui_cfg.get("prompt_color") or DEFAULT_UI_CONFIG["prompt_color"]
-    is_custom_prompt = "prompt_color" in ui_cfg and bool(ui_cfg["prompt_color"])
+    is_custom_prompt = _is_custom("prompt_color")
 
     waiting_color = ui_cfg.get("waiting_color") or DEFAULT_UI_CONFIG["waiting_color"]
-    is_custom_waiting = "waiting_color" in ui_cfg and bool(ui_cfg["waiting_color"])
+    is_custom_waiting = _is_custom("waiting_color")
 
     service_color = ui_cfg.get("service_color") or DEFAULT_UI_CONFIG["service_color"]
-    is_custom_service = "service_color" in ui_cfg and bool(ui_cfg["service_color"])
+    is_custom_service = _is_custom("service_color")
 
     error_color = ui_cfg.get("error_color") or DEFAULT_UI_CONFIG["error_color"]
-    is_custom_error = "error_color" in ui_cfg and bool(ui_cfg["error_color"])
+    is_custom_error = _is_custom("error_color")
 
     prompt_hint_color = (
         ui_cfg.get("prompt_hint_color") or DEFAULT_UI_CONFIG["prompt_hint_color"]
     )
-    is_custom_hint = "prompt_hint_color" in ui_cfg and bool(ui_cfg["prompt_hint_color"])
+    is_custom_hint = _is_custom("prompt_hint_color")
 
     cmds = [
         _build_highlight_command("ViminiWaiting", waiting_color, is_custom_waiting),

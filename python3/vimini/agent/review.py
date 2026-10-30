@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 import logging
 import re
 import json
@@ -142,10 +143,23 @@ def _construct_review_prompt(
     content_source_description,
     security_focus,
     max_turns=DEFAULT_MAX_TURNS,
+    current_time=None,
 ):
     """
     Constructs the prompt for the review.
     """
+    if current_time is None:
+        current_time_str = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    elif isinstance(current_time, datetime):
+        current_time_str = current_time.astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
+    else:
+        current_time_str = str(current_time)
+
+    time_instruction = (
+        f"The current date and time is {current_time_str}. "
+        "Use this as the reference for the current time when evaluating timestamps, commit dates, or other time-sensitive context."
+    )
+
     if security_focus:
         review_instructions = (
             f"Please review {content_source_description} exclusively for potential security issues or hazards. "
@@ -168,6 +182,7 @@ def _construct_review_prompt(
     )
 
     prompt_text = (
+        f"{time_instruction}\n\n"
         f"{review_instructions}\n\n"
         f"{tools_guideline}\n\n"
         "--- CONTENT TO REVIEW ---\n"
