@@ -66,6 +66,12 @@ PROJECT_CONFIG_SCHEMA = {
         "default": None,
         "type": "string",
     },
+    "commit-trailer": {
+        "label": "Commit Trailer Format",
+        "description": "Format for commit trailer (default 'Assisted-by: {model}')",
+        "default": "Assisted-by: {model}",
+        "type": "string",
+    },
 }
 
 

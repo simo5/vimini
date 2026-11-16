@@ -396,6 +396,30 @@ class CommitChannelHandler(BaseChannelHandler):
         util.display_message(f"Error: {err_msg}", error=True)
 
 
+def format_commit_trailer(repo_path=None, model_name=None):
+    """
+    Formats the commit trailer according to the project's commit-trailer configuration.
+    Substitutes '{model}' and '{model_name}' with the active model name.
+    """
+    from vimini.common.util import get_project_config
+
+    trailer_format = None
+    if repo_path:
+        trailer_format = get_project_config("commit-trailer", start_dir=repo_path)
+    if not trailer_format:
+        trailer_format = "Assisted-by: {model}"
+
+    trailer_format = str(trailer_format).strip()
+    if model_name is None:
+        model_name = get_model_name()
+
+    model_str = str(model_name) if model_name is not None else ""
+    formatted = trailer_format.replace("{model}", model_str).replace(
+        "{model_name}", model_str
+    )
+    return formatted.strip()
+
+
 def handle_commit_response(req_id, result):
     text = result.get("text", "")
     repo_path = result.get("repo_path", "")
@@ -452,8 +476,8 @@ def handle_commit_response(req_id, result):
         buffer_content.extend(body.split("\n"))
 
     if assistant:
-        trailer = f"Assisted-by: {get_model_name()}"
-        if trailer not in response_text:
+        trailer = format_commit_trailer(repo_path)
+        if trailer and trailer not in response_text:
             if buffer_content[-1] != "":
                 buffer_content.append("")
             buffer_content.append(trailer)
