@@ -12,6 +12,7 @@ from vimini.commit import (
     parse_file_line,
     toggle_file,
     _extract_rename_paths,
+    format_commit_trailer,
     handle_commit_response,
     commit,
     finalize_commit,
@@ -1963,6 +1964,84 @@ def test_handle_commit_response_no_trailer_when_assistant_false(tmp_path):
         try:
             handle_commit_response("job_no_trailer", result)
 
+            assert not any("Assisted-by:" in line for line in vim.current.buffer)
+        finally:
+            _commit_files_by_file.pop(str(fake_temp), None)
+            if fake_temp.exists():
+                fake_temp.unlink()
+
+
+def test_format_commit_trailer_default_and_placeholders():
+    # 1. Default template with model_name
+    with patch("vimini.common.util.get_project_config", return_value=None):
+        trailer = format_commit_trailer("/dummy/repo", model_name="llama3")
+        assert trailer == "Assisted-by: llama3"
+
+    # 2. Custom template with {model}
+    with patch(
+        "vimini.common.util.get_project_config",
+        return_value="Co-authored-by: {model} <ai@example.com>",
+    ):
+        trailer = format_commit_trailer("/dummy/repo", model_name="gpt-4o")
+        assert trailer == "Co-authored-by: gpt-4o <ai@example.com>"
+
+    # 3. Custom template with {model_name}
+    with patch(
+        "vimini.common.util.get_project_config",
+        return_value="Assisted-by: Gemini ({model_name})",
+    ):
+        trailer = format_commit_trailer("/dummy/repo", model_name="gemini-3.8-flash")
+        assert trailer == "Assisted-by: Gemini (gemini-3.8-flash)"
+
+    # 4. Static trailer without placeholder
+    with patch(
+        "vimini.common.util.get_project_config", return_value="Assisted-by: LLM"
+    ):
+        trailer = format_commit_trailer("/dummy/repo", model_name="anything")
+        assert trailer == "Assisted-by: LLM"
+
+
+def test_handle_commit_response_uses_custom_trailer_format(tmp_path):
+    import vim
+
+    fake_temp = tmp_path / "fake_custom_trailer.gitcommit"
+    fake_temp.touch()
+    mock_buffer = []
+
+    result = {
+        "text": "Add feature\n---\nFeature description",
+        "repo_path": str(tmp_path),
+        "diff_stat_output": " src/feature.py | 1 +\n 1 file changed",
+        "commit_files": ["src/feature.py"],
+        "regenerate": False,
+        "assistant": True,
+    }
+
+    util._MODEL_NAME = "gemini-3.8-pro"
+
+    # Case A: Custom template with {model}
+    with (
+        patch.object(vim.current, "buffer", mock_buffer),
+        patch("vimini.util.new_split"),
+        patch.object(vim, "command"),
+        patch("vimini.util.display_message"),
+        patch("tempfile.NamedTemporaryFile") as mock_named_temp,
+        patch(
+            "vimini.common.util.get_project_config",
+            side_effect=lambda key, **kwargs: (
+                "Co-authored-by: {model} <ai@example.com>"
+                if key == "commit-trailer"
+                else None
+            ),
+        ),
+    ):
+        mock_named_temp.return_value.__enter__.return_value.name = str(fake_temp)
+        try:
+            handle_commit_response("job_custom_trailer", result)
+
+            assert (
+                "Co-authored-by: gemini-3.8-pro <ai@example.com>" in vim.current.buffer
+            )
             assert not any("Assisted-by:" in line for line in vim.current.buffer)
         finally:
             _commit_files_by_file.pop(str(fake_temp), None)

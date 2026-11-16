@@ -1039,7 +1039,7 @@ def edit_config_option():
             return
 
         if current_val is None:
-            cur_str = ""
+            cur_str = str(schema_info.get("default") or "")
         else:
             cur_str = str(current_val)
 

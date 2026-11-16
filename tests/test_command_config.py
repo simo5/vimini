@@ -552,3 +552,16 @@ def test_finalize_json_config_uses_buffer_vars(tmp_path):
             "command": "pytest",
             "description": "Run tests",
         }
+
+
+def test_commit_trailer_config_schema_and_defaults():
+    from vimini.common.util import PROJECT_CONFIG_SCHEMA, create_default_project_data
+
+    assert "commit-trailer" in PROJECT_CONFIG_SCHEMA
+    schema = PROJECT_CONFIG_SCHEMA["commit-trailer"]
+    assert schema["type"] == "string"
+    assert schema["default"] == "Assisted-by: {model}"
+    assert "{model}" in schema["description"]
+
+    default_data = create_default_project_data()
+    assert default_data["configuration"]["commit-trailer"] == "Assisted-by: {model}"

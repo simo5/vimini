@@ -135,7 +135,7 @@ customizations.
     ```
 
 9.  **Project Configuration (`ViminiConfig`)**:
-    Configure per-project settings such as whether compilation is needed, shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`), and the directory path where temporary git worktrees can be created. Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
+    Configure per-project settings such as whether compilation is needed, shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`), the directory path where temporary git worktrees can be created, and the format of the AI commit trailer (`commit-trailer`, e.g. `'Assisted-by: {model}'` or `'Co-authored-by: {model} <ai@example.com>'`). Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
     ```json
     {
       "version": "0.1",
@@ -143,7 +143,8 @@ customizations.
         "build-command": "make -j$(nproc)",
         "test-command": "pytest",
         "compilation-needed": false,
-        "worktree": "~/.var/vimini/worktree"
+        "worktree": "~/.var/vimini/worktree",
+        "commit-trailer": "Assisted-by: {model}"
       },
       "files": []
     }
