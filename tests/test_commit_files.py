@@ -1847,13 +1847,68 @@ def test_real_git_commits_workflow(tmp_path):
     assert msg_after_6 == "Regenerated commit message"
 
 
-def test_finalize_commit_with_keyless_backend_no_api_key_error(tmp_path):
+def test_handle_commit_response_with_keyless_backend_no_api_key_error(tmp_path):
     import vim
 
-    tmp_file = tmp_path / "commit_msg_keyless.txt"
+    fake_temp = tmp_path / "fake_keyless.gitcommit"
+    fake_temp.touch()
+    mock_buffer = []
+
+    result = {
+        "text": "Commit with keyless model\n---\nKeyless body",
+        "repo_path": str(tmp_path),
+        "diff_stat_output": " src/main.py | 1 +\n 1 file changed",
+        "commit_files": ["src/main.py"],
+        "regenerate": False,
+        "assistant": True,
+    }
+
+    util._MODEL_NAME = None
+    util._BACKEND = "Local"
+    util._MODEL = "llama3"
+    util._API_KEY_FILE = None
+
+    with (
+        patch.object(vim.current, "buffer", mock_buffer),
+        patch("vimini.util.new_split"),
+        patch.object(vim, "command"),
+        patch("vimini.util.get_client") as mock_get_client,
+        patch("vimini.util.display_message") as mock_display,
+        patch("tempfile.NamedTemporaryFile") as mock_named_temp,
+    ):
+        mock_named_temp.return_value.__enter__.return_value.name = str(fake_temp)
+        try:
+            handle_commit_response("job_keyless", result)
+
+            # get_client should never be called, avoiding spurious API key error
+            assert not mock_get_client.called
+            err_calls = [
+                c for c in mock_display.call_args_list if c.kwargs.get("error")
+            ]
+            assert len(err_calls) == 0
+            # Verify trailer in buffer contains the keyless model name
+            assert "Assisted-by: llama3" in vim.current.buffer
+            trailer_idx = vim.current.buffer.index("Assisted-by: llama3")
+            diff_stat_idx = vim.current.buffer.index("# --- Diff stat ---")
+            assert trailer_idx < diff_stat_idx
+        finally:
+            _commit_files_by_file.pop(str(fake_temp), None)
+            if fake_temp.exists():
+                fake_temp.unlink()
+
+
+def test_finalize_commit_does_not_readd_trailer_if_removed(tmp_path):
+    import vim
+
+    tmp_file = tmp_path / "commit_msg_notrailer.txt"
     repo_path = str(tmp_path)
+    # The user deleted the Assisted-by trailer from the buffer
     content = (
-        "Commit with keyless model\n\n# --- Diff stat ---\n#   src/main.py | 1 +\n"
+        "Commit without trailer\n\n"
+        "Commit body\n\n"
+        "# --- Diff stat ---\n"
+        "# (Press <Space> to toggle file inclusion)\n"
+        "#   src/main.py | 1 +\n"
     )
     tmp_file.write_text(content, encoding="utf-8")
 
@@ -1862,32 +1917,54 @@ def test_finalize_commit_with_keyless_backend_no_api_key_error(tmp_path):
             return str(tmp_file)
         if "vimini_commit_repo_path" in expr:
             return repo_path
-        if "vimini_commit_assistant" in expr:
-            return 1
         if "vimini_commit_files" in expr:
             return json.dumps(["src/main.py"])
         return ""
 
-    util._MODEL_NAME = None
-    util._BACKEND = "Local"
-    util._MODEL = "llama3"
-    util._API_KEY_FILE = None
-
     with (
         patch.object(vim, "eval", side_effect=mock_eval_fn),
         patch("subprocess.run") as mock_run,
-        patch("vimini.util.get_client") as mock_get_client,
-        patch("vimini.util.display_message") as mock_display,
     ):
         mock_proc_ok = MagicMock(returncode=0, stdout="[main 123] done", stderr="")
         mock_run.return_value = mock_proc_ok
 
         finalize_commit()
 
-        # get_client should never be called, avoiding spurious API key error
-        assert not mock_get_client.called
-        err_calls = [c for c in mock_display.call_args_list if c.kwargs.get("error")]
-        assert len(err_calls) == 0
-        # Verify trailer contains the keyless model name
         commit_input = mock_run.call_args.kwargs.get("input", "")
-        assert "Assisted-by: llama3" in commit_input
+        assert "Assisted-by:" not in commit_input
+
+
+def test_handle_commit_response_no_trailer_when_assistant_false(tmp_path):
+    import vim
+
+    fake_temp = tmp_path / "fake_no_trailer.gitcommit"
+    fake_temp.touch()
+    mock_buffer = []
+
+    result = {
+        "text": "Add feature\n---\nFeature description",
+        "repo_path": str(tmp_path),
+        "diff_stat_output": " src/feature.py | 1 +\n 1 file changed",
+        "commit_files": ["src/feature.py"],
+        "regenerate": False,
+        "assistant": False,
+    }
+
+    util._MODEL_NAME = "gemini-test-model"
+
+    with (
+        patch.object(vim.current, "buffer", mock_buffer),
+        patch("vimini.util.new_split"),
+        patch.object(vim, "command"),
+        patch("vimini.util.display_message"),
+        patch("tempfile.NamedTemporaryFile") as mock_named_temp,
+    ):
+        mock_named_temp.return_value.__enter__.return_value.name = str(fake_temp)
+        try:
+            handle_commit_response("job_no_trailer", result)
+
+            assert not any("Assisted-by:" in line for line in vim.current.buffer)
+        finally:
+            _commit_files_by_file.pop(str(fake_temp), None)
+            if fake_temp.exists():
+                fake_temp.unlink()
