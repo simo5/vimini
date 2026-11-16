@@ -451,10 +451,19 @@ def handle_commit_response(req_id, result):
     if body:
         buffer_content.extend(body.split("\n"))
 
+    if assistant:
+        trailer = f"Assisted-by: {get_model_name()}"
+        if trailer not in response_text:
+            if buffer_content[-1] != "":
+                buffer_content.append("")
+            buffer_content.append(trailer)
+
     rename_pairs = []
     if diff_stat_output or commit_files:
         stat_header = "# --- Diff stat ---"
-        buffer_content.extend(["", stat_header])
+        if buffer_content[-1] != "":
+            buffer_content.append("")
+        buffer_content.append(stat_header)
         if not (regenerate and not amend):
             buffer_content.append("# (Press <Space> to toggle file inclusion)")
         if diff_stat_output:
@@ -870,8 +879,6 @@ def finalize_commit():
         amend = int(raw_amend) if raw_amend else 0
         raw_orig_head = vim.eval("get(b:, 'vimini_commit_orig_head', '')")
         orig_head = str(raw_orig_head) if raw_orig_head else ""
-        raw_assistant = vim.eval("get(b:, 'vimini_commit_assistant', 0)")
-        assistant = int(raw_assistant) if raw_assistant else 0
         raw_files = vim.eval("get(b:, 'vimini_commit_files', '')")
         commit_files = json.loads(raw_files) if raw_files else []
         raw_renames = vim.eval("get(b:, 'vimini_commit_renames', '')")
@@ -1139,11 +1146,6 @@ def finalize_commit():
     commit_cmd = ["git", "-C", repo_path, "commit", "-s", "--cleanup=strip"]
     if regenerate:
         commit_cmd.append("--amend")
-
-    if assistant:
-        trailer = f"Assisted-by: {get_model_name()}"
-        if trailer not in content:
-            content += f"\n\n{trailer}\n"
 
     commit_cmd.extend(["-F", "-"])
 
