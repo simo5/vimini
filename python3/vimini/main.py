@@ -498,7 +498,7 @@ def help(command_name=None):
         "    Generates a commit message and commits changes.",
         "    Files to be committed are listed in the diff stat comments.",
         "    Press <Space> in Normal mode to toggle files off (marked with #-) or on.",
-        "    -n: No co-author trailer.",
+        "    -n: No assistant trailer.",
         "    -r: Regenerate/Amend HEAD.",
         "    -a: Amend changes into HEAD and regenerate commit message.",
         "    [instruction]: Optional hint for the commit message generation.",

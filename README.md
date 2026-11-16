@@ -113,20 +113,13 @@ customizations.
     ```
     Logging can also be controlled at runtime with the `:ViminiToggleLogging` command.
 
-6.  **Commit Author (`g:vimini_commit_author`)**:
-    Customize the `Co-authored-by` trailer used in `:ViminiCommit`.
-    ```vim
-    " Set a custom author trailer (Default is 'Co-authored-by: Gemini <gemini@google.com>')
-    let g:vimini_commit_author = 'Co-authored-by: My AI Assistant <ai@example.com>'
-    ```
-
-7.  **Review Max Turns (`g:vimini_review_max_turns`)**:
+6.  **Review Max Turns (`g:vimini_review_max_turns`)**:
     Set the maximum number of tool iterations for review agents. The default is `30`.
     ```vim
     let g:vimini_review_max_turns = 30
     ```
 
-8.  **Default Git Remote (`g:vimini_default_remote`)**:
+7.  **Default Git Remote (`g:vimini_default_remote`)**:
     Set a default git remote to fetch GitHub PRs or GitLab MRs from when using `:ViminiReview` without the `--remote` flag.
     If not configured, Vimini will check available remotes and use `upstream` (preferred for fork workflows), or the
     canonical remote for the current branch, falling back to default branches (`main`/`master`) or `origin`.
@@ -134,14 +127,14 @@ customizations.
     let g:vimini_default_remote = 'gh'
     ```
 
-9.  **Context Files (`g:context_files`)**:
+8.  **Context Files (`g:context_files`)**:
     In addition to all files currently open in Vim buffers, you can specify a list of files to always include as context for AI commands like `:ViminiCode`. This is useful for providing the AI with important project files (like configurations, core utilities, or type definitions) without needing to have them open. Note: The total size of all uploaded context files combined is strictly limited to 1MB; if this limit is exceeded, the largest files will automatically be excluded.
     ```vim
     " Always include these files as context for code generation tasks
     let g:context_files = ['package.json', 'src/main.js', 'src/utils/api.js']
     ```
 
-10.  **Project Configuration (`ViminiConfig`)**:
+9.  **Project Configuration (`ViminiConfig`)**:
     Configure per-project settings such as whether compilation is needed, shell commands for compiling/building code and running tests when invoked by chat tools (`build_code` and `test_code`), and the directory path where temporary git worktrees can be created. Project configuration is stored in `~/.var/vimini/projects/<project_name>`:
     ```json
     {
@@ -156,7 +149,7 @@ customizations.
     }
     ```
 
-11. **Global & Backend Configuration (`~/.var/vimini/config.json`)**:
+10. **Global & Backend Configuration (`~/.var/vimini/config.json`)**:
     Vimini manages global settings and model provider backends in `~/.var/vimini/config.json`. If this file does not exist, Vimini automatically generates a default configuration on startup:
     ```json
     {
@@ -203,7 +196,7 @@ Opens an interactive configuration editor in a new split window to configure glo
 :ViminiGlobalConfig
 ```
 
-12. **Active Backend (`g:vimini_backend`)**:
+11. **Active Backend (`g:vimini_backend`)**:
     Specifies the active backend name matching a key in `~/.var/vimini/config.json`. The default is `'Gemini'`.
     You can switch backends at runtime using the `:ViminiBackend` command.
     ```vim
@@ -469,7 +462,7 @@ You can also provide optional `[instructions]` at the end of the command to guid
 
 **Options:**
 
-*   **`-n`**: Omit the `Co-authored-by` trailer for a specific commit. By default, a trailer is appended and can be configured with `g:vimini_commit_author`.
+*   **`-n`**: Omit the `Assisted-by` trailer for a specific commit.
 *   **`-r`**: Enable the regenerate message mode for `HEAD`.
 *   **`-a`**: Amend current changes into `HEAD` and regenerate the commit message.
 
@@ -481,7 +474,7 @@ You can also provide optional `[instructions]` at the end of the command to guid
 " Provide instructions for the commit message
 :ViminiCommit Include details about the bug fix
 
-" Do the same, but without the co-author trailer
+" Do the same, but without the assistant trailer
 :ViminiCommit -n
 
 " Regenerate the message for the HEAD commit and amend it
