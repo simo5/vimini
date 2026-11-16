@@ -32,7 +32,7 @@ COMMANDS                                                    *vimini-commands*
     When saved and closed, deselected files are removed and only remaining
     files are committed (file toggling is not available in regenerate mode with
     -r).
-    -n: Omit co-author trailer.
+    -n: Omit assistant trailer.
     -r: Regenerate commit message for HEAD and amend.
     -a: Amend working tree changes into HEAD and regenerate commit message.
     [instruction]: Optional hint for the commit message generation.
