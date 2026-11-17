@@ -187,12 +187,33 @@ def get_agent_tools(project_root=None):
                     name="apply_patch",
                     description="Applies file modifications or creates new files. "
                     "You can provide the entire file contents using file_path and file_content "
-                    "(strongly preferred, as a clean unified diff is generated locally to show the user), "
-                    "or provide a unified diff patch via diff_content. "
+                    "or provide a unified diff patch via diff_content. Note that "
+                    "the unidiff format can modify multiple files at the same time. "
+                    "If sending a patchfile directly fails to properly patch the "
+                    "source, try sending whole files instead so that the unidiff "
+                    "generation happens locally using deterministic tools. "
                     "Ensure file paths are relative to the project root directory.",
                     parameters=Schema(
                         type=Type.OBJECT,
                         properties={
+                            "files": Schema(
+                                type=Type.ARRAY,
+                                description="A list of files to modify or create with their full contents (for modifying multiple files at once). Each item must specify file_path and file_content.",
+                                items=Schema(
+                                    type=Type.OBJECT,
+                                    properties={
+                                        "file_path": Schema(
+                                            type=Type.STRING,
+                                            description="The path to the file to modify or create, relative to the project root.",
+                                        ),
+                                        "file_content": Schema(
+                                            type=Type.STRING,
+                                            description="The complete, entire content of the file.",
+                                        ),
+                                    },
+                                    required=["file_path", "file_content"],
+                                ),
+                            ),
                             "file_path": Schema(
                                 type=Type.STRING,
                                 description="The path to the file to modify or create, relative to the project root.",
@@ -203,7 +224,7 @@ def get_agent_tools(project_root=None):
                             ),
                             "diff_content": Schema(
                                 type=Type.STRING,
-                                description="The unified diff patch to apply (optional if file_path and file_content are provided).",
+                                description="The unified diff patch to apply (optional if file_path and file_content or files are provided).",
                             ),
                         },
                     ),
@@ -621,7 +642,7 @@ class ChatSession(CommSession):
                 "Follow these guidelines for optimal performance ONLY when "
                 "acting as a coding agent:\n"
                 "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory`, `read_file`, `git_grep`, `list_git_commits`, and `get_git_commit` tools to understand the repository structure, code contents, and previous git commit history. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
-                "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` (strongly preferred, as a unified diff will be generated locally to show the user) or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
+                "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
                 "3. **Patch Reliability:** If an `apply_patch` action fails due to a formatting or context mismatch, do not blindly retry the exact same patch. Re-read the file to obtain up-to-date content and send the entire file contents using `file_path` and `file_content`.\n"
                 f"{build_test_guideline}\n"
                 "5. **Limit Retries:** Limit multiple calls to `apply_patch` for the same file in a single response, in case of repeat failures for the same file prompt the user for guidance. If an `apply_patch` command is refused, evaluate the reason provided by the user and consider prompting the user for more instructions if the next steps are unclear.\n"

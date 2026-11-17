@@ -28,6 +28,11 @@ def test_convert_schema_to_openai():
         properties={
             "path": types.Schema(type=types.Type.STRING, description="File path"),
             "count": types.Schema(type=types.Type.INTEGER, enum=["1", "2"]),
+            "items_list": types.Schema(
+                type=types.Type.ARRAY,
+                description="List of items",
+                items=types.Schema(type=types.Type.STRING, description="Item"),
+            ),
         },
         required=["path"],
     )
@@ -40,6 +45,8 @@ def test_convert_schema_to_openai():
     assert converted["properties"]["path"]["description"] == "File path"
     assert converted["properties"]["count"]["type"] == "integer"
     assert converted["properties"]["count"]["enum"] == ["1", "2"]
+    assert converted["properties"]["items_list"]["type"] == "array"
+    assert converted["properties"]["items_list"]["items"]["type"] == "string"
     assert converted["required"] == ["path"]
 
 
