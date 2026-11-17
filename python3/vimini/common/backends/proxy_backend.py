@@ -37,6 +37,8 @@ def convert_schema_to_openai(schema: Any) -> Dict[str, Any]:
             res["properties"] = {
                 k: convert_schema_to_openai(v) for k, v in res["properties"].items()
             }
+        if "items" in res and res["items"] is not None:
+            res["items"] = convert_schema_to_openai(res["items"])
         return res
 
     type_val = getattr(schema, "type", "object")
@@ -63,6 +65,10 @@ def convert_schema_to_openai(schema: Any) -> Dict[str, Any]:
     enum = getattr(schema, "enum", None)
     if enum and isinstance(enum, list):
         res["enum"] = enum
+
+    items = getattr(schema, "items", None)
+    if items is not None:
+        res["items"] = convert_schema_to_openai(items)
 
     return res
 

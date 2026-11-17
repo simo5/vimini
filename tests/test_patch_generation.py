@@ -10,6 +10,7 @@ sys.path.insert(
 )
 
 from vimini.common.util import generate_diff_for_file
+from vimini.common.backends import Type
 from vimini.agent.chat import get_agent_tools, validate_patch_is_safe, ChatSession
 
 
@@ -95,6 +96,10 @@ def test_apply_patch_tool_declaration():
     assert apply_patch_tool is not None
     props = apply_patch_tool.parameters.properties
     assert "file_path" in props
+    assert "files" in props
+    assert props["files"].type == Type.ARRAY
+    assert "file_path" in props["files"].items.properties
+    assert "file_content" in props["files"].items.properties
     assert "file_content" in props
     assert "diff_content" in props
     assert "entire file contents" in apply_patch_tool.description
