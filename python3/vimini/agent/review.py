@@ -21,6 +21,7 @@ from vimini.common.util import (
     list_git_commits,
     get_git_commit,
     git_grep,
+    git_diff,
     get_project_root,
     temporary_git_worktree,
 )
@@ -132,6 +133,31 @@ review_tools = [
                     required=["pattern"],
                 ),
             ),
+            FunctionDeclaration(
+                name="git_diff",
+                description="Shows changes between commits, commit and working tree, staged changes, or working tree changes within the git tree.",
+                parameters=Schema(
+                    type=Type.OBJECT,
+                    properties={
+                        "revision": Schema(
+                            type=Type.STRING,
+                            description="Optional git revision, branch, or range to diff against (e.g. 'HEAD', 'main', 'HEAD~1..HEAD'). If omitted, diffs working tree against index/HEAD.",
+                        ),
+                        "staged": Schema(
+                            type=Type.BOOLEAN,
+                            description="If true, show staged changes (git diff --cached).",
+                        ),
+                        "path": Schema(
+                            type=Type.STRING,
+                            description="Optional relative file or directory path to limit the diff to that specific path.",
+                        ),
+                        "stat_only": Schema(
+                            type=Type.BOOLEAN,
+                            description="If true, returns only the diffstat instead of the full patch diff. Useful for large changes.",
+                        ),
+                    },
+                ),
+            ),
         ]
     )
 ]
@@ -175,7 +201,7 @@ def _construct_review_prompt(
         )
 
     tools_guideline = (
-        "You have access to `read_file`, `list_directory`, `git_grep`, `list_git_commits`, and `get_git_commit` tools to inspect project files, "
+        "You have access to `read_file`, `list_directory`, `git_grep`, `git_diff`, `list_git_commits`, and `get_git_commit` tools to inspect project files, "
         "directory structure, search code snippets, and inspect git commit history if you need additional context to perform an accurate review. "
         "Directory listing, file reading, code searching, and commit inspections should be used sparingly and only as needed. "
         f"There is a maximum limit of {max_turns} tool iterations, so inspect only essential files and conclude your review promptly."
@@ -376,6 +402,18 @@ def _execute_review_stream(
                         revision=revision,
                         context_lines=context_lines,
                         ignore_case=ignore_case,
+                    )
+                elif tool_call.name == "git_diff":
+                    revision = args_dict.get("revision")
+                    staged = bool(args_dict.get("staged", False))
+                    path_arg = args_dict.get("path")
+                    stat_only = bool(args_dict.get("stat_only", False))
+                    raw_result = git_diff(
+                        project_root=project_root,
+                        revision=revision,
+                        staged=staged,
+                        path=path_arg,
+                        stat_only=stat_only,
                     )
                 else:
                     raw_result = f"Unknown tool: {tool_call.name}"
