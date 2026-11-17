@@ -7,7 +7,7 @@ sys.path.insert(
     0, os.path.realpath(os.path.join(os.path.dirname(__file__), "..", "python3"))
 )
 
-from vimini.common.util import list_git_commits, get_git_commit, git_grep
+from vimini.common.util import list_git_commits, get_git_commit, git_grep, git_diff
 from vimini.agent.review import review_tools, _execute_review_stream
 from vimini.agent.chat import get_agent_tools, ChatSession
 
@@ -320,11 +320,103 @@ def test_git_grep_truncation():
         assert "file.py:50:code line 50" not in res.split("\n\n[Output truncated")[0]
 
 
+def test_git_diff_not_in_git_repo():
+    with patch("vimini.common.util.get_git_repo_root", return_value=None):
+        res = git_diff("/nonexistent")
+        assert "Error: Not inside a git repository." in res
+
+
+def test_git_diff_security_rejections():
+    with patch("vimini.common.util.get_git_repo_root", return_value="/repo"):
+        # Rejects revision starting with -
+        res = git_diff("/repo", revision="--no-index")
+        assert "Security error" in res
+
+        # Rejects revision with invalid characters
+        res = git_diff("/repo", revision="HEAD; rm -rf /")
+        assert "Security error" in res
+
+        # Rejects path starting with -
+        res = git_diff("/repo", path="--help")
+        assert "Security error" in res
+
+        # Rejects path with directory traversal outside repo
+        res = git_diff("/repo", path="../outside")
+        assert "Security error" in res
+
+        # Rejects absolute path outside repo
+        res = git_diff("/repo", path="/etc/passwd")
+        assert "Security error" in res
+
+
+def test_git_diff_success():
+    mock_output = "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-old\n+new\n"
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    mock_run.stdout = mock_output
+
+    with (
+        patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
+        patch("subprocess.run", return_value=mock_run) as run_spy,
+    ):
+        res = git_diff(project_root="/repo")
+        assert res == mock_output
+        run_spy.assert_called_once()
+        cmd_called = run_spy.call_args[0][0]
+        assert cmd_called == ["git", "-C", "/repo", "diff"]
+
+
+def test_git_diff_with_options():
+    mock_output = "app.py | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n"
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    mock_run.stdout = mock_output
+
+    with (
+        patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
+        patch("subprocess.run", return_value=mock_run) as run_spy,
+    ):
+        res = git_diff(
+            project_root="/repo",
+            revision="HEAD~1..HEAD",
+            staged=True,
+            path="src/",
+            stat_only=True,
+        )
+        assert res == mock_output
+        cmd_called = run_spy.call_args[0][0]
+        assert cmd_called == [
+            "git",
+            "-C",
+            "/repo",
+            "diff",
+            "--stat",
+            "--cached",
+            "HEAD~1..HEAD",
+            "--",
+            "src",
+        ]
+
+
+def test_git_diff_no_changes():
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    mock_run.stdout = "   \n"
+
+    with (
+        patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
+        patch("subprocess.run", return_value=mock_run),
+    ):
+        res = git_diff("/repo")
+        assert res == "No changes found."
+
+
 def test_review_tools_contain_git_tools():
     tool_names = [f.name for f in review_tools[0].function_declarations]
     assert "list_git_commits" in tool_names
     assert "get_git_commit" in tool_names
     assert "git_grep" in tool_names
+    assert "git_diff" in tool_names
 
 
 def test_chat_tools_contain_git_tools():
@@ -333,6 +425,7 @@ def test_chat_tools_contain_git_tools():
     assert "list_git_commits" in tool_names
     assert "get_git_commit" in tool_names
     assert "git_grep" in tool_names
+    assert "git_diff" in tool_names
 
 
 def test_execute_review_stream_git_tools():
@@ -419,6 +512,16 @@ def test_chat_channel_handler_auto_approves_git_tools():
                 "status": "tool_use_requested",
                 "tool": "git_grep",
                 "args": {"pattern": "foo"},
+            }
+        )
+        mock_approval.assert_called_with(True, "chat_123")
+
+        mock_approval.reset_mock()
+        handler.handle_response(
+            {
+                "status": "tool_use_requested",
+                "tool": "git_diff",
+                "args": {"path": "file.py"},
             }
         )
         mock_approval.assert_called_with(True, "chat_123")
@@ -606,4 +709,111 @@ def test_execute_review_stream_git_grep():
         revision=None,
         context_lines=2,
         ignore_case=False,
+    )
+
+
+def test_git_diff_truncation():
+    lines = [f"diff line {i}" for i in range(5200)]
+    mock_run = MagicMock()
+    mock_run.returncode = 0
+    mock_run.stdout = "\n".join(lines)
+
+    with (
+        patch("vimini.common.util.get_git_repo_root", return_value="/repo"),
+        patch("subprocess.run", return_value=mock_run),
+    ):
+        res = git_diff("/repo")
+        assert "Output truncated at 5000 lines (total 5200 lines)" in res
+        assert "diff line 4999" in res
+        assert "diff line 5000" not in res.split("\n\n[Output truncated")[0]
+
+
+def test_chat_session_executes_git_diff():
+    mock_queue = MagicMock()
+    session = ChatSession(
+        "chat_diff", mock_queue, agent_config={"model": "gemini-test"}
+    )
+    session.send_response = MagicMock()
+    session.project_root = "/repo"
+
+    mock_client = MagicMock()
+    mock_chat = MagicMock()
+    mock_client.chats.create.return_value = mock_chat
+    session.client = mock_client
+    session.session = mock_chat
+
+    # Turn 1: model requests git_diff
+    call1 = MagicMock()
+    call1.name = "git_diff"
+    call1.args = {"staged": True, "path": "src/"}
+    chunk1 = make_mock_chunk(function_call=call1)
+
+    # Turn 2: model completes
+    chunk2 = make_mock_chunk(text="Diff checked.")
+
+    mock_chat.send_message_stream.side_effect = [
+        [chunk1],
+        [chunk2],
+    ]
+
+    session.cmd_queue.put(("chat_diff", {"approved": True}, "conn"))
+
+    with (
+        patch("vimini.agent.chat.get_client", return_value=mock_client),
+        patch(
+            "vimini.agent.chat.git_diff",
+            return_value="diff --git a/src/a.py b/src/a.py\n",
+        ) as mock_diff,
+    ):
+        session._process_command("chat_diff", {"prompt": "Show diff"}, "conn")
+
+    mock_diff.assert_called_once_with(
+        project_root="/repo",
+        revision=None,
+        staged=True,
+        path="src/",
+        stat_only=False,
+    )
+
+    sent_tools = [
+        call_args[1]["result"].get("tool")
+        for call_args in session.send_response.call_args_list
+        if call_args[1].get("result", {}).get("status") == "tool_use_requested"
+    ]
+    assert sent_tools == ["git_diff"]
+
+
+def test_execute_review_stream_git_diff():
+    mock_session = MagicMock()
+    mock_session._check_running.return_value = True
+
+    call1 = MagicMock()
+    call1.name = "git_diff"
+    call1.args = {"revision": "HEAD~1", "stat_only": True}
+    chunk1 = make_mock_chunk(function_call=call1)
+
+    chunk2 = make_mock_chunk(text="Review finished after diff.")
+
+    mock_chat = MagicMock()
+    mock_chat.send_message_stream.side_effect = [
+        [chunk1],
+        [chunk2],
+    ]
+
+    with patch(
+        "vimini.agent.review.git_diff", return_value="file.py | 1 +\n"
+    ) as mock_diff:
+        res = _execute_review_stream(
+            session=mock_session,
+            req_id="rev_diff",
+            conn="conn1",
+            chat_session=mock_chat,
+            initial_prompt="Review diff",
+            project_root="/repo",
+            verbose=False,
+            save=False,
+        )
+    assert res == ""
+    mock_diff.assert_called_once_with(
+        project_root="/repo", revision="HEAD~1", staged=False, path=None, stat_only=True
     )

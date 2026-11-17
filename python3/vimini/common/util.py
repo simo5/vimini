@@ -1035,6 +1035,92 @@ def git_grep(
         return f"Error executing git grep: {e}"
 
 
+def git_diff(
+    project_root=None,
+    revision=None,
+    staged=False,
+    path=None,
+    stat_only=False,
+    max_lines=5000,
+):
+    """
+    Shows changes between commits, commit and working tree, staged changes,
+    or working tree changes within the git tree.
+    """
+    repo_path = get_git_repo_root(project_root)
+    if not repo_path:
+        return "Error: Not inside a git repository."
+
+    try:
+        max_lines = int(max_lines)
+        if max_lines < 1:
+            max_lines = 5000
+    except (ValueError, TypeError):
+        max_lines = 5000
+
+    cmd = ["git", "-C", repo_path, "diff"]
+
+    if stat_only:
+        cmd.append("--stat")
+
+    if staged:
+        cmd.append("--cached")
+
+    if revision is not None and str(revision).strip():
+        revision_str = str(revision).strip()
+        if revision_str.startswith("-"):
+            return "Security error: Git options starting with '-' are not allowed."
+        if not re.match(r"^[a-zA-Z0-9_\-\./\^~@{}]+$", revision_str):
+            return f"Security error: Invalid revision '{revision_str}'."
+        cmd.append(revision_str)
+
+    if path is not None and str(path).strip():
+        path_str = str(path).strip()
+        if path_str.startswith("-"):
+            return "Security error: Path starting with '-' is not allowed."
+        if os.path.isabs(path_str):
+            target_path = os.path.realpath(path_str)
+        else:
+            target_path = os.path.realpath(os.path.join(repo_path, path_str))
+
+        try:
+            if os.path.commonpath([repo_path, target_path]) != repo_path:
+                return "Security error: Path cannot be outside repository."
+        except ValueError:
+            return "Security error: Path resolution failed or invalid cross-drive path."
+
+        rel_path = os.path.relpath(target_path, repo_path).replace(os.sep, "/")
+        cmd.extend(["--", rel_path])
+
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+        if res.returncode != 0:
+            err = (res.stderr or "git diff failed.").strip()
+            return f"Error executing git diff: {err}"
+
+        output = res.stdout
+        if not output.strip():
+            return "No changes found."
+
+        lines = output.splitlines()
+        if max_lines and len(lines) > max_lines:
+            truncated = "\n".join(lines[:max_lines])
+            return (
+                f"{truncated}\n\n[Output truncated at {max_lines} lines (total {len(lines)} lines). "
+                f"Specify path or set stat_only=True to inspect specific changes.]"
+            )
+        return output
+    except Exception as e:
+        return f"Error executing git diff: {e}"
+
+
 def generate_diff_for_file(file_path, file_content, project_root=None):
     """
     Generates a unified diff comparing the existing file on disk with file_content.

@@ -18,6 +18,7 @@ from vimini.common.util import (
     list_git_commits,
     get_git_commit,
     git_grep,
+    git_diff,
     generate_diff_for_file,
 )
 from vimini.agent.comms import CommSession
@@ -327,6 +328,31 @@ def get_agent_tools(project_root=None):
                             ),
                         },
                         required=["pattern"],
+                    ),
+                ),
+                FunctionDeclaration(
+                    name="git_diff",
+                    description="Shows changes between commits, commit and working tree, staged changes, or working tree changes within the git tree.",
+                    parameters=Schema(
+                        type=Type.OBJECT,
+                        properties={
+                            "revision": Schema(
+                                type=Type.STRING,
+                                description="Optional git revision, branch, or range to diff against (e.g. 'HEAD', 'main', 'HEAD~1..HEAD'). If omitted, diffs working tree against index/HEAD.",
+                            ),
+                            "staged": Schema(
+                                type=Type.BOOLEAN,
+                                description="If true, show staged changes (git diff --cached).",
+                            ),
+                            "path": Schema(
+                                type=Type.STRING,
+                                description="Optional relative file or directory path to limit the diff to that specific path.",
+                            ),
+                            "stat_only": Schema(
+                                type=Type.BOOLEAN,
+                                description="If true, returns only the diffstat instead of the full patch diff. Useful for large changes.",
+                            ),
+                        },
                     ),
                 ),
                 FunctionDeclaration(
@@ -641,7 +667,7 @@ class ChatSession(CommSession):
                 "Your identity is Vimini, and you are integrated into the vimini project. "
                 "Follow these guidelines for optimal performance ONLY when "
                 "acting as a coding agent:\n"
-                "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory`, `read_file`, `git_grep`, `list_git_commits`, and `get_git_commit` tools to understand the repository structure, code contents, and previous git commit history. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
+                "1. **Understand Context First:** Before proposing or applying any code changes, use `list_directory`, `read_file`, `git_grep`, `git_diff`, `list_git_commits`, and `get_git_commit` tools to understand the repository structure, code contents, and previous git commit history. Never assume or guess code. You can look for AGENTS.md or CONTRIBUTING.md in the root tree if you need project-specific information to execute the task.\n"
                 "2. **Use the Patch Tool Correctly:** To modify or create files, use the `apply_patch` tool. You can provide the entire file contents using `file_path` and `file_content` or provide a unified diff via `diff_content`. Use file paths relative to the project root.\n"
                 "3. **Patch Reliability:** If an `apply_patch` action fails due to a formatting or context mismatch, do not blindly retry the exact same patch. Re-read the file to obtain up-to-date content and send the entire file contents using `file_path` and `file_content`.\n"
                 f"{build_test_guideline}\n"
@@ -1121,6 +1147,30 @@ class ChatSession(CommSession):
                                 revision=revision,
                                 context_lines=context_lines,
                                 ignore_case=ignore_case,
+                            )
+                        else:
+                            result_text = (
+                                "Tool execution cancelled or rejected by user."
+                            )
+                        responses.append(
+                            ToolResponse(
+                                name=tool_call.name,
+                                response={"result": result_text},
+                                call_id=call_id,
+                            )
+                        )
+                    elif tool_call.name == "git_diff":
+                        if is_approved:
+                            revision = args_dict.get("revision")
+                            staged = bool(args_dict.get("staged", False))
+                            path_arg = args_dict.get("path")
+                            stat_only = bool(args_dict.get("stat_only", False))
+                            result_text = git_diff(
+                                project_root=self.project_root,
+                                revision=revision,
+                                staged=staged,
+                                path=path_arg,
+                                stat_only=stat_only,
                             )
                         else:
                             result_text = (

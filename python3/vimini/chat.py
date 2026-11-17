@@ -800,6 +800,7 @@ class ChatChannelHandler(StreamBufferHandler):
                 "list_git_commits",
                 "get_git_commit",
                 "git_grep",
+                "git_diff",
             ):
                 send_agent_approval(True, self.req_id)
             elif tool == "apply_patch":
