@@ -691,7 +691,7 @@ function! ViminiReload()
   py3 << EOF
 try:
     from vimini import main
-    main.stop_agent()
+    main.stop_agent("Vimini reload requested (:ViminiReload)")
     main.reload_vimini()
     from vimini import main as reloaded_main
     socket_path = reloaded_main.start_agent()
@@ -754,7 +754,7 @@ function! s:ViminiShutdown()
   py3 << EOF
 try:
     from vimini import main
-    main.stop_agent()
+    main.stop_agent("Vim exiting (VimLeavePre)")
 except Exception:
     pass
 EOF

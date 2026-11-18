@@ -304,14 +304,14 @@ def start_agent():
         return None
 
 
-def stop_agent():
+def stop_agent(reason="Plugin stop_agent request"):
     """
     Stops the agent server process if running.
     """
     try:
         from vimini.agent.server import stop_agent_server
 
-        stop_agent_server()
+        stop_agent_server(reason=reason)
     except Exception as e:
         util.log_info(f"Failed to stop agent server: {e}")
 
@@ -414,6 +414,7 @@ def reload_vimini():
     # Re-import main and re-initialize
     from vimini import main
 
+    main.stop_agent(reason="ViminiReload requested")
     main.initialize(api_key_file=api_key_file, logfile=log_file, backend=backend)
 
     # Use the freshly imported util to display the message and restore _JOB_COUNTER
