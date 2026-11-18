@@ -14,6 +14,7 @@ import time
 import queue
 import select
 import logging
+import traceback
 import signal
 import atexit
 from vimini.common.backends import get_client
@@ -180,21 +181,30 @@ class AgentServer:
         if socket_path is None:
             socket_path = get_socket_path()
         self.socket_path = socket_path
+        self.shutdown_reason = None
         self.running = False
         self.result_queue = queue.Queue()
         self.server_sock = None
+        self._atexit_callback = None
 
-    def cleanup(self):
+    def cleanup(self, reason=None):
+        if reason and not self.shutdown_reason:
+            self.shutdown_reason = reason
+        logger.info(
+            f"AgentServer cleanup initiated (reason: {self.shutdown_reason or reason or 'unspecified'}, socket: {self.socket_path})"
+        )
         self.running = False
         if self.server_sock:
             try:
                 self.server_sock.close()
+                logger.info("Closed server listening socket.")
             except Exception:
                 pass
             self.server_sock = None
         if os.path.exists(self.socket_path):
             try:
                 os.unlink(self.socket_path)
+                logger.info(f"Unlinked agent socket path: {self.socket_path}")
             except OSError as e:
                 logger.error(f"Error unlinking socket on shutdown: {e}")
 
@@ -211,10 +221,56 @@ class AgentServer:
             except OSError as e:
                 logger.error(f"Failed to unlink existing socket path: {e}")
 
-        atexit.register(self.cleanup)
+        def _atexit_handler():
+            if self.running or self.server_sock or os.path.exists(self.socket_path):
+                logger.info("AgentServer atexit handler triggered.")
+                self.cleanup(reason="Process atexit hook")
+
+        self._atexit_callback = _atexit_handler
+        atexit.register(_atexit_handler)
 
         def _signal_handler(signum, frame):
-            logger.info(f"Received signal {signum}, initiating shutdown...")
+            try:
+                sig_name = signal.Signals(signum).name
+            except Exception:
+                sig_name = f"SIG#{signum}"
+
+            frame_loc = ""
+            stack_trace = ""
+            if frame is not None:
+                frame_loc = f" at {frame.f_code.co_filename}:{frame.f_lineno} in {frame.f_code.co_name}()"
+                try:
+                    stack_trace = "".join(traceback.format_stack(frame)).strip()
+                except Exception:
+                    pass
+
+            if signum == signal.SIGINT:
+                cause_detail = (
+                    "SIGINT (signal 2) typically sent by terminal keyboard interrupt (Ctrl+C) "
+                    "shared across the foreground process group, or explicitly sent via kill -2."
+                )
+                log_msg = (
+                    f"Received signal {signum} ({sig_name}){frame_loc}, ignoring signal. "
+                    f"Shutdown is only permitted via SIGTERM. Cause: {cause_detail}"
+                )
+                if stack_trace:
+                    log_msg += f"\nExecution frame at signal:\n{stack_trace}"
+                logger.info(log_msg)
+                return
+
+            elif signum == signal.SIGTERM:
+                cause_detail = (
+                    "SIGTERM (signal 15) typically sent by termination request "
+                    "(e.g., stop_agent_server(), parent process shutdown, or kill -15)."
+                )
+            else:
+                cause_detail = f"Signal {signum} ({sig_name}) received from OS or external process."
+
+            self.shutdown_reason = f"signal {signum} ({sig_name}): {cause_detail}"
+            log_msg = f"Received signal {signum} ({sig_name}){frame_loc}, initiating shutdown... Cause: {cause_detail}"
+            if stack_trace:
+                log_msg += f"\nExecution frame at signal:\n{stack_trace}"
+            logger.info(log_msg)
             self.running = False
 
         try:
@@ -263,6 +319,10 @@ class AgentServer:
                     [self.server_sock] + clients if self.server_sock else clients
                 )
                 if not read_sockets:
+                    self.shutdown_reason = "No sockets available to monitor"
+                    logger.info(
+                        f"AgentServer main loop terminating: {self.shutdown_reason}"
+                    )
                     break
 
                 try:
@@ -273,6 +333,10 @@ class AgentServer:
                         try:
                             select.select([self.server_sock], [], [], 0)
                         except (select.error, OSError):
+                            self.shutdown_reason = f"Server socket error in select: {e}"
+                            logger.info(
+                                f"AgentServer main loop terminating: {self.shutdown_reason}"
+                            )
                             break
 
                     faulty = []
@@ -308,6 +372,7 @@ class AgentServer:
                         try:
                             data = s.recv(MAX_RECEIVE_BUFFER_SIZE)
                             if not data:
+                                logger.info("Client closed connection (EOF on socket).")
                                 if s in clients:
                                     clients.remove(s)
                                 if s in buffers:
@@ -379,6 +444,9 @@ class AgentServer:
                             except Exception:
                                 pass
         finally:
+            logger.info(
+                f"AgentServer main loop ended (reason: {self.shutdown_reason or 'running flag set to False'})."
+            )
             for c in clients:
                 try:
                     c.close()
@@ -386,7 +454,8 @@ class AgentServer:
                     pass
             self.cleanup()
             try:
-                atexit.unregister(self.cleanup)
+                if self._atexit_callback:
+                    atexit.unregister(self._atexit_callback)
             except Exception:
                 pass
 
@@ -396,26 +465,43 @@ def run_server():
     try:
         server.start()
     except KeyboardInterrupt:
-        logger.info("Server shut down via KeyboardInterrupt")
+        logger.info(
+            "AgentServer process caught KeyboardInterrupt exception in run_server()"
+        )
     except Exception as e:
-        logger.error(f"Server loop stopped unexpectedly: {e}", exc_info=True)
+        logger.error(f"AgentServer loop stopped unexpectedly: {e}", exc_info=True)
     finally:
-        server.cleanup()
+        server.cleanup(reason="run_server() exiting")
 
 
 _agent_process = None
 
 
-def stop_agent_server():
+def stop_agent_server(reason="Explicit stop request"):
     global _agent_process
     if _agent_process is not None:
+        pid = _agent_process.pid
+        logger.info(f"stop_agent_server called for PID {pid}. Reason: {reason}")
         try:
             if _agent_process.poll() is None:
+                logger.info(f"Sending SIGTERM to agent server process (PID: {pid})...")
                 _agent_process.terminate()
                 try:
                     _agent_process.wait(timeout=2)
+                    logger.info(
+                        f"Agent server process (PID: {pid}) terminated successfully."
+                    )
                 except Exception:
+                    logger.info(
+                        f"Agent server process (PID: {pid}) did not terminate within timeout; sending SIGKILL..."
+                    )
                     _agent_process.kill()
+                    _agent_process.wait()
+                    logger.info(f"Agent server process (PID: {pid}) killed.")
+            else:
+                logger.info(
+                    f"Agent server process (PID: {pid}) was already stopped (returncode: {_agent_process.returncode})."
+                )
         except Exception as e:
             logger.error(f"Error stopping agent server process: {e}", exc_info=True)
         _agent_process = None
@@ -423,10 +509,15 @@ def stop_agent_server():
 
 def start_agent_server():
     global _agent_process
-    stop_agent_server()
+    stop_agent_server(reason="Restarting agent server process")
     server_script = os.path.realpath(__file__)
-    _agent_process = subprocess.Popen([sys.executable, server_script])
+    logger.info(f"Spawning agent server process: {sys.executable} {server_script}")
+    _agent_process = subprocess.Popen(
+        [sys.executable, server_script],
+        start_new_session=True,
+    )
     pid = _agent_process.pid
+    logger.info(f"Spawned agent server process PID: {pid}")
     socket_path = get_socket_path(pid)
 
     for _ in range(50):
